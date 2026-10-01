@@ -26,8 +26,14 @@ export interface EmployeeSummary {
   name: string
   role: BusinessRole
   active: boolean
+  googleLinked?: boolean
+  pinReady?: boolean
+}
+export interface EmployeeCreation extends EmployeeSummary {
+  invitation?: { invitationCode: string; invitationId: string; expiresAt: string }
 }
 export interface InvitationSummary {
+  employeeId?: string
   id: string
   name: string
   role: EmployeeRole
@@ -88,11 +94,11 @@ export type AccountRequest =
   | ({ action: 'lock' } & OwnerRequest)
   | { action: 'revoke_sessions' }
   | ({ action: 'team' } & OwnerRequest)
-  | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: string; operationId: string } & OwnerRequest)
+  | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: string | null; inviteWithGoogle?: boolean; operationId: string } & OwnerRequest)
   | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; active: boolean; pin: string | null } & OwnerRequest)
-  | ({ action: 'create_invitation'; name: string; role: EmployeeRole; operationId: string } & OwnerRequest)
+  | ({ action: 'create_invitation'; operationId: string } & OwnerRequest & ({ employeeId: string } | { name: string; role: EmployeeRole }))
   | ({ action: 'revoke_invitation'; invitationId: string } & OwnerRequest)
-  | { action: 'accept_invitation'; invitationCode: string; name: string; pin: string; operationId: string }
+  | { action: 'accept_invitation'; invitationCode: string; name?: string; pin: string; operationId: string }
   | ({ action: 'create_pairing_code'; operationId: string } & OwnerRequest)
   | ({ action: 'revoke_device'; deviceId: string } & OwnerRequest)
   | { action: 'reset_pin'; businessId: string; pin: string }
@@ -112,7 +118,7 @@ export interface AccountResponses {
   lock: { locked: true }
   revoke_sessions: { revoked: true }
   team: TeamContext
-  create_employee: EmployeeSummary
+  create_employee: EmployeeCreation
   update_employee: EmployeeSummary
   create_invitation: { invitationCode: string; invitationId: string; expiresAt: string }
   revoke_invitation: { revoked: true }

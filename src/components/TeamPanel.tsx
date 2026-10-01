@@ -23,8 +23,9 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [denied, setDenied] = useState(business.role !== 'owner')
-  const [form, setForm] = useState<'employee' | 'invitation' | null>(null)
+  const [form, setForm] = useState(false)
   const [editing, setEditing] = useState<EmployeeSummary | null>(null)
+  const [inviteWithGoogle, setInviteWithGoogle] = useState(false)
   const [name, setName] = useState('')
   const [role, setRole] = useState<EmployeeRole>('cashier')
   const [active, setActive] = useState(true)
@@ -75,7 +76,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     setBusy(false)
     setTeam(null)
     setCode(null)
-    setForm(null)
+    setForm(false)
     setPin('')
     setConfirmation('')
     setDenied(business.role !== 'owner')
@@ -83,9 +84,10 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     return () => { generation.current += 1 }
   }, [business.id, business.role, operatorToken])
 
-  function openForm(next: 'employee' | 'invitation', employee?: EmployeeSummary) {
-    setForm(next)
+  function openForm(employee?: EmployeeSummary) {
+    setForm(true)
     setEditing(employee ?? null)
+    setInviteWithGoogle(false)
     setName(employee?.name ?? '')
     setRole(employee && employee.role !== 'owner' ? employee.role : 'cashier')
     setActive(employee?.active ?? true)
@@ -93,6 +95,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     setConfirmation('')
     setError('')
     setNotice('')
+    setCode(null)
     operation.current = null
   }
 
@@ -107,7 +110,8 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     if (mutationBusy.current) return
     const employeeName = name.trim().replace(/\s+/g, ' ')
     if (employeeName.length < 2 || employeeName.length > 100) { setError('Escribe un nombre de 2 a 100 caracteres.'); return }
-    if ((!editing || pin) && (!/^[0-9]{6}$/.test(pin) || pin !== confirmation)) {
+    const requiresPin = !editing && !inviteWithGoogle
+    if ((requiresPin || pin) && (!/^[0-9]{6}$/.test(pin) || pin !== confirmation)) {
       setError(pin !== confirmation ? 'Los PIN no coinciden.' : 'El PIN debe tener seis dígitos.')
       return
     }
@@ -121,37 +125,38 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
         await accountRequest({ action: 'update_employee', businessId: business.id, operatorToken, employeeId: editing.id,
           name: employeeName, role, active, pin: pin || null })
       } else {
-        const payload = { name: employeeName, role, pin }
-        await accountRequest({ action: 'create_employee', businessId: business.id, operatorToken, ...payload, operationId: operationId(payload) })
+        const payload = { name: employeeName, role, pin: inviteWithGoogle ? null : pin, inviteWithGoogle }
+        const employee = await accountRequest({ action: 'create_employee', businessId: business.id, operatorToken, ...payload, operationId: operationId(payload) })
+        if (!mounted.current || current !== generation.current) return
+        if (employee.invitation) {
+          setCode({ value: employee.invitation.invitationCode, label: 'Código de invitación', expiresAt: employee.invitation.expiresAt, path: '/', parameter: 'invite' })
+        }
       }
       if (!mounted.current || current !== generation.current) return
-      setForm(null)
+      setForm(false)
       operation.current = null
       setPin('')
       setConfirmation('')
-      setNotice(editing ? 'Empleado actualizado.' : 'Empleado agregado. Ya puede entrar en una caja vinculada.')
+      setNotice(editing ? 'Empleado actualizado.' : inviteWithGoogle ? 'Empleado agregado. Comparte su invitación.' : 'Empleado agregado. Ya puede entrar en una caja vinculada.')
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false); setPin(''); setConfirmation('') } }
   }
 
-  async function createInvitation(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function linkGoogle(employee: EmployeeSummary) {
     if (mutationBusy.current) return
-    const employeeName = name.trim().replace(/\s+/g, ' ')
-    if (employeeName.length < 2 || employeeName.length > 100) { setError('Escribe un nombre de 2 a 100 caracteres.'); return }
     const current = generation.current
     mutationBusy.current = true
     setBusy(true)
     setError('')
     setNotice('')
     try {
-      const payload = { name: employeeName, role }
+      const payload = { employeeId: employee.id }
       const result = await accountRequest({ action: 'create_invitation', businessId: business.id, operatorToken, ...payload, operationId: operationId(payload) })
       if (!mounted.current || current !== generation.current) return
       setCode({ value: result.invitationCode, label: 'Código de invitación', expiresAt: result.expiresAt, path: '/', parameter: 'invite' })
-      setForm(null)
       operation.current = null
+      setNotice('Comparte la invitación con el empleado.')
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -200,6 +205,17 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     } catch { setError('No pudimos copiar el enlace. Puedes copiar el código del campo.') }
   }
 
+  function pendingInvitation(employee: EmployeeSummary) {
+    return team?.invitations.some((invitation) => invitation.employeeId === employee.id && invitation.active && new Date(invitation.expiresAt).getTime() > Date.now()) ?? false
+  }
+
+  function accessLabel(employee: EmployeeSummary) {
+    if (employee.googleLinked) return employee.pinReady ? 'Google y PIN' : 'Google'
+    if (employee.pinReady) return pendingInvitation(employee) ? 'PIN / Google pendiente' : 'PIN'
+    if (employee.pinReady === false) return pendingInvitation(employee) ? 'Pendiente de Google' : 'Sin PIN'
+    return ''
+  }
+
   return <div className="management-shell">
     <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} aria-hidden="true" />Volver</button>
     <div className="management-heading"><h1>Personal y dispositivos</h1><p>{business.name}</p></div>
@@ -216,31 +232,30 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
         <button type="button" className="button secondary" onClick={() => setCode(null)}>Ocultar código</button>
       </div>}
       {form && <section className="management-section" aria-labelledby="employee-form-title">
-        <h2 id="employee-form-title">{form === 'invitation' ? 'Nueva invitación' : editing ? 'Editar empleado' : 'Nuevo empleado'}</h2>
-        <form className="management-form" onSubmit={form === 'invitation' ? createInvitation : saveEmployee}>
+        <h2 id="employee-form-title">{editing ? 'Editar empleado' : 'Nuevo empleado'}</h2>
+        <form className="management-form" onSubmit={saveEmployee}>
           <div className="field"><label htmlFor="employee-name">Nombre del empleado</label><input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={busy} autoFocus /></div>
           <div className="field"><label htmlFor="employee-role">Rol</label><select id="employee-role" value={role} onChange={(event) => setRole(event.target.value as EmployeeRole)} disabled={busy}><option value="manager">Encargado</option><option value="cashier">Cajero</option><option value="kitchen">Cocina</option></select></div>
           <p className="field-help">{role === 'kitchen' ? 'Acceso a comandas, sin datos de dinero ni ajustes del dueño.' : role === 'cashier' ? 'Acceso a venta y comandas, sin ajustes del dueño ni costos.' : 'Acceso a operación, sin administrar personal ni datos del dueño.'}</p>
-          {form === 'employee' && <>
+          {!editing && <label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} onChange={(event) => { setInviteWithGoogle(event.target.checked); setPin(''); setConfirmation(''); operation.current = null }} />Acceso con Google</label>}
+          {(!editing && inviteWithGoogle || editing?.pinReady === false) ? <p className="field-help">{editing ? 'El empleado aún no tiene PIN.' : 'El empleado creará su PIN al aceptar la invitación.'}</p> : <>
             {editing && <p className="field-help">Deja el PIN vacío para conservar el actual.</p>}
             <div className="field"><label htmlFor="employee-pin">PIN del empleado</label><input id="employee-pin" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} value={pin} onChange={(event) => setPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} required={!editing} disabled={busy} /></div>
             <div className="field"><label htmlFor="employee-confirm">Confirmar PIN del empleado</label><input id="employee-confirm" type="password" inputMode="numeric" autoComplete="new-password" maxLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} required={!editing || Boolean(pin)} disabled={busy} /></div>
-            {editing && <><label className="management-checkbox"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} disabled={busy} />Empleado activo</label>{!active && <p className="management-warning">Al guardar, se cerrará su acceso y no podrá volver a entrar.</p>}</>}
           </>}
-          <div className="management-actions"><button className="button primary" disabled={busy} aria-busy={busy}>{busy ? 'Guardando…' : form === 'invitation' ? 'Generar invitación' : editing ? 'Guardar cambios' : 'Guardar empleado'}</button><button type="button" className="button secondary" disabled={busy} onClick={() => { setForm(null); setPin(''); setConfirmation(''); operation.current = null }}>Cancelar</button></div>
+          {editing && <><label className="management-checkbox"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} disabled={busy} />Empleado activo</label>{!active && <p className="management-warning">Al guardar, se cerrará su acceso y no podrá volver a entrar.</p>}</>}
+          <div className="management-actions"><button className="button primary" disabled={busy} aria-busy={busy}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar empleado'}</button><button type="button" className="button secondary" disabled={busy} onClick={() => { setForm(false); setPin(''); setConfirmation(''); operation.current = null }}>Cancelar</button></div>
         </form>
       </section>}
       {team && <>
-        <section className="management-section" aria-labelledby="team-title"><h2 id="team-title">Personal</h2><p>Cada persona usa su propio PIN. El dueño conserva su acceso con Google.</p>
-          <ul className="management-list">{team.employees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}{employee.active ? '' : ' (inactivo)'}</p></div>{employee.role !== 'owner' && <button type="button" className="button secondary" aria-label={`Editar ${employee.name}`} disabled={busy} onClick={() => openForm('employee', employee)}>Editar</button>}</li>)}</ul>
+        <section className="management-section" aria-labelledby="team-title"><h2 id="team-title">Personal</h2>
+          <ul className="management-list">{team.employees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}{employee.active ? '' : ' (inactivo)'}</p>{accessLabel(employee) && <p className="management-access">{accessLabel(employee)}</p>}</div>{employee.role !== 'owner' && <div className="management-row-actions"><button type="button" className="button secondary" aria-label={`Editar ${employee.name}`} disabled={busy} onClick={() => openForm(employee)}>Editar</button>{employee.active && !employee.googleLinked && !pendingInvitation(employee) && <button type="button" className="button secondary" aria-label={`Vincular Google a ${employee.name}`} disabled={busy} onClick={() => void linkGoogle(employee)}>Vincular Google</button>}</div>}</li>)}</ul>
           {!team.employees.length && <p className="management-empty">Aún no has agregado empleados.</p>}
-          <button type="button" className="button primary" disabled={busy} onClick={() => openForm('employee')}>Agregar empleado</button>
+          {!form && <button type="button" className="button primary" disabled={busy} onClick={() => openForm()}>Agregar empleado</button>}
         </section>
-        <section className="management-section" aria-labelledby="invitations-title"><h2 id="invitations-title">Invitaciones</h2><p>Comparte una invitación para que el empleado entre con Google y cree su PIN.</p>
+        {team.invitations.length > 0 && <section className="management-section" aria-labelledby="invitations-title"><h2 id="invitations-title">Invitaciones</h2>
           <ul className="management-list">{team.invitations.map((invitation) => <li key={invitation.id}><div><strong>{invitation.name}</strong><p>{roles[invitation.role]}{invitation.active ? new Date(invitation.expiresAt).getTime() <= Date.now() ? ' (vencida)' : '' : ' (revocada o utilizada)'}</p></div>{invitation.active && new Date(invitation.expiresAt).getTime() > Date.now() && <button type="button" className="button secondary" aria-label={`Revocar invitación de ${invitation.name}`} disabled={busy} onClick={() => void revoke('invitation', invitation.id)}>Revocar</button>}</li>)}</ul>
-          {!team.invitations.length && <p className="management-empty">No hay invitaciones.</p>}
-          <button type="button" className="button secondary" disabled={busy} onClick={() => openForm('invitation')}>Crear invitación</button>
-        </section>
+        </section>}
         <section className="management-section" aria-labelledby="devices-title"><h2 id="devices-title">Dispositivos</h2><p>Vincula una caja compartida. Los empleados pueden entrar allí sin dejar el Google del dueño.</p>
           <ul className="management-list">{team.devices.map((device) => <li key={device.id}><div><strong>{device.name}</strong><p>{device.registerName}{device.active ? '' : ' (revocado)'}</p></div>{device.active && <button type="button" className="button secondary" aria-label={`Revocar dispositivo ${device.name}`} disabled={busy} onClick={() => void revoke('device', device.id)}>Revocar</button>}</li>)}</ul>
           {!team.devices.length && <p className="management-empty">No hay dispositivos vinculados.</p>}

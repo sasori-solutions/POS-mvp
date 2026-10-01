@@ -5,8 +5,8 @@ import { fixtureBusiness, fixtureOperatorToken, fixturePin, mockAccount } from '
 export const fixtureInvitation = 'c1'.repeat(32);
 export const fixturePairingCode = 'b2'.repeat(32);
 export const fixtureDeviceToken = 'd3'.repeat(32);
-export const fixtureKitchen = { id: '84c75082-4633-4f53-8f34-a2ed0c7b2e66', name: 'Cocina de prueba', role: 'kitchen' as const, active: true };
-export const fixtureCashier = { id: 'b1041684-c36b-4360-a98b-ce41c821cf41', name: 'Caja de prueba', role: 'cashier' as const, active: true };
+export const fixtureKitchen = { id: '84c75082-4633-4f53-8f34-a2ed0c7b2e66', name: 'Cocina de prueba', role: 'kitchen' as const, active: true, googleLinked: false, pinReady: true };
+export const fixtureCashier = { id: 'b1041684-c36b-4360-a98b-ce41c821cf41', name: 'Caja de prueba', role: 'cashier' as const, active: true, googleLinked: false, pinReady: true };
 export const fixtureCashierPin = '014682';
 export const fixtureDeviceId = '20b56f6a-080d-4f03-99eb-545edb79a548';
 
@@ -16,6 +16,7 @@ export async function mockOnboarding(page: Page, options: {
   authenticated?: boolean;
   role?: BusinessRole;
   requirePinReauth?: boolean;
+  createEmployeeResponseLosses?: number;
 } = {}) {
   await mockAccount(page, { existingBusiness: options.existingBusiness, authenticated: options.authenticated });
   const calls: AccountRequest[] = [];
@@ -31,11 +32,14 @@ export async function mockOnboarding(page: Page, options: {
   let currentDeviceOperator = '';
   let currentDeviceEmployee: EmployeeSummary = fixtureCashier;
   const employees: EmployeeSummary[] = [
-    { id: '5f9bf172-13ae-4df5-84be-3975d90e1f65', name: 'Persona de prueba', role: 'owner', active: true },
+    { id: '5f9bf172-13ae-4df5-84be-3975d90e1f65', name: 'Persona de prueba', role: 'owner', active: true, googleLinked: true, pinReady: true },
     { ...fixtureCashier }, { ...fixtureKitchen },
   ];
   const invitations: InvitationSummary[] = [];
   const devices: DeviceSummary[] = [];
+  const employeeOperations = new Map<string, unknown>();
+  const invitationOperations = new Map<string, unknown>();
+  let createEmployeeResponseLosses = options.createEmployeeResponseLosses ?? 0;
   const expiresAt = () => new Date(Date.now() + 8 * 3_600_000).toISOString();
   const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType });
   const projection = (role = googleRole, employee: EmployeeSummary = role === 'kitchen' ? fixtureKitchen : fixtureCashier): BusinessContext => role === 'owner'
@@ -77,14 +81,21 @@ export async function mockOnboarding(page: Page, options: {
         if (locked || googleRole !== 'owner') return reject(403, 'PERMISSION_DENIED', 'Acceso restringido.');
         business = { ...business, name: body.name, businessType: body.businessType, timezone: body.timezone, profile: body.profile };
         return reply(projection());
-      case 'accept_invitation':
+      case 'accept_invitation': {
         if (body.invitationCode !== fixtureInvitation) return reject(400, 'INVITATION_INVALID', 'Invitación inválida o vencida.');
-        if (body.pin.length !== 6 || !body.name.trim()) return reject(400, 'VALIDATION_ERROR', 'Completa nombre y PIN.');
+        if (body.pin.length !== 6) return reject(400, 'VALIDATION_ERROR', 'Completa el PIN.');
+        const invitation = [...invitations].reverse().find((item) => item.active);
+        const employee = employees.find((item) => item.id === invitation?.employeeId) ?? employees.find((item) => item.id === fixtureKitchen.id)!;
+        employee.googleLinked = true;
+        employee.pinReady = true;
+        if (invitation) invitation.active = false;
         hasBusiness = true;
-        googleRole = 'kitchen';
+        googleRole = employee.role;
         currentPin = body.pin;
         locked = false;
-        return reply({ ...unlocked(), business: { ...projection(), employee: { id: fixtureKitchen.id, name: body.name, role: 'kitchen' } } });
+        currentDeviceOperator = '';
+        return reply({ ...unlocked(), business: { ...projection(employee.role, employee), employee: { id: employee.id, name: employee.name, role: employee.role } } });
+      }
       case 'reset_pin':
         if (options.requirePinReauth && calls.filter((call) => call.action === 'status').length < 2) return reject(401, 'REAUTH_REQUIRED', 'Vuelve a verificar tu cuenta de Google.');
         currentPin = body.pin;
@@ -94,21 +105,34 @@ export async function mockOnboarding(page: Page, options: {
         if (locked || googleRole !== 'owner') return reject(403, 'PERMISSION_DENIED', 'Acceso restringido.');
         return reply({ employees, invitations, devices });
       case 'create_employee': {
-        const employee = { id: '6bfa7b67-f54b-49a1-89f7-0f2d8f9e876e', name: body.name, role: body.role, active: true };
+        if (employeeOperations.has(body.operationId)) return reply(employeeOperations.get(body.operationId));
+        if (body.inviteWithGoogle ? body.pin !== null : typeof body.pin !== 'string') return reject(400, 'VALIDATION_ERROR', 'Revisa el acceso del empleado.');
+        const employee: EmployeeSummary = { id: crypto.randomUUID(), name: body.name, role: body.role, active: true, pinReady: !body.inviteWithGoogle, googleLinked: false };
         employees.push(employee);
-        return reply(employee);
+        const invitation = body.inviteWithGoogle ? { invitationCode: fixtureInvitation, invitationId: crypto.randomUUID(), expiresAt: expiresAt() } : undefined;
+        if (invitation) invitations.push({ id: invitation.invitationId, employeeId: employee.id, name: employee.name, role: body.role, active: true, expiresAt: invitation.expiresAt });
+        const result = { ...employee, ...(invitation ? { invitation } : {}) };
+        employeeOperations.set(body.operationId, result);
+        if (createEmployeeResponseLosses > 0) { createEmployeeResponseLosses -= 1; return route.abort('failed'); }
+        return reply(result);
       }
       case 'update_employee': {
         const employee = employees.find((item) => item.id === body.employeeId);
         if (!employee) return reject(404, 'EMPLOYEE_INACTIVE', 'Empleado no disponible.');
         Object.assign(employee, { name: body.name, role: body.role, active: body.active });
+        if (body.pin) employee.pinReady = true;
         return reply(employee);
       }
       case 'create_invitation': {
-        const invitationId = 'c61b6b8c-9392-461a-a499-28ae107030c1';
+        if (invitationOperations.has(body.operationId)) return reply(invitationOperations.get(body.operationId));
+        const employee = 'employeeId' in body ? employees.find((item) => item.id === body.employeeId) : undefined;
+        if ('employeeId' in body && (!employee || !employee.active || employee.googleLinked)) return reject(400, 'INVITATION_INVALID', 'Empleado no disponible para vincular Google.');
+        const invitationId = crypto.randomUUID();
         const expiration = expiresAt();
-        invitations.push({ id: invitationId, name: body.name, role: body.role, active: true, expiresAt: expiration });
-        return reply({ invitationCode: fixtureInvitation, invitationId, expiresAt: expiration });
+        invitations.push({ id: invitationId, ...(employee ? { employeeId: employee.id } : {}), name: employee?.name ?? ('name' in body ? body.name : ''), role: employee && employee.role !== 'owner' ? employee.role : 'role' in body ? body.role : 'cashier', active: true, expiresAt: expiration });
+        const result = { invitationCode: fixtureInvitation, invitationId, expiresAt: expiration };
+        invitationOperations.set(body.operationId, result);
+        return reply(result);
       }
       case 'revoke_invitation': {
         const invitation = invitations.find((item) => item.id === body.invitationId);
@@ -123,7 +147,7 @@ export async function mockOnboarding(page: Page, options: {
         devices.push({ id: fixtureDeviceId, name: body.deviceName, registerName: business.profile.registerName, active: true });
         return reply({ deviceId: fixtureDeviceId, deviceToken: fixtureDeviceToken, business: summary(), registerName: business.profile.registerName });
       case 'device_status': return paired && body.deviceToken === fixtureDeviceToken
-        ? reply({ business: summary(), registerName: business.profile.registerName, employees: employees.filter((employee) => employee.active) })
+        ? reply({ business: summary(), registerName: business.profile.registerName, employees: employees.filter((employee) => employee.active && employee.pinReady) })
         : reject(401, 'DEVICE_REVOKED', 'El dispositivo fue revocado.');
       case 'device_unlock':
         currentDeviceEmployee = employees.find((employee) => employee.id === body.employeeId) ?? fixtureCashier;

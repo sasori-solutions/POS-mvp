@@ -63,3 +63,16 @@ Deno.test('validates employee invitation and restricted device actions', () => {
   assert.throws(() => parseAccountRequest({ action: 'create_employee', businessId: validCreate.operationId, operatorToken: token, name: 'Cajero', role: 'owner', pin: '015827', operationId: validCreate.operationId }))
   assert.throws(() => parseAccountRequest({ action: 'device_status', deviceToken: token, userId: validCreate.operationId }))
 })
+
+Deno.test('unified staff creation supports optional Google without a redundant PIN', () => {
+  const base = { action: 'create_employee', businessId: validCreate.operationId, operatorToken: 'a'.repeat(64), name: 'Empleado', role: 'cashier', operationId: validCreate.operationId }
+  assert.deepEqual(parseAccountRequest({ ...base, pin: null, inviteWithGoogle: true }), { ...base, pin: null, inviteWithGoogle: true })
+  for (const patch of [{ pin: null }, { pin: null, inviteWithGoogle: false }, { pin: '123456', inviteWithGoogle: true }, { pin: '123456', inviteWithGoogle: 'true' }]) assert.throws(() => parseAccountRequest({ ...base, ...patch }))
+})
+Deno.test('targets an existing employee explicitly and accepts without asking the name twice', () => {
+  const invitation = { action: 'create_invitation', businessId: validCreate.operationId, operatorToken: 'a'.repeat(64), employeeId: validCreate.operationId, operationId: validCreate.operationId }
+  assert.deepEqual(parseAccountRequest(invitation), invitation)
+  assert.throws(() => parseAccountRequest({ ...invitation, name: 'Empleado', role: 'cashier' }))
+  const acceptance = { action: 'accept_invitation', invitationCode: 'a'.repeat(64), pin: '024680', operationId: validCreate.operationId }
+  assert.deepEqual(parseAccountRequest(acceptance), acceptance)
+})

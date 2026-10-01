@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as pause } from 'node:timers/promises'
-import { chromium } from '@playwright/test'
+import { chromium, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
 const config = JSON.parse(execFileSync('./node_modules/.bin/supabase', ['status', '-o', 'json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
@@ -16,6 +16,12 @@ const admin = createClient(config.API_URL, config.SERVICE_ROLE_KEY, { auth: { pe
 const credentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
 let userId, employeeUserId, businessId, browser, server
 let stage = 'prepare'
+const accountResponse = (page, action) => page.waitForResponse(response => response.url().endsWith('/functions/v1/account') && JSON.parse(response.request().postData() ?? '{}').action === action)
+function staffSnapshot() {
+  assert.match(businessId, /^[a-f0-9-]{36}$/i)
+  return JSON.parse(execFileSync('docker', ['exec', '-i', 'supabase_db_pos-mexico-pwa', 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-tA', '-c',
+    `select coalesce(jsonb_agg(jsonb_build_object('id',e.id,'name',e.name,'userId',e.user_id,'sharedPin',exists(select 1 from app_private.shared_employee_credentials c where c.business_id=e.business_id and c.employee_id=e.id)) order by e.name),'[]'::jsonb) from app_private.employees e where e.business_id='${businessId}'::uuid and e.role<>'owner';`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim())
+}
 try {
   const created = await admin.auth.admin.createUser({ ...credentials, email_confirm: true })
   if (created.error) throw new Error('Synthetic user creation failed')
@@ -67,8 +73,27 @@ try {
   await ownerPage.getByLabel('Nombre del empleado', { exact: true }).fill('Cajero smoke')
   await ownerPage.getByLabel('PIN del empleado', { exact: true }).fill('024680')
   await ownerPage.getByLabel('Confirmar PIN del empleado', { exact: true }).fill('024680')
+  const employeeResponse = accountResponse(ownerPage, 'create_employee')
   await ownerPage.getByRole('button', { name: 'Guardar empleado', exact: true }).click()
+  const employee = (await (await employeeResponse).json()).data
+  assert(employee.id && employee.pinReady && !employee.googleLinked)
   await ownerPage.getByRole('button', { name: 'Editar Cajero smoke', exact: true }).waitFor()
+  stage = 'single Google employee form'
+  assert.equal(await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).count(), 0)
+  await ownerPage.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
+  await ownerPage.getByLabel('Nombre del empleado', { exact: true }).fill('Pendiente Google smoke')
+  await ownerPage.getByLabel('Acceso con Google', { exact: true }).check()
+  assert.equal(await ownerPage.getByLabel('PIN del empleado', { exact: true }).count(), 0)
+  await ownerPage.setViewportSize({ width: 393, height: 851 })
+  await ownerPage.screenshot({ path: '/tmp/pos-mexico-unified-employee-form.png', fullPage: false })
+  const googleResponse = accountResponse(ownerPage, 'create_employee')
+  await ownerPage.getByRole('button', { name: 'Guardar empleado', exact: true }).click()
+  const pendingEmployee = (await (await googleResponse).json()).data
+  assert(pendingEmployee.id && !pendingEmployee.pinReady && pendingEmployee.invitation)
+  assert.match(pendingEmployee.invitation.invitationCode, /^[a-f0-9]{64}$/)
+  await ownerPage.getByRole('button', { name: 'Editar Pendiente Google smoke', exact: true }).waitFor()
+  assert.equal(staffSnapshot().length, 2)
+  await ownerPage.setViewportSize({ width: 1280, height: 900 })
   stage = 'pair device'
   await ownerPage.getByRole('button', { name: 'Emparejar dispositivo', exact: true }).click()
   const pairingCode = await ownerPage.getByLabel('Código de emparejamiento', { exact: true }).inputValue()
@@ -77,6 +102,8 @@ try {
   await devicePage.getByLabel('Código de emparejamiento', { exact: true }).fill(pairingCode)
   await devicePage.getByLabel('Nombre del dispositivo', { exact: true }).fill('Tablet smoke')
   await devicePage.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
+  await devicePage.getByRole('heading', { name: 'Elige tu nombre', exact: true }).waitFor()
+  assert.equal(await devicePage.getByRole('button', { name: 'Pendiente Google smoke', exact: true }).count(), 0)
   await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).click()
   stage = 'employee PIN'
   await devicePage.getByTestId('employee-pin-input').fill('024680')
@@ -85,11 +112,14 @@ try {
   await devicePage.getByRole('button', { name: 'Más', exact: true }).click()
   assert.equal(await devicePage.getByRole('button', { name: 'Configurar negocio', exact: true }).count(), 0)
   await devicePage.screenshot({ path: '/tmp/pos-mexico-real-employee-smoke.png', fullPage: true })
-  stage = 'personal invitation'
-  await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).click()
-  await ownerPage.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado Google smoke')
-  await ownerPage.getByRole('button', { name: 'Generar invitación', exact: true }).click()
-  const invitationCode = await ownerPage.getByLabel('Código de invitación', { exact: true }).inputValue()
+  stage = 'link existing employee invitation'
+  const linkResponse = accountResponse(ownerPage, 'create_invitation')
+  await ownerPage.getByRole('button', { name: 'Vincular Google a Cajero smoke', exact: true }).click()
+  const linkResult = await linkResponse
+  assert.equal(JSON.parse(linkResult.request().postData()).employeeId, employee.id)
+  assert.equal(linkResult.status(), 200)
+  const invitationCode = (await linkResult.json()).data.invitationCode
+  await expect(ownerPage.getByLabel('Código de invitación', { exact: true })).toHaveValue(invitationCode)
   assert.match(invitationCode, /^[a-f0-9]{64}$/)
   const employeeCredentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
   const employeeCreated = await admin.auth.admin.createUser({ ...employeeCredentials, email_confirm: true })
@@ -107,10 +137,17 @@ try {
   const personalPage = await personalContext.newPage()
   await personalPage.goto(`${origin}/join`)
   await personalPage.getByLabel('Código de invitación', { exact: true }).fill(invitationCode)
-  await personalPage.getByLabel('Tu nombre', { exact: true }).fill('Empleado Google smoke')
+  assert.equal(await personalPage.getByLabel('Tu nombre', { exact: true }).count(), 0)
   await personalPage.getByTestId('pin-input').fill('864202')
   await personalPage.getByTestId('pin-confirm-input').fill('864202')
+  const acceptanceResponse = accountResponse(personalPage, 'accept_invitation')
   await personalPage.getByRole('button', { name: 'Unirme', exact: true }).click()
+  const acceptance = (await (await acceptanceResponse).json()).data
+  assert.equal(acceptance.business.employee.id, employee.id)
+  assert.equal(acceptance.business.employee.name, 'Cajero smoke')
+  const staff = staffSnapshot()
+  assert.equal(staff.length, 2, 'Linking must not create another person')
+  assert.deepEqual(staff.find(row => row.id === employee.id), { id: employee.id, name: 'Cajero smoke', userId: employeeUserId, sharedPin: false })
   await personalPage.getByRole('button', { name: 'Más', exact: true }).click()
   assert.equal(await personalPage.getByRole('button', { name: 'Configurar negocio', exact: true }).count(), 0)
   await personalPage.reload()
@@ -118,6 +155,19 @@ try {
   await personalPage.getByTestId('pin-input').fill('864202')
   await personalPage.getByRole('button', { name: 'Entrar', exact: true }).click()
   await personalPage.getByRole('button', { name: 'Más', exact: true }).waitFor()
+  stage = 'linked employee replaces previous device credential'
+  await devicePage.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await devicePage.getByRole('heading', { name: 'Elige tu nombre', exact: true }).waitFor({ timeout: 15_000 })
+  assert.equal(await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).count(), 1)
+  assert.equal(await devicePage.getByRole('button', { name: 'Pendiente Google smoke', exact: true }).count(), 0)
+  await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).click()
+  await devicePage.getByTestId('employee-pin-input').fill('024680')
+  const oldPinResponse = accountResponse(devicePage, 'device_unlock')
+  await devicePage.getByRole('button', { name: 'Entrar', exact: true }).click()
+  assert.equal((await (await oldPinResponse).json()).error.code, 'PIN_INVALID')
+  await devicePage.getByTestId('employee-pin-input').fill('864202')
+  await devicePage.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await devicePage.getByRole('button', { name: 'Más', exact: true }).waitFor()
   stage = 'revoke device'
   await ownerPage.getByRole('button', { name: 'Volver', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Más', exact: true }).click()
@@ -130,7 +180,7 @@ try {
   await devicePage.evaluate(() => window.dispatchEvent(new Event('focus')))
   await devicePage.getByRole('heading', { name: 'Entrar como empleado', exact: true }).waitFor({ timeout: 15_000 })
   assert.equal(await devicePage.evaluate(() => localStorage.getItem('pos-mexico-device')), null)
-  console.log('PASS real loopback browser: persisted business/profile, employee creation, device pairing/PIN, personal invitation/returning PIN, owner-control exclusion and server revocation.')
+  console.log('PASS real loopback browser: single employee form, atomic Google pending employee, same-ID Google linking, no duplicate person/name entry, old PIN/operator revocation, personal/register PIN and owner-control exclusion.')
 } catch {
   throw new Error(`Real loopback onboarding smoke failed at: ${stage}. Credentials and response payloads omitted.`)
 } finally {

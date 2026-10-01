@@ -52,16 +52,23 @@ export function parseAccountRequest(value: unknown): AccountRequest {
     case 'context': case 'lock': case 'team':
       exactKeys(input, owner); return { action: input.action, ...ownerArgs() }
     case 'create_employee':
-      exactKeys(input, [...owner, 'name', 'role', 'pin', 'operationId']); return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), pin: pin(input), operationId: uuid(input, 'operationId') }
+      exactKeys(input, [...owner, 'name', 'role', 'pin', 'operationId'], ['inviteWithGoogle'])
+      if (Object.hasOwn(input, 'inviteWithGoogle') && typeof input.inviteWithGoogle !== 'boolean') invalid()
+      if (input.inviteWithGoogle === true && input.pin !== null) invalid()
+      return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), pin: input.inviteWithGoogle === true ? null : pin(input), operationId: uuid(input, 'operationId'), ...(Object.hasOwn(input, 'inviteWithGoogle') ? { inviteWithGoogle: input.inviteWithGoogle as boolean } : {}) }
     case 'update_employee':
       exactKeys(input, [...owner, 'employeeId', 'name', 'role', 'active', 'pin']); if (typeof input.active !== 'boolean') invalid()
       return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), name: name(input.name), role: role(input), active: input.active, pin: input.pin === null ? null : pin(input) }
     case 'create_invitation':
+      if (Object.hasOwn(input, 'employeeId')) {
+        exactKeys(input, [...owner, 'employeeId', 'operationId'])
+        return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), operationId: uuid(input, 'operationId') }
+      }
       exactKeys(input, [...owner, 'name', 'role', 'operationId']); return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), operationId: uuid(input, 'operationId') }
     case 'revoke_invitation':
       exactKeys(input, [...owner, 'invitationId']); return { action: input.action, ...ownerArgs(), invitationId: uuid(input, 'invitationId') }
     case 'accept_invitation':
-      exactKeys(input, ['action', 'invitationCode', 'name', 'pin', 'operationId']); return { action: input.action, invitationCode: token(input, 'invitationCode'), name: name(input.name), pin: pin(input), operationId: uuid(input, 'operationId') }
+      exactKeys(input, ['action', 'invitationCode', 'pin', 'operationId'], ['name']); return { action: input.action, invitationCode: token(input, 'invitationCode'), ...(Object.hasOwn(input, 'name') ? { name: name(input.name) } : {}), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'create_pairing_code':
       exactKeys(input, [...owner, 'operationId']); return { action: input.action, ...ownerArgs(), operationId: uuid(input, 'operationId') }
     case 'revoke_device':

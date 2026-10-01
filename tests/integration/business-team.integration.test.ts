@@ -96,7 +96,7 @@ describe.skipIf(!config)('business profile, personal employees and shared device
 
   it('rejects expired/revoked invitations and accepts only one competing identity', async () => {
     const business = await newBusiness(owner); const ownerArgs = { businessId: business.business.id, operatorToken: business.operatorToken };
-    const invite = () => account<{ invitationCode: string; invitationId: string }>(owner, { action: 'create_invitation', ...ownerArgs, name: 'Encargado sintético', role: 'manager', operationId: randomUUID() });
+    const invite = () => account<{ invitationCode: string; invitationId: string }>(owner, { action: 'create_invitation', ...ownerArgs, name: `Encargado sintético ${randomUUID().slice(0, 8)}`, role: 'manager', operationId: randomUUID() });
     const expired = (await invite()).body.data!;
     sql(`update app_private.business_invitations set expires_at=now()-interval '1 second' where id=${sqlUuid(expired.invitationId)};`);
     expect((await account(employee, { action: 'accept_invitation', invitationCode: expired.invitationCode, name: 'Persona sintética', pin: '246802', operationId: randomUUID() })).body.error?.code).toBe('INVITATION_INVALID');
@@ -107,7 +107,7 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     const concurrent = await Promise.all([employee, anotherOwner].map(identity => account(identity, { action: 'accept_invitation', invitationCode: live.invitationCode, name: 'Persona sintética', pin: '246802', operationId: randomUUID() })));
     expect(concurrent.map(r => r.status).sort()).toEqual([200, 400]);
     expect(concurrent.find(r => r.status === 400)?.body.error?.code).toBe('INVITATION_INVALID');
-    expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role='manager';`).trim()).toBe('1');
+    expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role='manager' and user_id is not null;`).trim()).toBe('1');
   });
 
   it('enforces shared employee PIN lockout under concurrency and removes inactive operators', async () => {

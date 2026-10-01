@@ -94,3 +94,7 @@ The human subsequently instructed “despliegalo entonces”. This authorizes pu
 - [x] Save signed deployment closure and remaining limits in Drive after the release checks: [deployment closure](https://drive.google.com/file/d/1qHh3EL2hnqBP4659zgQ7fJMTWrSvchF3/view).
 
 Release sources can be published after the verified hosted asset and real Google checks; Git history records that publication separately.
+
+## Approved employee correction — completed 1 October 2026
+
+Larios requested one employee flow without redundant creation or repeated name entry. Implemented one form with optional Google, atomic pending employee/invitation, explicit same-ID linking, canonical assigned name/role and credential/operator replacement. Migration 0003 preserves prior codes and retries. Review fixes cover cooldown before consuming a code, same-Google concurrent acceptance and legacy FK lock order. Local validation: 98/98 browser, 27/27 integration, 12/12 Deno, build/typecheck, real browser smoke and real 0002→0003 compatibility smoke. Published migration/function/20 frontend files; 9 SQL source hashes, exact history/RLS/grants, Edge byte comparison, 6 public probes and 27/27 hosted asset checks passed. Real Google and current owner team/form rendering passed. Cloud successful staff mutations, fresh business creation and phone installation remain manual. Production deployment `219368ec-e1e8-4b3c-95e0-314b6adb8158`. No new provider, expense, permission expansion or external invitation message.
