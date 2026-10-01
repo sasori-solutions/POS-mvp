@@ -6,6 +6,8 @@ The frontend is a static Vite PWA. Supabase project `sdisalomdxgejyhpxtri` remai
 
 The current public host is **[pos-mexico-mvp.pages.dev](https://pos-mexico-mvp.pages.dev)**. The Pages project uses Direct Upload; upload the verified build for each release. Pushing the repository alone does not update this deployment.
 
+Business/team release, 1 October 2026: the new Supabase migration and updated `account` function are deployed, and both migrations are recorded in cloud history. The 20 generated frontend files are published in Cloudflare production deployment `55bd6be0-0ba1-41ac-be5c-1b141859b594`; the hosted HTTP gate passed 27/27 with exact `dist` hashes. Real Google selection/callback/account loading reached the existing business's PIN screen, and anonymous `/employee` displayed register pairing. Human PIN entry, new cloud business creation, complete staff/pairing workflows and physical-phone installation remain unverified.
+
 ## Build and upload
 
 Use a Cloudflare Pages project with the repository root as its root directory, build command `npm run build`, and output directory `dist`. Use Node 22, at least 22.12; the installed Vite package requires Node 20.19+ or 22.12+. The lockfile defines the npm dependencies. For a local production build, run:
@@ -52,7 +54,7 @@ The current worker uses prompt-style updates but has no update banner. A new wor
 Before calling the public deployment ready:
 
 1. Open the HTTPS URL in a fresh browser without a Cloudflare account. Confirm the app loads and does not require a hosting login.
-2. Directly open and reload `/login`, `/business/new`, `/business/ready`, `/unlock`, and `/auth/callback?error=access_denied`. Each must serve the app shell; the denied callback should show the app's Google error message. Private home and ready routes must still require a valid operator session.
+2. Directly open and reload all seven SPA paths: `/login`, `/business/new`, `/business/ready`, `/unlock`, `/join`, `/employee`, and `/auth/callback?error=access_denied`. Each must serve the app shell; the denied callback should show the app's Google error message. Private home and ready routes must still require a valid operator session.
 3. Fetch `/manifest.webmanifest`, `/sw.js`, the actual hashed JS/CSS paths, and both icon files. Confirm each serves its own expected content, not `index.html`.
 4. Confirm the built bundle uses the expected cloud Supabase URL. An unauthenticated account POST with the public app origin should return `AUTH_REQUIRED`, not `ORIGIN_FORBIDDEN`.
 5. Complete Google consent, callback exchange, and account loading from that public origin with the human's authorized account. Then verify business creation, PIN unlock, lock, reload requiring PIN, and logout. Existing mocked browser tests do not establish this live OAuth result.
@@ -64,6 +66,8 @@ After building and deploying the same `dist`, run the anonymous HTTP gate with t
 npm run check:live -- https://pos-mexico-mvp.pages.dev
 ```
 
-It checks the root and all five exact SPA paths return HTTP 200 without redirects, validates asset content types, and compares public response hashes with the local build. It sends only anonymous GETs; it does not test CORS, sign in, or verify Google consent. Complete the live Google flow before the next GitHub push.
+It checks the root and all seven exact SPA paths return HTTP 200 without redirects, validates every generated asset's content type, and compares public response hashes with the local build. The current 20-file build produces 27 checks (eight shell routes plus 19 non-index assets). It sends only anonymous GETs; it does not test CORS, sign in, or verify Google consent. Complete the live Google flow before the next GitHub push.
 
-The home release passed 21/21 hosted route and asset checks, 44 desktop/mobile browser tests and production typecheck/build. The current live bundle was verified in Brave after closing app windows to activate the new worker. The human's existing PIN opened Venta; Ver productos, Más with saved business details and navigation back to Venta also passed live. The preceding auth release passed eight anonymous cloud API checks, real Google login/logout/relogin/reload, an existing PIN unlock and live lock, plus 11 real local database integration tests. The home release changes no backend code or schema; database integration tests were not rerun. Fresh cloud business creation and physical-phone installation remain separate manual checks.
+Historical home release: 21/21 hosted route and asset checks, 44 desktop/mobile browser tests and production typecheck/build passed. That release's live bundle was verified in Brave after closing app windows to activate the new worker. The human's existing PIN opened Venta; Ver productos, Más with saved business details and navigation back to Venta also passed live. The preceding auth release passed eight anonymous cloud API checks, real Google login/logout/relogin/reload, an existing PIN unlock and live lock, plus 11 real local database integration tests. The home release changes no backend code or schema; database integration tests were not rerun. Fresh cloud business creation and physical-phone installation remain separate manual checks.
+
+The business creation form was also inspected live with its optional address/contact fields expanded; no production business was created for that inspection. A downloaded copy of the deployed `account` function matched the checked standalone source byte for byte (SHA-256 `bff27bb98eb7b46163847390ba4a856cd2172e791b30dcf172a92ab20cf5c168`).

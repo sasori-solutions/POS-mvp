@@ -1,4 +1,18 @@
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
+export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
+export type EmployeeRole = Exclude<BusinessRole, 'owner'>
+export type PaymentMethod = 'cash' | 'card_external' | 'transfer'
+
+/** Progressive setup: fiscal and bank credentials never belong in this profile. */
+export interface BusinessProfile {
+  branchName: string
+  registerName: string
+  address: string
+  city: string
+  state: string
+  contactPhone: string
+  paymentMethods: PaymentMethod[]
+}
 
 /** The only business data available before a successful PIN unlock. */
 export interface BusinessSummary {
@@ -7,11 +21,33 @@ export interface BusinessSummary {
   businessType: BusinessType
 }
 
+export interface EmployeeSummary {
+  id: string
+  name: string
+  role: BusinessRole
+  active: boolean
+}
+export interface InvitationSummary {
+  id: string
+  name: string
+  role: EmployeeRole
+  expiresAt: string
+  active: boolean
+}
+export interface DeviceSummary {
+  id: string
+  name: string
+  registerName: string
+  active: boolean
+}
 export interface BusinessContext extends BusinessSummary {
   timezone: string
   currency: 'MXN'
-  role: 'owner'
+  role: BusinessRole
   createdAt: string
+  /** Owner-only details; blank projection for employees. */
+  profile: BusinessProfile
+  employee?: { id: string; name: string; role: BusinessRole }
 }
 
 /** Keep operatorToken in memory; never persist it in browser storage. */
@@ -20,55 +56,82 @@ export interface OperatorSession {
   operatorToken: string
   expiresAt: string
 }
-
 export interface AccountContext {
   business: BusinessContext
   expiresAt: string
 }
+export interface TeamContext {
+  employees: EmployeeSummary[]
+  invitations: InvitationSummary[]
+  devices: DeviceSummary[]
+}
+export interface DeviceStatus {
+  business: BusinessSummary
+  employees: EmployeeSummary[]
+  registerName: string
+}
+export interface PairedDevice {
+  deviceId: string
+  /** Restricted device credential; does not replace a PIN operator session. */
+  deviceToken: string
+  business: BusinessSummary
+  registerName: string
+}
 
+type OwnerRequest = { businessId: string; operatorToken: string }
 export type AccountRequest =
   | { action: 'status' }
-  | {
-      action: 'create_business'
-      name: string
-      businessType: BusinessType
-      timezone: string
-      operationId: string
-      pin: string
-    }
+  | { action: 'create_business'; name: string; businessType: BusinessType; timezone: string; operationId: string; pin: string; profile?: BusinessProfile }
+  | ({ action: 'update_business'; name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile } & OwnerRequest)
   | { action: 'unlock'; businessId: string; pin: string }
-  | { action: 'context'; businessId: string; operatorToken: string }
-  | { action: 'lock'; businessId: string; operatorToken: string }
+  | ({ action: 'context' } & OwnerRequest)
+  | ({ action: 'lock' } & OwnerRequest)
   | { action: 'revoke_sessions' }
+  | ({ action: 'team' } & OwnerRequest)
+  | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: string; operationId: string } & OwnerRequest)
+  | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; active: boolean; pin: string | null } & OwnerRequest)
+  | ({ action: 'create_invitation'; name: string; role: EmployeeRole; operationId: string } & OwnerRequest)
+  | ({ action: 'revoke_invitation'; invitationId: string } & OwnerRequest)
+  | { action: 'accept_invitation'; invitationCode: string; name: string; pin: string; operationId: string }
+  | ({ action: 'create_pairing_code'; operationId: string } & OwnerRequest)
+  | ({ action: 'revoke_device'; deviceId: string } & OwnerRequest)
+  | { action: 'reset_pin'; businessId: string; pin: string }
+  | { action: 'device_pair'; pairingCode: string; deviceName: string; operationId: string }
+  | { action: 'device_status'; deviceToken: string }
+  | { action: 'device_forget'; deviceToken: string }
+  | { action: 'device_unlock'; deviceToken: string; employeeId: string; pin: string }
+  | { action: 'device_context'; deviceToken: string; operatorToken: string }
+  | { action: 'device_lock'; deviceToken: string; operatorToken: string }
 
 export interface AccountResponses {
   status: { businesses: BusinessSummary[] }
   create_business: OperatorSession
+  update_business: BusinessContext
   unlock: OperatorSession
   context: AccountContext
   lock: { locked: true }
   revoke_sessions: { revoked: true }
+  team: TeamContext
+  create_employee: EmployeeSummary
+  update_employee: EmployeeSummary
+  create_invitation: { invitationCode: string; invitationId: string; expiresAt: string }
+  revoke_invitation: { revoked: true }
+  accept_invitation: OperatorSession
+  create_pairing_code: { pairingCode: string; expiresAt: string }
+  revoke_device: { revoked: true }
+  reset_pin: OperatorSession
+  device_pair: PairedDevice
+  device_status: DeviceStatus
+  device_unlock: OperatorSession
+  device_context: AccountContext
+  device_lock: { locked: true }
+  device_forget: { revoked: true }
 }
-
 export type AccountErrorCode =
-  | 'AUTH_REQUIRED'
-  | 'GOOGLE_REQUIRED'
-  | 'VALIDATION_ERROR'
-  | 'BUSINESS_ACCESS_DENIED'
-  | 'PIN_INVALID'
-  | 'PIN_LOCKED'
-  | 'SESSION_INVALID'
-  | 'SESSION_EXPIRED'
-  | 'OPERATION_CONFLICT'
-  | 'ORIGIN_FORBIDDEN'
-  | 'METHOD_NOT_ALLOWED'
-  | 'PAYLOAD_TOO_LARGE'
-  | 'SERVER_ERROR'
-
-export interface AccountError {
-  code: AccountErrorCode
-  message: string
-  retryAfterSeconds?: number
-}
-
+  | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
+  | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
+  | 'REAUTH_REQUIRED' | 'EMPLOYEE_INACTIVE' | 'PIN_INVALID' | 'PIN_LOCKED'
+  | 'SESSION_INVALID' | 'SESSION_EXPIRED' | 'OPERATION_CONFLICT' | 'ORIGIN_FORBIDDEN'
+  | 'METHOD_NOT_ALLOWED' | 'PAYLOAD_TOO_LARGE' | 'SERVER_ERROR'
+export interface AccountError { code: AccountErrorCode; message: string; retryAfterSeconds?: number }
 export type AccountEnvelope<T> = { data: T } | { error: AccountError }

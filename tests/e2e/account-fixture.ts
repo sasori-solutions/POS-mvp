@@ -8,6 +8,15 @@ export const fixtureBusiness = {
   currency: 'MXN',
   role: 'owner',
   createdAt: '2026-10-01T12:00:00.000Z',
+  profile: {
+    branchName: 'Sucursal principal',
+    registerName: 'Caja 1',
+    address: '',
+    city: '',
+    state: '',
+    contactPhone: '',
+    paymentMethods: ['cash', 'card_external'],
+  },
 };
 
 export const fixturePin = '583927';
@@ -138,7 +147,7 @@ export async function mockAccount(page: Page, options: {
     };
     switch (body.action) {
       case 'status':
-        return reply({ businesses: hasBusiness ? [fixtureBusiness] : [] });
+        return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType }] : [] });
       case 'create_business':
         hasBusiness = true;
         locked = false;

@@ -1,6 +1,24 @@
 import type { AccountEnvelope, AccountErrorCode, AccountRequest, AccountResponses } from './contracts'
 import { supabase, supabasePublishableKey, supabaseUrl } from './supabase'
 
+const messages: Record<AccountErrorCode, string> = {
+  AUTH_REQUIRED: 'Tu sesión venció. Vuelve a entrar con Google.', GOOGLE_REQUIRED: 'Entra con Google para continuar.',
+  VALIDATION_ERROR: 'Revisa los datos e intenta de nuevo.', BUSINESS_ACCESS_DENIED: 'No tienes acceso a este negocio.',
+  PERMISSION_DENIED: 'Tu rol no permite esta acción. Solicita ayuda al dueño.',
+  INVITATION_INVALID: 'La invitación venció, fue revocada o ya no es válida. Pide una nueva al dueño.',
+  PAIRING_INVALID: 'El código de conexión venció o ya no es válido. Pide uno nuevo al dueño.',
+  DEVICE_REVOKED: 'Este dispositivo fue revocado. Vuelve a conectarlo con el dueño.',
+  EMPLOYEE_INACTIVE: 'Tu acceso fue desactivado. Contacta al dueño.',
+  REAUTH_REQUIRED: 'Vuelve a verificar tu cuenta con Google para cambiar el PIN.',
+  PIN_INVALID: 'PIN incorrecto. Intenta de nuevo.', PIN_LOCKED: 'Demasiados intentos. Espera antes de volver a ingresar tu PIN.',
+  SESSION_INVALID: 'La app está bloqueada. Ingresa tu PIN para continuar.', SESSION_EXPIRED: 'Tu sesión de trabajo venció. Ingresa tu PIN para continuar.',
+  OPERATION_CONFLICT: 'Esta solicitud cambió. Revisa los datos e intenta de nuevo.',
+  ORIGIN_FORBIDDEN: 'Abre el enlace oficial de POS México para entrar.',
+  METHOD_NOT_ALLOWED: 'No pudimos completar la solicitud. Intenta de nuevo.',
+  PAYLOAD_TOO_LARGE: 'Revisa los datos e intenta de nuevo.',
+  SERVER_ERROR: 'No pudimos completar la solicitud. Intenta de nuevo.',
+}
+
 export class AccountClientError extends Error {
   constructor(
     readonly code: AccountErrorCode | 'NETWORK_ERROR',
@@ -24,13 +42,27 @@ export async function accountRequest<A extends AccountRequest['action']>(
     accessToken = identity.session.access_token
   }
 
+  return sendRequest(request, accessToken)
+}
+
+/** Device credentials are independently checked by the server; no owner identity is forwarded. */
+export async function deviceRequest<A extends Extract<AccountRequest, { action: `device_${string}` }>['action']>(
+  request: Extract<AccountRequest, { action: A }>,
+): Promise<AccountResponses[A]> {
+  if (!supabase) throw new AccountClientError('SERVER_ERROR', 'La aplicación aún no está configurada.')
+  return sendRequest(request)
+}
+
+async function sendRequest<A extends AccountRequest['action']>(
+  request: Extract<AccountRequest, { action: A }>, accessToken?: string,
+): Promise<AccountResponses[A]> {
   let response: Response
   try {
     response = await fetch(`${supabaseUrl}/functions/v1/account`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         apikey: supabasePublishableKey,
       },
       body: JSON.stringify(request),
@@ -53,7 +85,7 @@ export async function accountRequest<A extends AccountRequest['action']>(
   }
   const envelope = body as AccountEnvelope<AccountResponses[A]>
   if ('error' in envelope) {
-    throw new AccountClientError(envelope.error.code, envelope.error.message, envelope.error.retryAfterSeconds)
+    throw new AccountClientError(envelope.error.code, messages[envelope.error.code] ?? envelope.error.message, envelope.error.retryAfterSeconds)
   }
   if (!response.ok || !('data' in envelope)) {
     throw new AccountClientError('SERVER_ERROR', 'No pudimos completar la solicitud. Intenta de nuevo.')

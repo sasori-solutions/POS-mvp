@@ -50,3 +50,16 @@ Deno.test('requires a business UUID and full random token for PIN context access
     action: 'lock', businessId: validCreate.operationId, operatorToken: 'a'.repeat(64),
   })
 })
+
+Deno.test('accepts progressive business profile and rejects injection', () => {
+  const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: 'Guadalajara', state: 'Jalisco', contactPhone: '', paymentMethods: ['cash', 'card_external'] }
+  assert.deepEqual(parseAccountRequest({ ...validCreate, profile }), { ...validCreate, name: 'Café Norte', profile })
+  assert.throws(() => parseAccountRequest({ ...validCreate, profile: { ...profile, bankPassword: 'never' } }))
+})
+
+Deno.test('validates employee invitation and restricted device actions', () => {
+  const token = 'a'.repeat(64)
+  assert.deepEqual(parseAccountRequest({ action: 'device_unlock', deviceToken: token, employeeId: validCreate.operationId, pin: '015827' }), { action: 'device_unlock', deviceToken: token, employeeId: validCreate.operationId, pin: '015827' })
+  assert.throws(() => parseAccountRequest({ action: 'create_employee', businessId: validCreate.operationId, operatorToken: token, name: 'Cajero', role: 'owner', pin: '015827', operationId: validCreate.operationId }))
+  assert.throws(() => parseAccountRequest({ action: 'device_status', deviceToken: token, userId: validCreate.operationId }))
+})

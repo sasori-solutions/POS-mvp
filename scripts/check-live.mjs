@@ -63,7 +63,6 @@ async function check({ path, file }) {
     if (sha256(actual) !== sha256(expected)) throw new Error('content differs from the local production build')
     if (file.startsWith('assets/') && file.endsWith('.js')) {
       const bundle = actual.toString('utf8')
-      if (!bundle.includes('https://sdisalomdxgejyhpxtri.supabase.co')) throw new Error('expected cloud backend URL is missing')
       if (bundle.includes('http://127.0.0.1:54321') || bundle.includes('http://localhost:54321')) throw new Error('local backend URL found in production bundle')
     }
     console.log(`PASS ${path} · 200 · ${contentType} · matches dist`)
@@ -79,7 +78,10 @@ try {
   if (!files.includes('index.html') || !files.includes('manifest.webmanifest') || !files.includes('sw.js') || !files.some((file) => file.startsWith('assets/') && file.endsWith('.js'))) {
     throw new Error('Production assets missing; run npm run build first.')
   }
-  const routes = ['/', '/login', '/business/new', '/business/ready', '/unlock', '/auth/callback?error=access_denied']
+  // The backend URL lives in the shared entry bundle; lazy UI chunks need not repeat it.
+  const bundles = await Promise.all(files.filter((file) => file.startsWith('assets/') && file.endsWith('.js')).map((file) => readFile(join(dist, file), 'utf8')))
+  if (!bundles.some((bundle) => bundle.includes('https://sdisalomdxgejyhpxtri.supabase.co'))) throw new Error('expected cloud backend URL is missing from the production build')
+  const routes = ['/', '/login', '/business/new', '/business/ready', '/unlock', '/join', '/employee', '/auth/callback?error=access_denied']
   const checks = routes.map((path) => ({ path, file: 'index.html' }))
   for (const file of files) {
     if (file === 'index.html' || file === '_redirects' || file === '_headers') continue

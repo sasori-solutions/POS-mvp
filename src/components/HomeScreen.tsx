@@ -10,6 +10,12 @@ interface HomeScreenProps {
   busy: boolean
   error: string
   timezoneLabel: string
+  onSettings?: () => void
+  onTeam?: () => void
+  onSwitchBusiness?: () => void
+  onChangePin?: () => void
+  onSwitchEmployee?: () => void
+  logoutLabel?: string
 }
 
 const destinations = [
@@ -30,14 +36,17 @@ const upcoming = {
   Productos: { title: 'Tu catálogo, próximamente', description: 'Aquí podrás agregar y organizar los productos de tu negocio.', icon: Package },
 } as const
 
-export default function HomeScreen({ business, onLock, onLogout, busy, error, timezoneLabel }: HomeScreenProps) {
-  const [active, setActive] = useState<Destination>('Venta')
+export default function HomeScreen({ business, onLock, onLogout, busy, error, timezoneLabel, onSettings, onTeam, onSwitchBusiness, onChangePin, onSwitchEmployee, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
+  const [destination, setActive] = useState<Destination>(business.role === 'kitchen' ? 'Comandas' : 'Venta')
+  const allowedDestinations = destinations.filter(({ name }) => business.role === 'kitchen' ? name === 'Comandas' || name === 'Más' : business.role === 'cashier' ? name !== 'Ventas' : true)
+  const active = allowedDestinations.some(({ name }) => name === destination) ? destination : business.role === 'kitchen' ? 'Comandas' : 'Venta'
   const upcomingSection = active === 'Comandas' || active === 'Ventas' || active === 'Productos' ? upcoming[active] : null
   const SectionIcon = upcomingSection?.icon
 
   return <div className="pos-home-shell">
     <header className="pos-header">
       <p className="pos-business-name">{business.name}</p>
+      {business.employee && <span className="pos-employee-name">{business.employee.name}</span>}
       <button className="pos-icon-button" type="button" aria-label="Bloquear" title="Bloquear" onClick={onLock} disabled={busy} aria-busy={busy}>
         <LockKeyhole size={22} strokeWidth={1.6} aria-hidden="true" />
       </button>
@@ -65,12 +74,15 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, ti
           <div><dt>Zona horaria</dt><dd>{timezoneLabel}</dd></div>
           <div><dt>Moneda</dt><dd>{business.currency}</dd></div>
         </dl>
+        {business.role === 'owner' && <div className="pos-security-actions">{onSettings && <button className="pos-button pos-secondary" disabled={busy} onClick={onSettings}>Configurar negocio</button>}{onTeam && <button className="pos-button pos-secondary" disabled={busy} onClick={onTeam}>Equipo y dispositivos</button>}{onChangePin && <button className="pos-button pos-secondary" disabled={busy} onClick={onChangePin}>Cambiar PIN</button>}</div>}
         <div className="pos-security-actions">
+          {onSwitchBusiness && <button className="pos-button pos-secondary" disabled={busy} onClick={onSwitchBusiness}>Cambiar negocio</button>}
+          {onSwitchEmployee && <button className="pos-button pos-secondary" disabled={busy} onClick={onSwitchEmployee}>Cambiar empleado</button>}
           <button className="pos-button pos-secondary" type="button" onClick={onLock} disabled={busy} aria-busy={busy}>
             <LockKeyhole size={20} strokeWidth={1.6} aria-hidden="true" />Bloquear app
           </button>
           <button className="pos-button pos-secondary" type="button" onClick={onLogout} disabled={busy} aria-busy={busy}>
-            <LogOut size={20} strokeWidth={1.6} aria-hidden="true" />Cerrar sesión
+            <LogOut size={20} strokeWidth={1.6} aria-hidden="true" />{logoutLabel}
           </button>
         </div>
       </div> : upcomingSection && <div className="pos-empty">
@@ -81,7 +93,7 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, ti
     </section>
 
     <nav className="pos-navigation" aria-label="Navegación principal">
-      {destinations.map(({ name, icon: Icon }) => <button
+      {allowedDestinations.map(({ name, icon: Icon }) => <button
         className="pos-nav-item"
         type="button"
         key={name}

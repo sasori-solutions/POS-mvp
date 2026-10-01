@@ -6,6 +6,10 @@ Fecha de extracción: **1 de octubre de 2026**, America/Mexico_City. Repositorio
 
 Este archivo aplica a todo el repositorio. Reúne instrucciones de trabajo y un PRD extraído del conocimiento y las notas de conversaciones del [workspace de Drive](https://drive.google.com/drive/folders/17SUbtEJYeKy_zc8M2ZKR_0QV_ZsNiCZ3), leídos mediante el plugin Google Drive. Es una síntesis local fechada; Drive y los cambios posteriores del repositorio deben consultarse cuando cambie el alcance.
 
+**Actualización de implementación, 1 de octubre de 2026 — Agente de Larios:** la extracción base descrita abajo se conserva como evidencia histórica. Home ya fue implementado y publicado en la entrega anterior (`ede9998`). El encargo posterior «revisa el PRD y completa el flujo de creacion de negocio y login como empleado» añade elección crear/unirse para cuentas nuevas, perfil editable con sucursal/caja inicial y métodos de pago, personal e invitaciones con roles asignados, dispositivo restringido con PIN por empleado, bloqueo/cambio/revocación y recuperación de PIN del dueño con Google reciente. Esta extensión usa una nueva migración `20261001000200_business_team.sql`. Tras el encargo humano «despliegalo entonces», la migración y la función `account` actualizada se aplicaron en Supabase cloud; se verificaron perfil, empleados, backfill, RLS y permisos. El historial cloud registra `account_foundation` (44 sentencias) y `business_team` (48). Tres comprobaciones anónimas de la función pasaron con CORS del origen público y respuestas sin caché. Los 20 archivos del frontend quedaron publicados en producción de Cloudflare (deployment `55bd6be0-0ba1-41ac-be5c-1b141859b594`); el gate HTTP pasó 27/27 con hashes idénticos a `dist`. Google real completó selección de cuenta, callback y carga del negocio existente hasta su pantalla PIN; `/employee` anónimo mostró el emparejamiento de caja. El PIN humano de esta entrega, el alta nueva y los recorridos completos de personal/emparejamiento en cloud, además del móvil físico, siguen pendientes. Especificación y evidencias: `docs/superpowers/specs/2026-10-01-business-employees.md`, `docs/superpowers/plans/2026-10-01-business-employees.md` y `tests/README.md`.
+
+El perfil de sucursal/caja es configuración inicial de un local; no representa un sistema operativo de múltiples sucursales, cajas o turnos. RF-02 y RF-06 quedan parcialmente implementados: siguen pendientes catálogo, fondo/turnos, autorizaciones financieras y soporte temporal. RF-03–RF-05 y RF-07–RF-11 siguen pendientes. Los empleados no obtienen configuración privada del dueño; tampoco se simulan ventas, inventario ni reportes.
+
 ## 1. Cómo trabajar en este repositorio
 
 - Lee este archivo, `README.md` y la documentación del módulo afectado antes de editar. Para acceso/backend consulta `supabase/README.md`; para publicación, `DEPLOYMENT.md`; para pruebas, `tests/README.md`; para interfaz, `design-system.md` y `reference-read.md`.
@@ -93,7 +97,9 @@ Los requisitos de acceso conservan el comportamiento implementado. Los demás so
 
 **Aceptación:** una cuenta no accede a otro negocio; JWT de sesión Auth revocada deja de dar acceso; PIN incorrecto/expirado bloquea contexto; recarga exige PIN; respuesta perdida no duplica alta; logout repetido de sesión ya eliminada es válido; otros errores de revocación siguen visibles; pestaña cerrada de sesión no destruye un login fresco ajeno. [R01, R03–R05]
 
-### RF-02. Configuración y catálogo — pendiente
+### RF-02. Configuración y catálogo — configuración inicial local; catálogo pendiente
+
+La extensión local guarda y edita nombre de sucursal/caja, dirección/contacto públicos opcionales y métodos de pago. Fondo, política de autorizaciones y catálogo siguen pendientes. Los nombres de sucursal/caja no crean turnos ni una estructura de múltiples locales.
 
 Alta progresiva de una sucursal/caja, métodos de pago, fondo de apertura y política de autorizaciones. Catálogo con categorías, productos, variantes/tamaños, extras, notas, precio final MXN e impuestos por producto. Recetas/costos iniciales sólo al habilitar inventario/margen. Datos fiscales privados cuando los requiera el flujo del comercio; CLABE, CSD y credenciales bancarias no son requisitos de login.
 
@@ -117,11 +123,13 @@ Apertura por caja con fondo y operador, entradas/salidas con motivo, efectivo es
 
 **Aceptación:** esperado = fondo + efectivo aplicado a ventas + entradas − reembolsos − salidas, con política explícita de propinas; cambio no se cuenta como ingreso y reembolsos no se restan dos veces. Conciliar terminal contra reporte real. Medianoche usa zona/corte del negocio. Cierre definitivo bloqueado ante operaciones pendientes o conflictos. [S09, S11]
 
-### RF-06. Personal y dispositivos — pendiente
+### RF-06. Personal y dispositivos — acceso implementado localmente; operación financiera pendiente
+
+La extensión local implementa roles, personal con PIN, invitaciones Google con rol asignado, códigos de emparejamiento de un uso con vencimiento, credencial restringida de dispositivo, cambio/bloqueo y revocación. El dueño administra con Google y PIN; un dispositivo compartido no conserva esa identidad. Descuentos, reembolsos, costos, exportaciones y soporte siguen pendientes junto con sus módulos.
 
 Roles dueño/encargado/cajero/cocina, permisos en servidor y autorizaciones para descuentos/reembolsos con aprobador, motivo y monto. Emparejar dispositivo mediante código/QR de un uso y vencimiento; identidad restringida, caja/negocio asignados y revocación. PIN de empleado no reutiliza la contraseña ni deja la sesión del dueño en una tablet compartida.
 
-**Aceptación:** cambiar empleado invalida sesión anterior; dispositivo revocado no crea nuevas operaciones online; cajero no lee costos, exportaciones o ajustes de dueño; cocina no ve dinero/datos fiscales; soporte sólo accede temporalmente al alcance autorizado y auditado. El PIN actual pertenece al dueño: no describirlo como gestión de empleados ya construida. [S11, R03]
+**Aceptación:** cambiar empleado invalida sesión anterior; dispositivo revocado no crea nuevas operaciones online; cajero no lee costos, exportaciones o ajustes de dueño; cocina no ve dinero/datos fiscales; soporte sólo accede temporalmente al alcance autorizado y auditado. El PIN de R03 sólo pertenecía al dueño; la extensión local incorpora credenciales individuales sin afirmar que los módulos operativos pendientes estén construidos. [S11, R03]
 
 ### RF-07. Recetas, inventario y margen — pendiente
 
@@ -162,9 +170,9 @@ Separar auditoría de servidor, registros financieros y telemetría. Logs estruc
 
 **Aceptación:** telemetría caída no impide venta; soporte tiene acceso acotado; datos/archivos exportables por comercio; retención, privacidad, incidentes y responsables definidos. Ensayo de restauración verifica esquema, Auth/membresías, permisos, datos, archivos e idempotencia, además de reenvío de cola sin duplicados. CSV de ventas por sí solo no es respaldo completo. [S11]
 
-### RF-12. Home después de negocio listo — nuevo encargo, pendiente
+### RF-12. Home después de negocio listo — implementado y publicado en entrega anterior
 
-Crear pantalla Home y un botón explícito para abrirla después de crear el negocio y llegar a “Tu negocio está listo”. La nota S17 registra la solicitud humana; todavía no registra implementación, pruebas ni publicación. Recomienda alinear el inicio con Venta y los cinco destinos de Alpha v3, usando estados vacíos honestos para operaciones no construidas.
+Home y su botón “Ir al inicio” están implementados y fueron publicados en la entrega `ede9998`, según el cierre actualizado de S17 y README. La extensión local cambia la confirmación a “Cuenta creada” y adapta la navegación al rol: cocina sólo Comandas/Más; cajero no recibe Ventas ni controles de administración. Se conservan estados vacíos honestos para operaciones no construidas.
 
 **Aceptación propuesta para esa entrega:** el botón lleva a Home del negocio desbloqueado; navegación funciona en teléfono/tablet; bloqueo, recarga y logout siguen exigiendo el acceso correcto; no expone datos privados sin PIN ni simula ventas. Probar transición y regresiones de sesión, y comprobar la versión alojada después de una publicación autorizada. No contar agregar Home como verificación de alta nueva cloud o instalación física. [S12, S17]
 
@@ -180,6 +188,7 @@ Crear pantalla Home y un botón explícito para abrirla después de crear el neg
 | `src/lib/supabase.ts` | Supabase, PKCE, almacenamiento de identidad y revocación |
 | `supabase/functions/account/` | Autenticación, validación, CORS y llamadas autorizadas a RPC |
 | `supabase/migrations/20261001000100_account_foundation.sql` | Seis tablas privadas, RPC de cuenta, hashes, permisos y auditoría |
+| `supabase/migrations/20261001000200_business_team.sql` | Perfil inicial, personal, invitaciones, dispositivos restringidos y sesiones de empleados; extensión local pendiente de cloud |
 | `vite.config.ts`, `public/` | Manifest, icons y precache de PWA |
 | `tests/integration/`, `tests/e2e/`, `scripts/check-live.mjs` | Integración local, recorridos sintéticos y control HTTP público |
 
@@ -187,8 +196,8 @@ Frontend estático en Cloudflare Pages y backend gestionado Supabase. Lógica cr
 
 ### Frontera de seguridad que debe preservarse
 
-- `account` verifica identidad mediante `auth.getUser` y las RPC verifican sesión viva en `auth.sessions`, membresía y operador según la acción. `verify_jwt = false` en configuración no elimina esa verificación del handler.
-- `app_private` tiene RLS y sin grants de navegador; no agregarlo a esquemas expuestos. Las seis RPC públicas `account_*` son ejecutables por `service_role`, no por `anon`/`authenticated`. Las rutinas privilegiadas usan search path vacío y nombres cualificados.
+- Las acciones de cuenta verifican identidad mediante `auth.getUser`, prueba OAuth del JWT verificado y Google como único proveedor OAuth vinculado; las RPC verifican sesión viva en `auth.sessions`, membresía y operador según la acción. Recuperación exige OAuth y sesión originales de los últimos cinco minutos; refrescar JWT no satisface esto. El bypass de contraseña sólo existe con configuración explícita de pruebas y backend loopback. Las acciones `device_*` verifican su propia credencial restringida en SQL sin identidad Google. `verify_jwt = false` no elimina estas verificaciones.
+- `app_private` tiene RLS y sin grants de navegador; no agregarlo a esquemas expuestos. Las RPC públicas `account_*` son ejecutables por `service_role`, no por `anon`/`authenticated`. Las rutinas privilegiadas usan search path vacío y nombres cualificados.
 - Clave privilegiada sólo en servidor. Una llamada con service role evita RLS; la rutina debe comprobar al actor real/tenant, no confiar en `businessId`, permisos del frontend o `auth.uid()` de una clave de servicio.
 - JSON de cuenta con claves exactas y máximo 8 KiB; errores estables sin detalles de base; `Cache-Control: no-store`; origen HTTPS permitido explícitamente. CORS no reemplaza autorización.
 - Nuevos módulos mantienen pertenencia por `business_id`, relaciones compuestas que impidan cruzar tenants, privilegios mínimos y pruebas de denegación. Extender esta frontera a archivos, exportaciones, caché y feeds.
@@ -246,7 +255,7 @@ Después de cambios de identidad/PIN/SQL, probar aislamiento, revocación, concu
 - Frontend `VITE_SUPABASE_URL`/`VITE_SUPABASE_PUBLISHABLE_KEY` son públicos; secretos OAuth, service role, contraseñas y CSD nunca van en `VITE_*` ni en `dist`.
 - Pages usa **Direct Upload**: subir sólo build `dist` verificado. Un push GitHub no despliega. Fallback SPA nativo; conservar ausencia de `_redirects` y `404.html` raíz: la regla anterior produjo 308 que perdían callback. Validar assets y rutas directamente.
 - Worker actual con actualizaciones tipo prompt pero sin banner. No prometer actualización inmediata; una ventana abierta puede mantener worker anterior. Antes de añadir cola financiera, definir actualización segura.
-- Según README, la migración cloud aplicada desde dashboard aún no figura en historial CLI. Antes de futuro `db push`, verificar proyecto/esquema y reconciliar historial de `20261001000100` siguiendo README; no reaplicar ciegamente ni declarar repair ejecutado.
+- El historial cloud se reconcilió durante la entrega de negocio/personal: `20261001000100` (`account_foundation`, 44 sentencias) y `20261001000200` (`business_team`, 48) figuran aplicadas. Antes de un futuro `db push`, verificar proyecto, esquema e historial; no reaplicar las migraciones ya registradas. La reconciliación usó SQL canónico del CLI desde dashboard, no un comando `migration repair` autenticado.
 
 La instrucción histórica de S15 condicionó pushes a PWA alojada y login real. R01/R02 reportan esos controles en la versión revisada; verificar la versión que se quiera publicar y la autorización humana vigente. No reutilizar una autorización de otra conversación como permiso para nuevas acciones externas.
 

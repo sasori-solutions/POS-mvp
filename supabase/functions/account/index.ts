@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2'
 import type { AccountError, AccountErrorCode, AccountRequest } from '../../../src/lib/contracts.ts'
 import { isUuid, parseAccountRequest, RequestValidationError } from './validation.ts'
+import { claimsFromVerifiedJwt, verifiedGoogleAuthentication } from './authentication.ts'
 
 const maxBodyBytes = 8192
 const errorDefinitions: Record<AccountErrorCode, { status: number; message: string }> = {
@@ -16,6 +17,12 @@ const errorDefinitions: Record<AccountErrorCode, { status: number; message: stri
   ORIGIN_FORBIDDEN: { status: 403, message: 'This application origin is not allowed.' },
   METHOD_NOT_ALLOWED: { status: 405, message: 'Use POST for this endpoint.' },
   PAYLOAD_TOO_LARGE: { status: 413, message: 'The request is too large.' },
+  PERMISSION_DENIED: { status: 403, message: 'Only the owner can manage this business.' },
+  INVITATION_INVALID: { status: 400, message: 'The invitation is unavailable or expired.' },
+  PAIRING_INVALID: { status: 400, message: 'The pairing code is unavailable or expired.' },
+  DEVICE_REVOKED: { status: 403, message: 'This device is no longer authorized.' },
+  REAUTH_REQUIRED: { status: 401, message: 'Sign in again with Google before changing the PIN.' },
+  EMPLOYEE_INACTIVE: { status: 403, message: 'This employee is unavailable.' },
   SERVER_ERROR: { status: 500, message: 'The request could not be completed. Try again.' },
 }
 
@@ -107,17 +114,6 @@ async function boundedJson(request: Request): Promise<unknown> {
   }
 }
 
-/** Called only AFTER getUser has verified this exact JWT against Supabase Auth. */
-function verifiedSessionId(jwt: string): string | null {
-  try {
-    const payload = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
-    const claims = JSON.parse(atob(payload))
-    return isUuid(claims.session_id) ? claims.session_id : null
-  } catch {
-    return null
-  }
-}
-
 function localPasswordTesting(url: string): boolean {
   const hostname = new URL(url).hostname
   return Deno.env.get('ALLOW_TEST_PASSWORD_AUTH') === 'true'
@@ -131,7 +127,7 @@ function rpcFor(request: AccountRequest): { name: string; args: Record<string, u
     case 'create_business':
       return { name: 'account_create_business', args: {
         p_name: request.name, p_business_type: request.businessType, p_timezone: request.timezone,
-        p_operation_id: request.operationId, p_pin: request.pin,
+        p_operation_id: request.operationId, p_pin: request.pin, p_profile: request.profile ?? null,
       } }
     case 'unlock':
       return { name: 'account_unlock', args: { p_business_id: request.businessId, p_pin: request.pin } }
@@ -140,6 +136,10 @@ function rpcFor(request: AccountRequest): { name: string; args: Record<string, u
       return { name: `account_${request.action}`, args: { p_business_id: request.businessId, p_operator_token: request.operatorToken } }
     case 'revoke_sessions':
       return { name: 'account_revoke_sessions', args: {} }
+    case 'device_pair': case 'device_status': case 'device_unlock': case 'device_context': case 'device_lock': case 'device_forget':
+      return { name: 'account_device', args: { p_action: request.action, p_payload: request } }
+    default:
+      return { name: 'account_manage', args: { p_action: request.action, p_payload: request } }
   }
 }
 
@@ -153,29 +153,36 @@ Deno.serve(async (request: Request) => {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers })
     if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', headers)
 
+    // Restricted device commands validate their own credential in SQL; the public API key grants no tenant access.
+    const action = parseAccountRequest(await boundedJson(request))
+    const deviceAction = action.action.startsWith('device_')
     const authorization = request.headers.get('authorization')
     const jwt = authorization?.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i)?.[1]
-    if (!jwt || jwt.length > 16384) return errorResponse('AUTH_REQUIRED', headers)
+    if (!deviceAction && (!jwt || jwt.length > 16384)) return errorResponse('AUTH_REQUIRED', headers)
     const url = Deno.env.get('SUPABASE_URL')
     const key = serverKey()
     if (!url || !key) return errorResponse('SERVER_ERROR', headers)
     const admin = createClient(url, key, { auth: {
       persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
     } })
-    // An API key or caller-supplied user ID never establishes identity.
-    const { data: authData, error: authError } = await admin.auth.getUser(jwt)
-    if (authError || !authData.user || authData.user.is_anonymous) return errorResponse('AUTH_REQUIRED', headers)
-    const authSessionId = verifiedSessionId(jwt)
-    if (!authSessionId) return errorResponse('AUTH_REQUIRED', headers)
-    const googleIdentity = authData.user.identities?.some((identity) => identity.provider === 'google')
-    if ((!googleIdentity || !authData.user.email_confirmed_at) && !localPasswordTesting(url)) {
-      return errorResponse('GOOGLE_REQUIRED', headers)
-    }
-
-    const action = parseAccountRequest(await boundedJson(request))
     const rpc = rpcFor(action)
+    let identityArgs: Record<string, string> = {}
+    if (!deviceAction) {
+      // An API key or caller-supplied user ID never establishes identity.
+      const { data: authData, error: authError } = await admin.auth.getUser(jwt!)
+      if (authError || !authData.user || authData.user.is_anonymous) return errorResponse('AUTH_REQUIRED', headers)
+      const claims = claimsFromVerifiedJwt(jwt!)
+      if (!claims || !isUuid(claims.session_id)) return errorResponse('AUTH_REQUIRED', headers)
+      const authSessionId = claims.session_id
+      const testOnlyPassword = localPasswordTesting(url)
+      if (!testOnlyPassword && !verifiedGoogleAuthentication(authData.user, claims)) return errorResponse('GOOGLE_REQUIRED', headers)
+      if (action.action === 'reset_pin' && !testOnlyPassword
+        && !verifiedGoogleAuthentication(authData.user, claims, Date.now() / 1000)) return errorResponse('REAUTH_REQUIRED', headers)
+
+      identityArgs = { p_user_id: authData.user.id, p_auth_session_id: authSessionId }
+    }
     const { data, error } = await admin.rpc(rpc.name, {
-      ...rpc.args, p_user_id: authData.user.id, p_auth_session_id: authSessionId,
+      ...rpc.args, ...identityArgs,
     })
     if (error) {
       const code = Object.hasOwn(errorDefinitions, error.message) ? error.message as AccountErrorCode : 'SERVER_ERROR'
