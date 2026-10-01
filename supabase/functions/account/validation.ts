@@ -59,6 +59,8 @@ export function parseAccountRequest(value: unknown): AccountRequest {
     case 'update_employee':
       exactKeys(input, [...owner, 'employeeId', 'name', 'role', 'active', 'pin']); if (typeof input.active !== 'boolean') invalid()
       return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), name: name(input.name), role: role(input), active: input.active, pin: input.pin === null ? null : pin(input) }
+    case 'delete_employee': case 'restore_employee':
+      exactKeys(input, [...owner, 'employeeId', 'operationId']); return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), operationId: uuid(input, 'operationId') }
     case 'create_invitation':
       if (Object.hasOwn(input, 'employeeId')) {
         exactKeys(input, [...owner, 'employeeId', 'operationId'])

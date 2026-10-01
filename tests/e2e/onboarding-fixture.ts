@@ -17,6 +17,8 @@ export async function mockOnboarding(page: Page, options: {
   role?: BusinessRole;
   requirePinReauth?: boolean;
   createEmployeeResponseLosses?: number;
+  invitations?: InvitationSummary[];
+  employees?: EmployeeSummary[];
 } = {}) {
   await mockAccount(page, { existingBusiness: options.existingBusiness, authenticated: options.authenticated });
   const calls: AccountRequest[] = [];
@@ -31,15 +33,26 @@ export async function mockOnboarding(page: Page, options: {
   let operatorGeneration = 0;
   let currentDeviceOperator = '';
   let currentDeviceEmployee: EmployeeSummary = fixtureCashier;
-  const employees: EmployeeSummary[] = [
+  const employees: EmployeeSummary[] = structuredClone(options.employees ?? [
     { id: '5f9bf172-13ae-4df5-84be-3975d90e1f65', name: 'Persona de prueba', role: 'owner', active: true, googleLinked: true, pinReady: true },
     { ...fixtureCashier }, { ...fixtureKitchen },
-  ];
-  const invitations: InvitationSummary[] = [];
+  ]);
+  const invitations: InvitationSummary[] = structuredClone(options.invitations ?? []);
+  const deletedEmployees: EmployeeSummary[] = [];
   const devices: DeviceSummary[] = [];
   const employeeOperations = new Map<string, unknown>();
   const invitationOperations = new Map<string, unknown>();
   let createEmployeeResponseLosses = options.createEmployeeResponseLosses ?? 0;
+  function deleteEmployee(employeeId: string) {
+    const index = employees.findIndex((item) => item.id === employeeId);
+    if (index < 0) return;
+    const [employee] = employees.splice(index, 1);
+    employee.active = false;
+    employee.deletedAt = new Date().toISOString();
+    deletedEmployees.push(employee);
+    invitations.filter((item) => item.employeeId === employee.id && item.active).forEach((item) => Object.assign(item, { active: false, status: 'revoked', revokedAt: new Date().toISOString(), revokeReason: 'employee_deleted' }));
+    currentDeviceOperator = '';
+  }
   const expiresAt = () => new Date(Date.now() + 8 * 3_600_000).toISOString();
   const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType });
   const projection = (role = googleRole, employee: EmployeeSummary = role === 'kitchen' ? fixtureKitchen : fixtureCashier): BusinessContext => role === 'owner'
@@ -88,7 +101,7 @@ export async function mockOnboarding(page: Page, options: {
         const employee = employees.find((item) => item.id === invitation?.employeeId) ?? employees.find((item) => item.id === fixtureKitchen.id)!;
         employee.googleLinked = true;
         employee.pinReady = true;
-        if (invitation) invitation.active = false;
+        if (invitation) Object.assign(invitation, { active: false, status: 'accepted', acceptedAt: new Date().toISOString() });
         hasBusiness = true;
         googleRole = employee.role;
         currentPin = body.pin;
@@ -103,14 +116,14 @@ export async function mockOnboarding(page: Page, options: {
         return reply(unlocked());
       case 'team':
         if (locked || googleRole !== 'owner') return reject(403, 'PERMISSION_DENIED', 'Acceso restringido.');
-        return reply({ employees, invitations, devices });
+        return reply({ employees, invitations, devices, deletedEmployees });
       case 'create_employee': {
         if (employeeOperations.has(body.operationId)) return reply(employeeOperations.get(body.operationId));
         if (body.inviteWithGoogle ? body.pin !== null : typeof body.pin !== 'string') return reject(400, 'VALIDATION_ERROR', 'Revisa el acceso del empleado.');
         const employee: EmployeeSummary = { id: crypto.randomUUID(), name: body.name, role: body.role, active: true, pinReady: !body.inviteWithGoogle, googleLinked: false };
         employees.push(employee);
         const invitation = body.inviteWithGoogle ? { invitationCode: fixtureInvitation, invitationId: crypto.randomUUID(), expiresAt: expiresAt() } : undefined;
-        if (invitation) invitations.push({ id: invitation.invitationId, employeeId: employee.id, name: employee.name, role: body.role, active: true, expiresAt: invitation.expiresAt });
+        if (invitation) invitations.push({ id: invitation.invitationId, employeeId: employee.id, name: employee.name, role: body.role, active: true, expiresAt: invitation.expiresAt, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null });
         const result = { ...employee, ...(invitation ? { invitation } : {}) };
         employeeOperations.set(body.operationId, result);
         if (createEmployeeResponseLosses > 0) { createEmployeeResponseLosses -= 1; return route.abort('failed'); }
@@ -129,15 +142,28 @@ export async function mockOnboarding(page: Page, options: {
         if ('employeeId' in body && (!employee || !employee.active || employee.googleLinked)) return reject(400, 'INVITATION_INVALID', 'Empleado no disponible para vincular Google.');
         const invitationId = crypto.randomUUID();
         const expiration = expiresAt();
-        invitations.push({ id: invitationId, ...(employee ? { employeeId: employee.id } : {}), name: employee?.name ?? ('name' in body ? body.name : ''), role: employee && employee.role !== 'owner' ? employee.role : 'role' in body ? body.role : 'cashier', active: true, expiresAt: expiration });
+        invitations.filter((item) => item.employeeId === employee?.id && item.active).forEach((item) => Object.assign(item, { active: false, status: 'revoked', revokedAt: new Date().toISOString(), revokeReason: 'replaced' }));
+        invitations.push({ id: invitationId, ...(employee ? { employeeId: employee.id } : {}), name: employee?.name ?? ('name' in body ? body.name : ''), role: employee && employee.role !== 'owner' ? employee.role : 'role' in body ? body.role : 'cashier', active: true, expiresAt: expiration, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null });
         const result = { invitationCode: fixtureInvitation, invitationId, expiresAt: expiration };
         invitationOperations.set(body.operationId, result);
         return reply(result);
       }
       case 'revoke_invitation': {
         const invitation = invitations.find((item) => item.id === body.invitationId);
-        if (invitation) invitation.active = false;
+        if (invitation) Object.assign(invitation, { active: false, status: 'revoked', revokedAt: new Date().toISOString(), revokeReason: 'user_cancelled' });
         return reply({ revoked: true });
+      }
+      case 'delete_employee': {
+        deleteEmployee(body.employeeId);
+        return reply({ id: body.employeeId, deleted: true });
+      }
+      case 'restore_employee': {
+        const index = deletedEmployees.findIndex((item) => item.id === body.employeeId);
+        if (index < 0) return reject(404, 'EMPLOYEE_INACTIVE', 'Empleado no disponible.');
+        const [employee] = deletedEmployees.splice(index, 1);
+        Object.assign(employee, { active: true, deletedAt: null });
+        employees.push(employee);
+        return reply(employee);
       }
       case 'create_pairing_code': return reply({ pairingCode: fixturePairingCode, expiresAt: expiresAt() });
       case 'device_pair':
@@ -169,5 +195,12 @@ export async function mockOnboarding(page: Page, options: {
     }
   });
   return { calls, authorizations, revokeDevice: () => { deviceRevoked = true; }, deviceOperator: () => currentDeviceOperator,
+    deleteEmployeeElsewhere: deleteEmployee,
+    acceptLatestInvitation: (employeeId: string) => {
+      const invitation = [...invitations].reverse().find((item) => item.employeeId === employeeId && item.active);
+      const employee = employees.find((item) => item.id === employeeId);
+      if (invitation) Object.assign(invitation, { active: false, status: 'accepted', acceptedAt: new Date().toISOString() });
+      if (employee) Object.assign(employee, { googleLinked: true, pinReady: true });
+    },
     setRole: (role: BusinessRole) => { googleRole = role; } };
 }

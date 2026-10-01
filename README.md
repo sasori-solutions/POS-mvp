@@ -4,7 +4,9 @@ Account and home MVP: a new Google account chooses “Crear mi negocio” or “
 
 Shared registers use `/employee`: a one-use pairing code connects a restricted device, then each active employee selects their name and enters their PIN. The device never needs to retain the owner's Google session. Invited employees may also join with their own Google account. Roles come from the owner's assignment; the employee cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. Only the device credential is persisted; PINs and operator tokens stay in memory.
 
-Employee creation now uses one Agregar empleado form with optional Google access. PIN-only staff can link Google to their existing record; invited staff keep their assigned name/role and create their PIN without entering their name again. The correction is published in the existing Supabase/Cloudflare projects, including migration `20261001000300_unified_employee_access.sql`. Hosted checks passed 27/27, and real Google plus the new owner team form were inspected. Successful cloud staff creation/linking/acceptance and physical-phone installation remain manual checks.
+Employee management uses one list, one Administrar action per employee and a focused form with Volver a empleados. Empleados and Dispositivos have separate tabs. Google access is optional and creates no provisional PIN. Each employee's detail shows whether an invitation is pending, accepted, cancelled, replaced, expired or unavailable, with recorded dates rather than a generic “revocado o utilizado” message. Owners can confirm Eliminar empleado and explicitly restore the same person from Empleados eliminados. Deletion closes access and sessions; restoration preserves identity and PIN without reviving old sessions or invitation codes.
+
+The employee lifecycle correction was published on 1 October 2026 by Agente de Larios, including new migration `20261001000400_employee_lifecycle.sql`. Local validation passed 126/126 browser cases, 36/36 real integration tests and 13/13 Deno tests; public routes/assets passed 27/27. Successful cloud employee mutations, fresh business creation and physical-phone installation remain manual checks.
 
 ## Cloud app
 
@@ -62,7 +64,17 @@ Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phon
 
 ## Hosted release status
 
-Agente de Larios · 1 October 2026 · unified employee correction published.
+Agente de Larios · 1 October 2026 · employee lifecycle correction published.
+
+Supabase project **POS México** (`sdisalomdxgejyhpxtri`) has migration `20261001000400_employee_lifecycle.sql` and the updated `account` function deployed. The previously applied 0001–0003 migrations were preserved; the canonical ledger now records **44/48/27/23 statements**. Ten changed SQL bodies match the final checked source, and private-table RLS, private helper restrictions and all nine public RPC browser/service grants passed inspection. The downloaded 26,669-byte Edge source matches the standalone artifact exactly (SHA-256 `28e973733f8c783a530061b29bd96deb51f5bc6d03715ea4a8627e77e57397df`).
+
+Cloudflare production deployment `6cb52946-9921-4b92-b552-a3f282b225d2` publishes the 20 generated frontend files, including `index-BSzhioHG.js` and `TeamPanel-C7wE4MFL.js`. Public route/asset checks passed **27/27** with exact build hashes. Eight anonymous API probes passed with exact-origin CORS and no-store responses, including valid delete/restore payloads reaching `AUTH_REQUIRED`; these probes performed no employee mutations. Real Google selection, callback and account loading reached the existing business PIN screen. The waiting PWA worker was activated with the browser's visible developer tools; an ordinary reload then loaded the new `index-BSzhioHG.js` with the existing Google session. Installed windows can still retain an older worker because no update banner is implemented.
+
+Final validation passed **126/126 desktop/phone-width browser cases**, **36/36 real local Auth/Edge/Postgres integration tests without skips**, **13/13 Deno validation/authentication tests**, frontend/backend typechecks, build and independent review. The real local browser smoke verified focused employee administration, actual invitation outcomes, removal and restoration, personal/register session invalidation and device revocation, then cleaned its synthetic fixtures. A separate real local 0003→0004 migration smoke preserved legacy invitation truth, expiry and existing codes. Fresh cloud business creation, successful authenticated cloud employee/invitation/device mutations and installation on a physical phone were not exercised in this correction. No human PIN was automated or recorded.
+
+## Historical unified employee release
+
+The following records the preceding 0003 release on 1 October 2026; its bundle and counts are historical.
 
 Supabase project **POS México** (`sdisalomdxgejyhpxtri`) has migration `20261001000300_unified_employee_access.sql` and the updated `account` function deployed. All nine modified SQL function bodies match the final source by SHA-256. Private-table RLS and restricted browser/service RPC grants remain intact. The canonical cloud ledger contains foundation/business-team/unified-employee migrations with **44/48/27 statements**. Only 0003 was applied; the transaction required the exact existing 0001/0002 history.
 
