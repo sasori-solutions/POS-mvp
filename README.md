@@ -2,7 +2,15 @@
 
 Authentication MVP: Google identity → business details → confirmed six-digit PIN → private business context. Existing owners choose a business and unlock with their PIN. Reloading the app requires the PIN again. Locking revokes the current operator session; signing out revokes operator sessions for this Google session and clears the local Google identity.
 
-## Run locally
+## Cloud app
+
+The production PWA connects to the configured Supabase project at `https://sdisalomdxgejyhpxtri.supabase.co`. Supabase runs Google authentication, the account API and the private database. The browser app needs its own HTTPS host; the planned host is Cloudflare Pages. The hosted URL and cloud redirect/origin updates are pending Cloudflare sign-in and deployment.
+
+`.env.production` contains only the public browser URL and publishable key for this project, so a production build from the repository connects to the configured backend without a local environment file. Google client secrets and server keys stay in Supabase. Build with `npm ci && npm run build` and deploy only `dist/`; see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Local development and tests
+
+Localhost is for development and isolated tests. It is not the public app address. Cloud users will open the hosted HTTPS URL after deployment.
 
 ```sh
 npm install
@@ -10,7 +18,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Set `.env.local` to the project's public Supabase URL and publishable key. The app uses port 5173. Missing configuration shows an honest setup message; no demo login or production bypass exists.
+Set `.env.local` to the intended development backend's public Supabase URL and publishable key. The development server uses port 5173. Missing configuration shows an honest setup message; no demo login or production bypass exists.
 
 ```sh
 npm run test
@@ -53,7 +61,7 @@ Supabase development project **POS México** (`sdisalomdxgejyhpxtri`) has been c
 
 The dedicated Google Cloud test project is `pos-mexico-510316`. Its branding and Web application OAuth client have been created. The human entered its credentials in Supabase, and the Google provider is now enabled. The public Auth configuration confirms that Google is enabled, and the live app reaches Google's account chooser and basic identity consent. The final consent, callback exchange and authenticated cloud account request are still pending live verification. Cloud business creation remains unverified. Cloud smoke checks confirmed unauthenticated requests return `AUTH_REQUIRED` and hostile origins return `ORIGIN_FORBIDDEN`.
 
-The preview at `http://127.0.0.1:5173` now targets the development cloud through `.env.local`. `.env.cloud` holds the cloud public configuration and `.env.local-stack` preserves the local-stack configuration; all are ignored by Git. Switch only the public URL/publishable key when changing environments. Keep server and Google secrets out of the browser environment and shared Drive documents.
+The earlier frontend preview at `http://127.0.0.1:5173` targeted the development cloud through `.env.local`; it did not use a local production database. `.env.cloud` holds that cloud public configuration and `.env.local-stack` preserves the local-stack configuration; both are ignored by Git. Production builds now use the checked-in public `.env.production` settings. Keep server and Google secrets out of the browser environment and shared Drive documents.
 
 Google's documented basic-identity exception allows testing with only name/email/profile identity scopes without a manually managed test-user list: [Google OAuth production readiness](https://developers.google.com/identity/protocols/oauth2/production-readiness/overview). Do not add Gmail/Drive or other sensitive scopes for this access flow.
 

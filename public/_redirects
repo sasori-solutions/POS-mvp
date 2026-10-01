@@ -1,0 +1,7 @@
+# Agente de Larios: render SPA routes without changing the browser URL or query.
+# Pages also supplies SPA fallback when the deployment has no top-level 404.html.
+# Keep these paths explicit: a catch-all rule would also override existing assets.
+/login /index.html 200
+/business/new /index.html 200
+/unlock /index.html 200
+/auth/callback /index.html 200

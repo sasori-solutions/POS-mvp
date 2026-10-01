@@ -4,6 +4,9 @@ dist/
 .env.*
 !.env.example
 !.env.functions.example
+!.env.production
+.wrangler/
+.vercel/
 supabase/.temp/
 supabase/.branches/
 .playwright/
