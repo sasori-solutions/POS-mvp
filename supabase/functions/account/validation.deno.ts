@@ -67,7 +67,9 @@ Deno.test('validates employee invitation and restricted device actions', () => {
 Deno.test('unified staff creation supports optional Google without a redundant PIN', () => {
   const base = { action: 'create_employee', businessId: validCreate.operationId, operatorToken: 'a'.repeat(64), name: 'Empleado', role: 'cashier', operationId: validCreate.operationId }
   assert.deepEqual(parseAccountRequest({ ...base, pin: null, inviteWithGoogle: true }), { ...base, pin: null, inviteWithGoogle: true })
-  for (const patch of [{ pin: null }, { pin: null, inviteWithGoogle: false }, { pin: '123456', inviteWithGoogle: true }, { pin: '123456', inviteWithGoogle: 'true' }]) assert.throws(() => parseAccountRequest({ ...base, ...patch }))
+  assert.deepEqual(parseAccountRequest({ ...base, pin: null }), { ...base, pin: null })
+  assert.deepEqual(parseAccountRequest({ ...base, pin: null, inviteWithGoogle: false }), { ...base, pin: null, inviteWithGoogle: false })
+  for (const patch of [{ pin: '123456' }, { pin: '123456', inviteWithGoogle: true }, { pin: null, inviteWithGoogle: 'true' }]) assert.throws(() => parseAccountRequest({ ...base, ...patch }))
 })
 Deno.test('targets an existing employee explicitly and accepts without asking the name twice', () => {
   const invitation = { action: 'create_invitation', businessId: validCreate.operationId, operatorToken: 'a'.repeat(64), employeeId: validCreate.operationId, operationId: validCreate.operationId }
@@ -84,5 +86,38 @@ Deno.test('requires explicit owner-scoped employee lifecycle identifiers without
     for (const patch of [{ employeeId: 'invalid' }, { operationId: 'invalid' }, { active: true }, { deletedAt: null }, { userId: validCreate.operationId }]) assert.throws(() => parseAccountRequest({ ...request, ...patch }))
     const { operationId: _operationId, ...missingOperation } = request
     assert.throws(() => parseAccountRequest(missingOperation))
+  }
+})
+
+Deno.test('owner staff commands cannot choose or overwrite an employee PIN', () => {
+  const base = { businessId: validCreate.operationId, operatorToken: 'a'.repeat(64), name: 'Empleado', role: 'cashier' }
+  assert.throws(() => parseAccountRequest({ action: 'create_employee', ...base, pin: '024680', operationId: validCreate.operationId }))
+  assert.throws(() => parseAccountRequest({ action: 'update_employee', ...base, employeeId: validCreate.operationId, active: true, pin: '024680' }))
+})
+
+Deno.test('owner recovery cannot be requested with Google and a new PIN alone', () => {
+  assert.throws(() => parseAccountRequest({ action: 'reset_pin', businessId: validCreate.operationId, pin: '024680' }))
+})
+
+Deno.test('PIN setup, recovery enrollment and change require explicit scoped authorization', () => {
+  const owner = { businessId: validCreate.operationId, operatorToken: 'a'.repeat(64) }
+  const operationId = validCreate.operationId
+  const requests = [
+    { action: 'create_pin_setup', ...owner, employeeId: validCreate.operationId, operationId },
+    { action: 'employee_pin_setup_details', setupCode: 'b'.repeat(64) },
+    { action: 'set_employee_pin', setupCode: 'b'.repeat(64), pin: '024680', operationId },
+    { action: 'device_pin_setup_details', deviceToken: 'a'.repeat(64), setupCode: 'b'.repeat(64) },
+    { action: 'device_set_employee_pin', deviceToken: 'a'.repeat(64), setupCode: 'b'.repeat(64), pin: '024680', operationId },
+    { action: 'create_recovery_code', ...owner, currentPin: '015827', operationId },
+    { action: 'change_pin', ...owner, currentPin: '015827', pin: '024680', operationId },
+    { action: 'reset_pin', businessId: validCreate.operationId, recoveryCode: 'b'.repeat(64), pin: '024680', operationId },
+  ]
+  for (const request of requests) {
+    assert.deepEqual(parseAccountRequest(request), request)
+    assert.throws(() => parseAccountRequest({ ...request, userId: validCreate.operationId }))
+    if ('operationId' in request) assert.throws(() => parseAccountRequest({ ...request, operationId: 'invalid' }))
+    if ('currentPin' in request) assert.throws(() => parseAccountRequest({ ...request, currentPin: '12345' }))
+    if ('setupCode' in request) assert.throws(() => parseAccountRequest({ ...request, setupCode: 'b'.repeat(63) }))
+    if ('recoveryCode' in request) assert.throws(() => parseAccountRequest({ ...request, recoveryCode: 'b'.repeat(63) }))
   }
 })

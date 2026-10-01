@@ -4,6 +4,8 @@ export const fixtureBusiness = {
   id: '8be7bbee-3947-478c-a2d2-02a6ee44432b',
   name: 'Café de prueba',
   businessType: 'cafe',
+  canRecoverPin: true,
+  recoveryReady: true,
   timezone: 'America/Mexico_City',
   currency: 'MXN',
   role: 'owner',
@@ -156,6 +158,9 @@ export async function mockAccount(page: Page, options: {
           return route.abort('failed');
         }
         return reply(unlocked);
+      case 'create_recovery_code':
+        if (body.currentPin !== fixturePin) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
+        return reply({ recoveryCode: 'f5'.repeat(32) });
       case 'unlock':
         if (body.pin !== fixturePin) {
           wrongAttempts += 1;

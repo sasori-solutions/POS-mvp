@@ -2,19 +2,37 @@ import { lazy, Suspense, useEffect, useRef, useState, type FormEvent } from 'rea
 import type { Session } from '@supabase/supabase-js'
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Coffee, LockKeyhole, LogOut, Store } from 'lucide-react'
 import { accountRequest, AccountClientError } from './lib/account'
-import type { AccountErrorCode, BusinessContext, BusinessProfile, BusinessSummary, BusinessType, OperatorSession } from './lib/contracts'
+import type { AccountErrorCode, BusinessContext, BusinessProfile, BusinessSummary, BusinessType, InvitationDetails, OperatorSession } from './lib/contracts'
 import { allowIdentitySignIn, closeIdentity, hasCurrentStoredIdentity, initializeIdentity, supabase } from './lib/supabase'
 import HomeScreen from './components/HomeScreen'
+import EmployeePinSetup from './components/EmployeePinSetup'
 const TeamPanel = lazy(() => import('./components/TeamPanel'))
 const BusinessSettings = lazy(() => import('./components/BusinessSettings'))
 const DeviceLogin = lazy(() => import('./components/DeviceLogin'))
 const loadingView = <section className="screen loading-screen" aria-live="polite" aria-busy="true"><span className="loader" aria-hidden="true" /><p>Preparando tu acceso…</p></section>
 
-type Screen = 'loading' | 'login' | 'choice' | 'join' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'ready' | 'home' | 'retry' | 'team' | 'settings' | 'reauth' | 'recover' | 'employee'
+type Screen = 'loading' | 'login' | 'choice' | 'join' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'ready' | 'home' | 'retry' | 'team' | 'settings' | 'reauth' | 'recover' | 'employee' | 'employee-pin' | 'change-pin' | 'recovery-code' | 'recovery-save'
 interface BusinessDraft { name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile }
 const initialDraft: BusinessDraft = { name: '', businessType: 'cafe', timezone: 'America/Mexico_City', profile: { branchName: 'Sucursal principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external'] } }
 const invitationKey = 'pos-mexico-pending-invitation'
 const recoveryKey = 'pos-mexico-pin-recovery'
+interface RecoveryIntent { businessId: string; expectedUserId: string; startedAt: number; generation: string }
+function identitySessionKey(identity: Session | null | undefined) {
+  if (!identity) return ''
+  try {
+    const payload = JSON.parse(atob(identity.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as { session_id?: unknown }
+    if (typeof payload.session_id === 'string') return `${identity.user.id}:${payload.session_id}`
+  } catch { /* An unfamiliar SDK token is treated as a distinct identity generation. */ }
+  return `${identity.user.id}:${identity.access_token}`
+}
+function readRecoveryIntent(): RecoveryIntent | null {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(recoveryKey) ?? 'null') as RecoveryIntent | null
+    if (value && typeof value.businessId === 'string' && typeof value.expectedUserId === 'string' && typeof value.generation === 'string' && Number.isFinite(value.startedAt) && Date.now() - value.startedAt < 10 * 60_000 && value.startedAt <= Date.now() + 30_000) return value
+  } catch { /* Malformed or legacy intentions do not authorize PIN recovery. */ }
+  sessionStorage.removeItem(recoveryKey)
+  return null
+}
 
 function entryIntent() {
   const url = new URL(window.location.href)
@@ -45,6 +63,11 @@ const accountMessages: Record<AccountErrorCode | 'NETWORK_ERROR', string> = {
   METHOD_NOT_ALLOWED: 'No pudimos completar la solicitud. Intenta de nuevo.',
   PAYLOAD_TOO_LARGE: 'Revisa los datos e intenta de nuevo.',
   SERVER_ERROR: 'No pudimos completar la solicitud. Intenta de nuevo.',
+  PIN_SETUP_INVALID: 'El código de autorización no es válido o venció. Pide otro al dueño.',
+  PIN_SETUP_ACCOUNT_MISMATCH: 'Entra con la cuenta de Google vinculada a este empleado.',
+  RECOVERY_INVALID: 'Revisa tu código de recuperación.',
+  RECOVERY_LOCKED: 'Demasiados intentos. Espera antes de volver a intentar.',
+  RECOVERY_UNAVAILABLE: 'Aún no hay un código de recuperación. Créalo cuando tengas acceso con tu PIN.',
   NETWORK_ERROR: 'No pudimos conectar. Revisa tu conexión e intenta de nuevo.',
 }
 const timezones = [
@@ -89,6 +112,19 @@ export default function App() {
   const [pin, setPin] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [invitationCode, setInvitationCode] = useState(() => sessionStorage.getItem(invitationKey) ?? '')
+  const [joinDetails, setJoinDetails] = useState<InvitationDetails | null>(null)
+  const [joinLoading, setJoinLoading] = useState(false)
+  const [currentPin, setCurrentPin] = useState('')
+  const [recoveryInput, setRecoveryInput] = useState('')
+  const [savedRecoveryCode, setSavedRecoveryCode] = useState('')
+  const [recoveryNext, setRecoveryNext] = useState<'ready' | 'home'>('home')
+  const recoveryIntent = useRef<RecoveryIntent | null>(readRecoveryIntent())
+  const verifyingRecovery = useRef(false)
+  const recoveryOperation = useRef<{ fingerprint: string; id: string } | null>(null)
+  const pendingRecoveryCreation = useRef<OperatorSession | null>(null)
+  const mutationPending = useRef(false)
+  const copiedRecoveryCode = useRef(false)
+  const recoveryClipboardGeneration = useRef(0)
   const joinOperationId = useRef(crypto.randomUUID())
   const joinPayload = useRef('')
   const [error, setError] = useState('')
@@ -116,14 +152,50 @@ export default function App() {
     window.history.replaceState({}, '', path)
   }
 
-  function clearSensitive() {
+  function clearRecoveryIntent() {
+    recoveryIntent.current = null
+    verifyingRecovery.current = false
+    sessionStorage.removeItem(recoveryKey)
+  }
+
+  function recoveryOperationId(payload: unknown) {
+    const fingerprint = JSON.stringify(payload)
+    if (recoveryOperation.current?.fingerprint !== fingerprint) recoveryOperation.current = { fingerprint, id: crypto.randomUUID() }
+    return recoveryOperation.current.id
+  }
+
+  function clearSensitive(preserveRecoveryIntent = false) {
+    clearRecoveryClipboard()
+    operatorRef.current = null
     setOperator(null)
     setPin('')
     setConfirmation('')
+    setCurrentPin(''); setRecoveryInput(''); setSavedRecoveryCode(''); setJoinDetails(null)
+    pendingRecoveryCreation.current = null
+    recoveryOperation.current = null
+    mutationPending.current = false
+    if (!preserveRecoveryIntent) clearRecoveryIntent()
     joinPayload.current = ''
     joinOperationId.current = crypto.randomUUID()
     setRetryAt(0)
     setBusy(false)
+  }
+
+  function clearRecoveryClipboard() {
+    recoveryClipboardGeneration.current += 1
+    if (!copiedRecoveryCode.current) return
+    copiedRecoveryCode.current = false
+    void navigator.clipboard?.writeText('').catch(() => undefined)
+  }
+
+  async function copyRecoveryCode() {
+    const requestEpoch = epoch.current
+    const clipboardGeneration = recoveryClipboardGeneration.current
+    try {
+      await navigator.clipboard.writeText(savedRecoveryCode)
+      if (requestEpoch !== epoch.current || clipboardGeneration !== recoveryClipboardGeneration.current) { await navigator.clipboard.writeText('').catch(() => undefined); return }
+      copiedRecoveryCode.current = true
+    } catch { if (requestEpoch === epoch.current) setError('No pudimos copiar. Selecciona el código para guardarlo.') }
   }
 
   function lockedScreen() {
@@ -131,10 +203,17 @@ export default function App() {
     clearSensitive()
     if (!sessionRef.current) navigate('login')
     else if (business) {
-      setSelected(business)
+      const summary = businessesRef.current.find((entry) => entry.id === business.id)
+      setSelected({ ...business, canRecoverPin: 'role' in business ? business.role === 'owner' : summary?.canRecoverPin, recoveryReady: summary?.recoveryReady ?? business.recoveryReady })
       navigate('unlock')
     } else if (businessesRef.current.length) navigate('choose')
     else navigate('choice')
+  }
+
+  function summaryForContext(business: BusinessContext): BusinessSummary {
+    const previous = businessesRef.current.find((entry) => entry.id === business.id)
+      ?? (selectedRef.current?.id === business.id ? selectedRef.current : null)
+    return { ...business, canRecoverPin: business.role === 'owner', recoveryReady: business.recoveryReady ?? previous?.recoveryReady }
   }
 
   async function expireIdentity(message = 'Tu sesión venció. Vuelve a entrar con Google.') {
@@ -167,7 +246,7 @@ export default function App() {
         return
       }
       if (['SESSION_INVALID', 'SESSION_EXPIRED', 'EMPLOYEE_INACTIVE', 'BUSINESS_ACCESS_DENIED'].includes(problem.code)) lockedScreen()
-      if (problem.code === 'PIN_LOCKED') setRetryAt(Date.now() + Math.max(1, problem.retryAfterSeconds ?? 900) * 1_000)
+      if (problem.code === 'PIN_LOCKED' || problem.code === 'RECOVERY_LOCKED') setRetryAt(Date.now() + Math.max(1, problem.retryAfterSeconds ?? 900) * 1_000)
       setError(accountMessages[problem.code] ?? accountMessages.SERVER_ERROR)
       return
     }
@@ -176,19 +255,23 @@ export default function App() {
 
   async function loadBusinesses() {
     const requestEpoch = epoch.current
+    const identity = sessionRef.current
+    if (!identity) return
     setError('')
     setScreen('loading')
     try {
-      const data = await accountRequest({ action: 'status' })
+      const data = await accountRequest({ action: 'status' }, identity.access_token)
       if (requestEpoch !== epoch.current) return
       setBusinesses(data.businesses)
-      const recovering = sessionStorage.getItem(recoveryKey)
-      const recoveryBusiness = data.businesses.find((business) => business.id === recovering)
-      if (recoveryBusiness) { setSelected(recoveryBusiness); navigate('recover') }
+      const recovering = recoveryIntent.current
+      const recoveryBusiness = data.businesses.find((business) => business.id === recovering?.businessId && business.canRecoverPin === true && business.recoveryReady === true)
+      if (recovering && recovering.expectedUserId !== identity.user.id) {
+        clearRecoveryIntent(); setPin(''); setConfirmation(''); navigate(data.businesses.length ? 'choose' : 'choice')
+        setError('Vuelve a verificar con la misma cuenta de Google con la que comenzaste la recuperación.')
+      } else if (recovering && recoveryBusiness) { setSelected(recoveryBusiness); navigate('recover') }
       else if (recovering) {
-        sessionStorage.removeItem(recoveryKey)
-        navigate('choose')
-        setError('Esta cuenta de Google no pertenece al negocio que quieres recuperar.')
+        clearRecoveryIntent(); navigate(data.businesses.length ? 'choose' : 'choice')
+        setError('Esta cuenta no puede recuperar el PIN de ese negocio. Necesitas su código de recuperación vigente.')
       } else if (sessionStorage.getItem(invitationKey) || intent.join) navigate('join')
       else if (intent.create) navigate('business')
       else if (!data.businesses.length) navigate('choice')
@@ -212,18 +295,21 @@ export default function App() {
       if (event === 'SIGNED_OUT') {
         if (!endingIdentity.current && hasCurrentStoredIdentity()) return
         if (!endingIdentity.current) epoch.current += 1
-        clearSensitive()
+        clearSensitive(verifyingRecovery.current)
         if (closingPending.current) setBusy(true)
         setBusinesses([])
         setSelected(null)
         setDraft(initialDraft)
         operationDraft.current = null
+        sessionRef.current = null
         setSession(null)
         navigate('login')
       } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         // SDK broadcasts can belong to a newer login in another document.
         // Cancelled requests are revoked by this document's generation guard.
         if (endingIdentity.current || !identity || !hasCurrentStoredIdentity(identity.access_token)) return
+        if (sessionRef.current && identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) { epoch.current += 1; clearSensitive(); setSelected(null); setBusinesses([]) }
+        sessionRef.current = identity
         setSession(identity)
       }
     })
@@ -242,7 +328,7 @@ export default function App() {
     if (!session) { navigate('login'); return }
     void loadBusinesses()
     // Refreshing the owner's JWT must not silently unlock or replace the operator session.
-  }, [session?.user.id, session === undefined])
+  }, [identitySessionKey(session), session === undefined])
 
   useEffect(() => {
     if (!('BroadcastChannel' in window)) return
@@ -318,11 +404,26 @@ export default function App() {
     return () => { window.clearTimeout(timer); for (const event of events) window.removeEventListener(event, reset) }
   }, [operator?.operatorToken])
 
+  useEffect(() => {
+    setJoinDetails(null)
+    if (screen !== 'join' || !/^[a-f0-9]{64}$/i.test(invitationCode.trim()) || !sessionRef.current) { setJoinLoading(false); return }
+    const identity = sessionRef.current
+    const requestEpoch = epoch.current
+    let alive = true
+    setJoinLoading(true); setPin(''); setConfirmation(''); setError('')
+    void accountRequest({ action: 'invitation_details', invitationCode: invitationCode.trim() }, identity.access_token)
+      .then((result) => { if (alive && requestEpoch === epoch.current && identitySessionKey(sessionRef.current) === identitySessionKey(identity)) setJoinDetails(result) })
+      .catch((problem) => { if (alive && requestEpoch === epoch.current) showFailure(problem) })
+      .finally(() => { if (alive && requestEpoch === epoch.current) setJoinLoading(false) })
+    return () => { alive = false }
+  }, [screen === 'join', invitationCode, identitySessionKey(session)])
+
   async function googleLogin(reverify = false) {
     if (!supabase) return
     if (busy) return
     const requestEpoch = reverify ? ++epoch.current : epoch.current
     if (reverify) {
+      verifyingRecovery.current = true
       endingIdentity.current = true
       closingPending.current = true
     }
@@ -333,7 +434,7 @@ export default function App() {
       if (reverify) {
         const closed = await closeIdentity(sessionRef.current?.access_token)
         if (requestEpoch !== epoch.current) return
-        clearSensitive()
+        clearSensitive(true)
         setSession(null)
         setBusy(true)
         closingPending.current = false
@@ -382,16 +483,21 @@ export default function App() {
     event.preventDefault()
     if (busy) return
     if (!/^[a-f0-9]{64}$/i.test(invitationCode.trim())) { setError('Revisa el código de invitación.'); return }
-    if (!/^[0-9]{6}$/.test(pin) || pin !== confirmation) { setError('Escribe y confirma el mismo PIN de 6 dígitos.'); return }
+    if (!joinDetails || !/^[0-9]{6}$/.test(pin) || !joinDetails.employee.pinReady && pin !== confirmation) { setError(joinDetails?.employee.pinReady ? 'Escribe tu PIN actual de seis dígitos.' : 'Escribe y confirma el mismo PIN de 6 dígitos.'); return }
     const requestEpoch = epoch.current
+    const identity = sessionRef.current
+    if (!identity) return
     const payload = JSON.stringify({ invitationCode: invitationCode.trim(), pin })
     if (joinPayload.current !== payload) { joinOperationId.current = crypto.randomUUID(); joinPayload.current = payload }
     setBusy(true); setError('')
     try {
-      const data = await accountRequest({ action: 'accept_invitation', invitationCode: invitationCode.trim(), pin, operationId: joinOperationId.current })
-      if (requestEpoch !== epoch.current) return
+      const data = await accountRequest({ action: 'accept_invitation', invitationCode: invitationCode.trim(), pin, operationId: joinOperationId.current }, identity.access_token)
+      if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) {
+        await accountRequest({ action: 'lock', businessId: data.business.id, operatorToken: data.operatorToken }, identity.access_token).catch(() => undefined)
+        return
+      }
       sessionStorage.removeItem(invitationKey)
-      setOperator(data); setSelected(data.business)
+      setOperator(data); setSelected(summaryForContext(data.business))
       setBusinesses((current) => current.some((business) => business.id === data.business.id) ? current : [...current, data.business])
       setPin(''); setConfirmation(''); setInvitationCode(''); navigate('home')
       joinPayload.current = ''
@@ -401,17 +507,78 @@ export default function App() {
 
   async function recoverPin(event: FormEvent) {
     event.preventDefault()
-    if (busy || !selected) return
+    const intent = recoveryIntent.current
+    const identity = sessionRef.current
+    if (busy || mutationPending.current || retryAt > Date.now() || !selected || !intent || !identity) return
+    if (intent.expectedUserId !== identity.user.id || intent.businessId !== selected.id) { clearSensitive(); navigate('choose'); setError('Vuelve a verificar con la misma cuenta de Google.'); return }
+    if (!/^[a-f0-9]{64}$/i.test(recoveryInput.trim())) { setError('Necesitas tu código de recuperación vigente. Google por sí solo no cambia el PIN.'); return }
     if (!/^[0-9]{6}$/.test(pin) || pin !== confirmation) { setError('Escribe y confirma el mismo PIN de 6 dígitos.'); return }
     const requestEpoch = epoch.current
+    const intentGeneration = intent.generation
+    mutationPending.current = true
     setBusy(true); setError('')
     try {
-      const data = await accountRequest({ action: 'reset_pin', businessId: selected.id, pin })
-      if (requestEpoch !== epoch.current) return
-      sessionStorage.removeItem(recoveryKey)
-      setOperator(data); setSelected(data.business); setPin(''); setConfirmation(''); navigate('home')
+      const payload = { action: 'reset_pin' as const, businessId: selected.id, recoveryCode: recoveryInput.trim(), pin }
+      const data = await accountRequest({ ...payload, operationId: recoveryOperationId(payload) }, identity.access_token)
+      if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity) || recoveryIntent.current?.generation !== intentGeneration) {
+        await accountRequest({ action: 'lock', businessId: data.business.id, operatorToken: data.operatorToken }, identity.access_token).catch(() => undefined)
+        return
+      }
+      clearRecoveryIntent()
+      setOperator(data); setSelected(summaryForContext(data.business)); setPin(''); setConfirmation(''); setRecoveryInput('')
+      setSavedRecoveryCode(data.recoveryCode); setRecoveryNext('home'); navigate('recovery-save')
     } catch (problem) { if (requestEpoch === epoch.current) showFailure(problem) }
-    finally { if (requestEpoch === epoch.current) setBusy(false) }
+    finally { if (requestEpoch === epoch.current) { mutationPending.current = false; setBusy(false) } }
+  }
+
+  function beginRecoveryVerification() {
+    const identity = sessionRef.current
+    if (!selected || !identity || selected.canRecoverPin !== true || selected.recoveryReady !== true) return
+    const intent = { businessId: selected.id, expectedUserId: identity.user.id, startedAt: Date.now(), generation: crypto.randomUUID() }
+    recoveryIntent.current = intent
+    sessionStorage.setItem(recoveryKey, JSON.stringify(intent))
+    void googleLogin(true)
+  }
+
+  async function generateRecoveryCode(event?: FormEvent, creation = false) {
+    event?.preventDefault()
+    const current = pendingRecoveryCreation.current ?? operatorRef.current
+    const identity = sessionRef.current
+    if (retryAt > Date.now()) return
+    if (!current || !identity || mutationPending.current || busy || !/^[0-9]{6}$/.test(currentPin)) { if (!busy) setError('Escribe tu PIN actual de seis dígitos.'); return }
+    const requestEpoch = epoch.current
+    mutationPending.current = true
+    setBusy(true); setError('')
+    try {
+      const payload = { action: 'create_recovery_code' as const, businessId: current.business.id, operatorToken: current.operatorToken, currentPin }
+      const result = await accountRequest({ ...payload, operationId: recoveryOperationId(payload) }, identity.access_token)
+      if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) return
+      setSavedRecoveryCode(result.recoveryCode); setCurrentPin(''); pendingRecoveryCreation.current = null
+      setBusinesses((entries) => entries.map((entry) => entry.id === current.business.id ? { ...entry, canRecoverPin: true, recoveryReady: true } : entry))
+      setRecoveryNext(creation ? 'ready' : 'home'); navigate('recovery-save')
+    } catch (problem) { if (requestEpoch === epoch.current) showFailure(problem) }
+    finally { if (requestEpoch === epoch.current) { mutationPending.current = false; setBusy(false) } }
+  }
+
+  async function saveChangedPin(event: FormEvent) {
+    event.preventDefault()
+    const current = operatorRef.current
+    const identity = sessionRef.current
+    if (!current || !identity || busy || mutationPending.current || retryAt > Date.now()) return
+    if (!/^[0-9]{6}$/.test(currentPin) || !/^[0-9]{6}$/.test(pin) || pin !== confirmation) { setError('Escribe el PIN actual y confirma el nuevo PIN de seis dígitos.'); return }
+    const requestEpoch = epoch.current
+    mutationPending.current = true
+    setBusy(true); setError('')
+    try {
+      const payload = { action: 'change_pin' as const, businessId: current.business.id, operatorToken: current.operatorToken, currentPin, pin }
+      const data = await accountRequest({ ...payload, operationId: recoveryOperationId(payload) }, identity.access_token)
+      if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) {
+        await accountRequest({ action: 'lock', businessId: data.business.id, operatorToken: data.operatorToken }, identity.access_token).catch(() => undefined)
+        return
+      }
+      setOperator(data); setSelected(summaryForContext(data.business)); setPin(''); setConfirmation(''); setCurrentPin(''); recoveryOperation.current = null; navigate('home')
+    } catch (problem) { if (requestEpoch === epoch.current) showFailure(problem) }
+    finally { if (requestEpoch === epoch.current) { mutationPending.current = false; setBusy(false) } }
   }
 
   function changeBusiness() {
@@ -433,8 +600,9 @@ export default function App() {
   function savedBusiness(business: BusinessContext) {
     if (!operatorRef.current || operatorRef.current.business.id !== business.id || endingIdentity.current) return
     setOperator((current) => current ? { ...current, business } : current)
-    setSelected(business)
-    setBusinesses((current) => current.map((entry) => entry.id === business.id ? business : entry))
+    const summary = summaryForContext(business)
+    setSelected(summary)
+    setBusinesses((current) => current.map((entry) => entry.id === business.id ? summary : entry))
     navigate('home')
   }
 
@@ -446,20 +614,36 @@ export default function App() {
     if (screen === 'create-pin' && confirmation !== pin) { setError('Los PIN no coinciden. Revísalos e intenta de nuevo.'); return }
     const requestEpoch = epoch.current
     const creatingBusiness = screen === 'create-pin'
+    const identity = sessionRef.current
+    if (!identity) return
     setBusy(true)
     try {
       const data = creatingBusiness
-        ? await accountRequest({ action: 'create_business', ...draft, operationId: operationId.current, pin })
-        : await accountRequest({ action: 'unlock', businessId: selected!.id, pin })
-      if (requestEpoch !== epoch.current) return
+        ? await accountRequest({ action: 'create_business', ...draft, operationId: operationId.current, pin }, identity.access_token)
+        : await accountRequest({ action: 'unlock', businessId: selected!.id, pin }, identity.access_token)
+      if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) {
+        await accountRequest({ action: 'lock', businessId: data.business.id, operatorToken: data.operatorToken }, identity.access_token).catch(() => undefined)
+        return
+      }
       setOperator(data)
-      setSelected(data.business)
+      setSelected(summaryForContext(data.business))
       setBusinesses((current) => current.some((business) => business.id === data.business.id) ? current : [...current, data.business])
       setPin('')
       setConfirmation('')
       setDraft(initialDraft)
       operationDraft.current = null
-      navigate(creatingBusiness ? 'ready' : 'home')
+      if (creatingBusiness) {
+        pendingRecoveryCreation.current = data
+        setCurrentPin(pin)
+        try {
+          const payload = { action: 'create_recovery_code' as const, businessId: data.business.id, operatorToken: data.operatorToken, currentPin: pin }
+          const result = await accountRequest({ ...payload, operationId: recoveryOperationId(payload) }, identity.access_token)
+          if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) return
+          pendingRecoveryCreation.current = null; setCurrentPin(''); setSavedRecoveryCode(result.recoveryCode)
+          setSelected({ ...data.business, canRecoverPin: true, recoveryReady: true }); setBusinesses((entries) => entries.map((entry) => entry.id === data.business.id ? { ...entry, canRecoverPin: true, recoveryReady: true } : entry))
+          setRecoveryNext('ready'); navigate('recovery-save')
+        } catch (problem) { if (requestEpoch === epoch.current) { navigate('recovery-code'); showFailure(problem) } }
+      } else navigate('home')
     } catch (problem) {
       if (requestEpoch === epoch.current) showFailure(problem)
     } finally {
@@ -482,13 +666,10 @@ export default function App() {
     finally { if (requestEpoch === epoch.current) setBusy(false) }
   }
 
-  async function changePin() {
-    const current = operatorRef.current
-    if (!current || busy) return
-    setSelected(current.business)
-    const requestEpoch = epoch.current + 1
-    await lock()
-    if (requestEpoch === epoch.current && !endingIdentity.current && sessionRef.current) navigate('reauth')
+  function changePin() {
+    if (!operatorRef.current || busy) return
+    setCurrentPin(''); setPin(''); setConfirmation(''); setError(''); recoveryOperation.current = null
+    navigate('change-pin')
   }
 
   async function logout() {
@@ -549,9 +730,13 @@ export default function App() {
         <div className="screen-actions"><button className="button primary google-button" onClick={() => void googleLogin()} disabled={busy} aria-busy={busy}><GoogleMark /><span>Continuar con Google</span></button><button className="button secondary" disabled={busy} onClick={() => window.location.assign('/employee')}>Entrar como empleado</button><p className="action-note">Google para tu cuenta. PIN para una caja conectada.</p></div>
       </section>
       : screen === 'choice' ? <section className="screen"><h1>¿Qué quieres hacer?</h1><p>Crea tu negocio o entra con una invitación.</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" onClick={() => { setError(''); setDraft(initialDraft); navigate('business') }}>Crear mi negocio<ArrowRight size={20} /></button><button className="button secondary" onClick={() => { setError(''); navigate('join') }}>Unirme a un negocio</button></div></section>
-      : screen === 'join' ? <section className="screen"><button className="back-button" disabled={busy} onClick={() => { clearSensitive(); setError(''); navigate(businesses.length ? 'choose' : 'choice') }}><ArrowLeft size={20} />Volver</button><h1>Unirme a un negocio</h1><p>El dueño te comparte una invitación y asigna tu rol.</p><form onSubmit={(event) => void joinBusiness(event)}><div className="field"><label htmlFor="invitation-code">Código de invitación</label><input id="invitation-code" required autoComplete="off" maxLength={64} value={invitationCode} onChange={(event) => { setInvitationCode(event.target.value); joinOperationId.current = crypto.randomUUID() }} /></div><p id="pin-help" className="field-help">Crea tu PIN personal de 6 dígitos.</p><PinField label="PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" disabled={busy}>Unirme</button></div></form></section>
-      : screen === 'reauth' ? <section className="screen"><h1>Recupera tu PIN</h1><p>Verifica de nuevo tu cuenta de Google para proteger el acceso a {selected?.name}.</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" disabled={busy} onClick={() => { if (selected) sessionStorage.setItem(recoveryKey, selected.id); void googleLogin(true) }}>Volver a verificar con Google</button><button className="button secondary" disabled={busy} onClick={() => { sessionStorage.removeItem(recoveryKey); navigate('unlock') }}>Volver</button></div></section>
-      : screen === 'recover' ? <section className="screen"><h1>Crea un nuevo PIN</h1><p>Para {selected?.name}. Las sesiones anteriores se cerrarán.</p><form onSubmit={(event) => void recoverPin(event)}><p id="pin-help" className="field-help">Usa 6 dígitos.</p><PinField label="PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" disabled={busy}>Guardar nuevo PIN</button>{error === accountMessages.REAUTH_REQUIRED && <button className="button secondary" disabled={busy} onClick={() => navigate('reauth')}>Volver a verificar con Google</button>}<button className="button secondary" disabled={busy} onClick={() => { sessionStorage.removeItem(recoveryKey); setPin(''); setConfirmation(''); navigate('unlock') }}>Cancelar</button></div></form></section>
+      : screen === 'join' ? <section className="screen"><button className="back-button" disabled={busy} onClick={() => { clearSensitive(); setError(''); navigate(businesses.length ? 'choose' : 'choice') }}><ArrowLeft size={20} />Volver</button><h1>Unirme a un negocio</h1><p>El dueño te comparte una invitación y asigna tu rol.</p><form onSubmit={(event) => void joinBusiness(event)}><div className="field"><label htmlFor="invitation-code">Código de invitación</label><input id="invitation-code" required disabled={busy} autoComplete="off" maxLength={64} value={invitationCode} onChange={(event) => { setInvitationCode(event.target.value); joinOperationId.current = crypto.randomUUID() }} /></div>{joinLoading && <p role="status">Revisando invitación…</p>}{joinDetails && <><p>{joinDetails.employee.name}, para {joinDetails.business.name}.</p><p id="pin-help" className="field-help">{joinDetails.employee.pinReady ? 'Verifica el PIN que ya usas en la caja. Conservarás el mismo.' : 'Elige tu PIN personal de seis dígitos.'}</p><PinField label={joinDetails.employee.pinReady ? 'PIN actual' : 'PIN'} value={pin} onChange={setPin} disabled={busy} />{!joinDetails.employee.pinReady && <PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />}</>}{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" disabled={busy || !joinDetails}>Unirme</button></div></form></section>
+      : screen === 'employee-pin' ? <EmployeePinSetup accessToken={session?.access_token} onBack={() => { epoch.current += 1; navigate('unlock') }} onDone={(data) => { setOperator(data); setSelected(summaryForContext(data.business)); navigate('home') }} />
+      : screen === 'reauth' ? <section className="screen"><h1>Recupera tu PIN</h1><p>{selected?.recoveryReady ? `Necesitarás el código de recuperación que guardaste fuera de este navegador y verificar la misma cuenta de Google de ${selected.name}.` : 'Aún no hay un código de recuperación. Cuando entres con tu PIN, podrás generarlo desde Más. Google por sí solo no restablece el PIN.'}</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions">{selected?.recoveryReady && <button className="button primary" disabled={busy} onClick={beginRecoveryVerification}>Volver a verificar con Google</button>}<button className="button secondary" disabled={busy} onClick={() => { clearRecoveryIntent(); navigate('unlock') }}>Volver</button></div></section>
+      : screen === 'recover' ? <section className="screen"><h1>Crea un nuevo PIN</h1><p>Para {selected?.name}. Necesitas tu código de recuperación; Google por sí solo no cambia el PIN.</p><form onSubmit={(event) => void recoverPin(event)}><div className="field"><label htmlFor="owner-recovery-input">Código de recuperación</label><input id="owner-recovery-input" type="password" value={recoveryInput} onChange={(event) => setRecoveryInput(event.target.value.trim())} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={64} disabled={busy} required /></div><p id="pin-help" className="field-help">Usa seis dígitos.</p><PinField label="PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Guardar nuevo PIN</button>{error === accountMessages.REAUTH_REQUIRED && <button type="button" className="button secondary" disabled={busy} onClick={() => navigate('reauth')}>Volver a verificar con Google</button>}<button type="button" className="button secondary" disabled={busy} onClick={() => { clearSensitive(); navigate('unlock') }}>Cancelar</button></div></form></section>
+      : screen === 'change-pin' && operator ? <section className="screen"><h1>Cambiar mi PIN</h1><p>Verifica tu PIN actual y elige el nuevo.</p><form onSubmit={(event) => void saveChangedPin(event)}><div className="field"><label htmlFor="current-pin">PIN actual</label><input id="current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div><p id="pin-help" className="field-help">Usa seis dígitos.</p><PinField label="Nuevo PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Guardar nuevo PIN</button><button type="button" className="button secondary" disabled={busy} onClick={() => { setCurrentPin(''); setPin(''); setConfirmation(''); navigate('home') }}>Cancelar</button></div></form></section>
+      : screen === 'recovery-code' && operator ? <section className="screen"><h1>Código de recuperación</h1><p>{pendingRecoveryCreation.current ? 'Tu negocio ya está creado. Falta generar el código para recuperar tu PIN.' : 'Guárdalo fuera de este navegador. Un código nuevo invalida el anterior.'}</p><form onSubmit={(event) => void generateRecoveryCode(event, Boolean(pendingRecoveryCreation.current))}><div className="field"><label htmlFor="recovery-current-pin">PIN actual</label><input id="recovery-current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div>{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Generar código de recuperación</button><button type="button" className="button secondary" disabled={busy} onClick={() => { if (pendingRecoveryCreation.current) void lock(); else { setCurrentPin(''); navigate('home') } }}>Cancelar</button></div></form></section>
+      : screen === 'recovery-save' && operator ? <section className="screen"><h1>Guarda tu código de recuperación</h1><p>Con este código y tu Google podrás recuperar el PIN. Guárdalo en otro dispositivo o en papel, no en esta caja. No se podrá consultar después.</p><div className="field"><label htmlFor="recovery-code-saved">Código de recuperación</label><input id="recovery-code-saved" readOnly value={savedRecoveryCode} autoComplete="off" onFocus={(event) => event.target.select()} /></div>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button secondary" onClick={() => void copyRecoveryCode()}>Copiar código</button><button className="button primary" onClick={() => { clearRecoveryClipboard(); setSavedRecoveryCode(''); recoveryOperation.current = null; navigate(recoveryNext) }}>Ya guardé mi código</button></div></section>
       : screen === 'business' ? <section className="screen">
         <p className="step-label">Tu negocio</p><h1>Vamos a empezar</h1><p>Cuéntanos lo esencial.</p>
         <form onSubmit={nextBusiness}>
@@ -577,14 +762,14 @@ export default function App() {
           {error && <p className="error-message" role="alert">{error}</p>}
           {secondsLeft > 0 && <p className="countdown" role="timer" aria-live="off">Podrás intentar de nuevo en {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}.</p>}
           <div className="screen-actions"><button className="button primary" type="submit" disabled={busy || secondsLeft > 0} aria-busy={busy}>{createPin ? 'Crear PIN' : 'Entrar'}<ArrowRight size={20} aria-hidden="true" /></button></div>
-          {!createPin && <><button className="button secondary" type="button" disabled={busy} onClick={changeBusiness}>Cambiar negocio</button><button className="button secondary" type="button" disabled={busy} onClick={() => { setPin(''); setError(''); navigate('reauth') }}>Olvidé mi PIN</button></>}
+          {!createPin && <><button className="button secondary" type="button" disabled={busy} onClick={changeBusiness}>Cambiar negocio</button><button className="button secondary" type="button" disabled={busy} onClick={() => { setPin(''); setError(''); navigate(selected?.canRecoverPin === true ? 'reauth' : 'employee-pin') }}>Olvidé mi PIN</button></>}
         </form>
       </section>
-      : screen === 'choose' ? <section className="screen"><h1>Tus negocios</h1><p>Elige dónde quieres entrar.</p><div className="business-list">{businesses.map((business) => <button className="business-choice" disabled={busy} key={business.id} onClick={() => { setSelected(business); setError(''); setPin(''); navigate('unlock') }}><span className="business-icon"><Coffee size={22} strokeWidth={1.5} aria-hidden="true" /></span><span>{business.name}</span><ChevronRight size={20} aria-hidden="true" /></button>)}</div><button className="button secondary" disabled={busy} onClick={() => { operationId.current = crypto.randomUUID(); setDraft(initialDraft); setError(''); navigate('business') }}>Crear otro negocio</button><button className="button secondary" disabled={busy} onClick={() => { setError(''); navigate('join') }}>Unirme a un negocio</button></section>
+      : screen === 'choose' ? <section className="screen"><h1>Tus negocios</h1><p>Elige dónde quieres entrar.</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="business-list">{businesses.map((business) => <button className="business-choice" disabled={busy} key={business.id} onClick={() => { setSelected(business); setError(''); setPin(''); navigate('unlock') }}><span className="business-icon"><Coffee size={22} strokeWidth={1.5} aria-hidden="true" /></span><span>{business.name}</span><ChevronRight size={20} aria-hidden="true" /></button>)}</div><button className="button secondary" disabled={busy} onClick={() => { operationId.current = crypto.randomUUID(); setDraft(initialDraft); setError(''); navigate('business') }}>Crear otro negocio</button><button className="button secondary" disabled={busy} onClick={() => { setError(''); navigate('join') }}>Unirme a un negocio</button></section>
       : isReady && operator ? <section className="ready-screen"><div className="ready-mark"><Check size={28} strokeWidth={2} aria-hidden="true" /></div><p className="business-name">{operator.business.name}</p><h1>Cuenta creada</h1><p>Tu acceso está listo. Puedes configurar el negocio y añadir a tu equipo desde el inicio.</p><dl className="business-details"><div><dt>Tipo de negocio</dt><dd>{{ cafe: 'Cafetería', restaurant: 'Restaurante', other: 'Otro' }[operator.business.businessType]}</dd></div><div><dt>Zona horaria</dt><dd>{timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone}</dd></div><div><dt>Sucursal / caja</dt><dd>{operator.business.profile?.branchName} / {operator.business.profile?.registerName}</dd></div></dl>{error && <p className="error-message" role="alert">{error}</p>}<div className="home-actions"><button className="button primary" onClick={() => navigate('home')} disabled={busy}>Ir al inicio<ArrowRight size={20} aria-hidden="true" /></button><button className="button secondary" onClick={() => void lock()} disabled={busy}><LockKeyhole size={20} aria-hidden="true" />{busy ? 'Un momento…' : 'Bloquear'}</button></div></section>
       : screen === 'settings' && operator?.business.role === 'owner' ? <BusinessSettings business={operator.business} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
       : screen === 'team' && operator?.business.role === 'owner' ? <TeamPanel business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
-      : isHome && operator ? <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} timezoneLabel={timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone} onSettings={() => navigate('settings')} onTeam={() => navigate('team')} onSwitchBusiness={changeBusiness} onChangePin={() => void changePin()} />
+      : isHome && operator ? <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} timezoneLabel={timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone} onSettings={() => navigate('settings')} onTeam={() => navigate('team')} onSwitchBusiness={changeBusiness} onChangePin={changePin} onRecoveryCode={() => { setCurrentPin(''); setError(''); recoveryOperation.current = null; navigate('recovery-code') }} />
       : <section className="screen"><h1>No pudimos cargar tu negocio</h1>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" onClick={() => void loadBusinesses()}>Intentar de nuevo</button></div></section>}
       </Suspense>
     </main>

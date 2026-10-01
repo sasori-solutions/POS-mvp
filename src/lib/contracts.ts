@@ -19,7 +19,21 @@ export interface BusinessSummary {
   id: string
   name: string
   businessType: BusinessType
+  canRecoverPin?: boolean
+  recoveryReady?: boolean
 }
+
+export interface PinSetupAuthorization {
+  setupCode: string
+  setupId: string
+  expiresAt: string
+}
+export interface EmployeePinSetupDetails {
+  business: BusinessSummary
+  employee: EmployeeSummary
+  expiresAt?: string
+}
+export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string }
 
 export interface EmployeeSummary {
   id: string
@@ -32,6 +46,7 @@ export interface EmployeeSummary {
 }
 export interface EmployeeCreation extends EmployeeSummary {
   invitation?: { invitationCode: string; invitationId: string; expiresAt: string }
+  pinSetup?: PinSetupAuthorization
 }
 export interface InvitationSummary {
   employeeId?: string
@@ -100,19 +115,27 @@ export type AccountRequest =
   | ({ action: 'lock' } & OwnerRequest)
   | { action: 'revoke_sessions' }
   | ({ action: 'team' } & OwnerRequest)
-  | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: string | null; inviteWithGoogle?: boolean; operationId: string } & OwnerRequest)
-  | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; active: boolean; pin: string | null } & OwnerRequest)
+  | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: null; inviteWithGoogle?: boolean; operationId: string } & OwnerRequest)
+  | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; active: boolean; pin: null } & OwnerRequest)
+  | ({ action: 'create_pin_setup'; employeeId: string; operationId: string } & OwnerRequest)
+  | { action: 'employee_pin_setup_details'; setupCode: string }
+  | { action: 'set_employee_pin'; setupCode: string; pin: string; operationId: string }
   | ({ action: 'delete_employee' | 'restore_employee'; employeeId: string; operationId: string } & OwnerRequest)
   | ({ action: 'create_invitation'; operationId: string } & OwnerRequest & ({ employeeId: string } | { name: string; role: EmployeeRole }))
   | ({ action: 'revoke_invitation'; invitationId: string } & OwnerRequest)
+  | { action: 'invitation_details'; invitationCode: string }
   | { action: 'accept_invitation'; invitationCode: string; name?: string; pin: string; operationId: string }
   | ({ action: 'create_pairing_code'; operationId: string } & OwnerRequest)
   | ({ action: 'revoke_device'; deviceId: string } & OwnerRequest)
-  | { action: 'reset_pin'; businessId: string; pin: string }
+  | ({ action: 'create_recovery_code'; currentPin: string; operationId: string } & OwnerRequest)
+  | ({ action: 'change_pin'; currentPin: string; pin: string; operationId: string } & OwnerRequest)
+  | { action: 'reset_pin'; businessId: string; recoveryCode: string; pin: string; operationId: string }
   | { action: 'device_pair'; pairingCode: string; deviceName: string; operationId: string }
   | { action: 'device_status'; deviceToken: string }
   | { action: 'device_forget'; deviceToken: string }
   | { action: 'device_unlock'; deviceToken: string; employeeId: string; pin: string }
+  | { action: 'device_pin_setup_details'; deviceToken: string; setupCode: string }
+  | { action: 'device_set_employee_pin'; deviceToken: string; setupCode: string; pin: string; operationId: string }
   | { action: 'device_context'; deviceToken: string; operatorToken: string }
   | { action: 'device_lock'; deviceToken: string; operatorToken: string }
 
@@ -127,17 +150,25 @@ export interface AccountResponses {
   team: TeamContext
   create_employee: EmployeeCreation
   update_employee: EmployeeSummary
+  create_pin_setup: PinSetupAuthorization
+  employee_pin_setup_details: EmployeePinSetupDetails
+  set_employee_pin: OperatorSession
   delete_employee: { id: string; deleted: true }
   restore_employee: EmployeeSummary
   create_invitation: { invitationCode: string; invitationId: string; expiresAt: string }
   revoke_invitation: { revoked: true }
+  invitation_details: InvitationDetails
   accept_invitation: OperatorSession
   create_pairing_code: { pairingCode: string; expiresAt: string }
   revoke_device: { revoked: true }
-  reset_pin: OperatorSession
+  create_recovery_code: { recoveryCode: string }
+  change_pin: OperatorSession
+  reset_pin: OperatorSession & { recoveryCode: string }
   device_pair: PairedDevice
   device_status: DeviceStatus
   device_unlock: OperatorSession
+  device_pin_setup_details: EmployeePinSetupDetails
+  device_set_employee_pin: OperatorSession
   device_context: AccountContext
   device_lock: { locked: true }
   device_forget: { revoked: true }
@@ -146,6 +177,7 @@ export type AccountErrorCode =
   | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
   | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
   | 'REAUTH_REQUIRED' | 'EMPLOYEE_INACTIVE' | 'PIN_INVALID' | 'PIN_LOCKED'
+  | 'PIN_SETUP_INVALID' | 'PIN_SETUP_ACCOUNT_MISMATCH' | 'RECOVERY_INVALID' | 'RECOVERY_LOCKED' | 'RECOVERY_UNAVAILABLE'
   | 'SESSION_INVALID' | 'SESSION_EXPIRED' | 'OPERATION_CONFLICT' | 'ORIGIN_FORBIDDEN'
   | 'METHOD_NOT_ALLOWED' | 'PAYLOAD_TOO_LARGE' | 'SERVER_ERROR'
 export interface AccountError { code: AccountErrorCode; message: string; retryAfterSeconds?: number }

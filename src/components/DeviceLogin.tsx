@@ -4,6 +4,7 @@ import { AccountClientError, deviceRequest } from '../lib/account'
 import { closeIdentity, supabase } from '../lib/supabase'
 import type { DeviceStatus, EmployeeSummary, OperatorSession } from '../lib/contracts'
 import HomeScreen from './HomeScreen'
+import EmployeePinSetup from './EmployeePinSetup'
 import './account-management.css'
 
 interface DeviceLoginProps { onExit?: () => void }
@@ -33,6 +34,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
   const [retryAt, setRetryAt] = useState(0)
   const [now, setNow] = useState(Date.now())
   const [confirmForget, setConfirmForget] = useState(false)
+  const [settingPin, setSettingPin] = useState(false)
   const generation = useRef(0)
   const mounted = useRef(true)
   const tokenRef = useRef('')
@@ -63,6 +65,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
     setOperator(null)
     setSelected(null)
     setPin('')
+    setSettingPin(false)
     setRetryAt(0)
   }
 
@@ -318,6 +321,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
 
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000))
   if (operator) return <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} timezoneLabel={operator.business.timezone} />
+  if (settingPin && deviceToken) return <div className="employee-shell"><EmployeePinSetup deviceToken={deviceToken} onBack={() => { generation.current += 1; setSettingPin(false) }} onBeforeConsume={() => broadcast('lock')} onDone={(result) => { operatorRef.current = result; setOperator(result); setSettingPin(false); setError(''); setRetryAt(0); if (result.business.employee) employeeRetryAt.current.delete(result.business.employee.id); broadcast('lock') }} /></div>
 
   return <div className="employee-shell">
     {onExit && <button type="button" className="back-button" onClick={onExit} disabled={busy}><ArrowLeft size={18} aria-hidden="true" />Acceso del dueño</button>}
@@ -338,10 +342,12 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
           {error && <p className="error-message" role="alert">{error}</p>}
           {remaining > 0 && <p className="employee-countdown" role="status">Vuelve a intentar en {Math.ceil(remaining / 60)} min.</p>}
           <div className="screen-actions"><button className="button primary" disabled={busy || remaining > 0} aria-busy={busy}>{busy ? 'Entrando…' : 'Entrar'}</button></div>
+          {selected.role === 'owner' ? <p className="field-help">Para recuperar el PIN del dueño, abre Acceso del dueño y usa Google con tu código de recuperación.</p> : <button type="button" className="button secondary" disabled={busy} onClick={() => { if (busyRef.current) return; generation.current += 1; setPin(''); setSettingPin(true) }}>Crear o restablecer mi PIN</button>}
         </form>
       </section> : <section className="employee-screen employee-roster">
         {status && <p className="employee-summary">{status.business.name} / {status.registerName}</p>}
         <h1>Elige tu nombre</h1><p>Cada empleado entra con su propio PIN.</p>
+        <button type="button" className="button secondary" disabled={busy} onClick={() => { if (busyRef.current) return; generation.current += 1; setSettingPin(true) }}>Crear o restablecer mi PIN</button>
         {error && <p className="error-message" role="alert">{error}</p>}
         {status ? <><div className="business-list">{status.employees.filter((employee) => employee.active).map((employee) => <button type="button" key={employee.id} className="business-choice" aria-label={employee.name} disabled={busy} onClick={() => { setSelected(employee); setError(''); setPin(''); setRetryAt(employeeRetryAt.current.get(employee.id) ?? 0); setNow(Date.now()) }}><span><span>{employee.name}</span><small>{roles[employee.role]}</small></span><ChevronRight size={20} aria-hidden="true" /></button>)}</div>{!status.employees.some((employee) => employee.active) && <p className="management-empty">No hay empleados activos. Pide al dueño que agregue tu acceso.</p>}</> : <button type="button" className="button secondary" disabled={busy} onClick={() => { setError(''); void refreshStatus() }}>Reintentar</button>}
         {confirmForget ? <div className="employee-forget-confirm"><p>Para volver a usar esta caja necesitarás un nuevo código del dueño.</p><div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void forget()}>Sí, desvincular</button><button type="button" className="button secondary" disabled={busy} onClick={() => setConfirmForget(false)}>Cancelar</button></div></div> : <div className="management-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setConfirmForget(true)}>Desvincular dispositivo</button></div>}

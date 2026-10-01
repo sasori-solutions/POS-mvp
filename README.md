@@ -1,12 +1,18 @@
 # POS México PWA
 
-Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit PIN. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, pair/revoke devices, and recover their PIN after fresh Google authentication. Catalog, orders and sales still show availability messages until those modules are implemented.
+Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN and an independent recovery code. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Catalog, orders and sales still show availability messages until those modules are implemented.
 
 Shared registers use `/employee`: a one-use pairing code connects a restricted device, then each active employee selects their name and enters their PIN. The device never needs to retain the owner's Google session. Invited employees may also join with their own Google account. Roles come from the owner's assignment; the employee cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. Only the device credential is persisted; PINs and operator tokens stay in memory.
 
+Employees choose their own PIN. The owner assigns name/role and authorizes setup or reset, without entering the employee's PIN. Google invitees with no PIN create one when joining; a person who already has a PIN enters that same PIN to link Google. PIN-only employees receive a one-use, 15-minute setup code and choose their PIN on a paired register. Linking Google preserves the existing PIN and employee ID.
+
+Owner recovery requires the same owner account, fresh Google authentication and the independent recovery code saved outside the shared browser. Google alone cannot reset the PIN or enroll recovery. Generating or replacing the recovery code requires an unlocked owner operator and the current PIN. Existing businesses receive no automatic recovery code or fallback: the owner must first unlock with the known PIN to prepare one. A successful recovery consumes the code, provides its replacement and closes prior owner operator sessions. A normal PIN change requires the current PIN and retains the recovery code.
+
 Employee management uses one list, one Administrar action per employee and a focused form with Volver a empleados. Empleados and Dispositivos have separate tabs. Google access is optional and creates no provisional PIN. Each employee's detail shows whether an invitation is pending, accepted, cancelled, replaced, expired or unavailable, with recorded dates rather than a generic “revocado o utilizado” message. Owners can confirm Eliminar empleado and explicitly restore the same person from Empleados eliminados. Deletion closes access and sessions; restoration preserves identity and PIN without reviving old sessions or invitation codes.
 
-The employee lifecycle correction was published on 1 October 2026 by Agente de Larios, including new migration `20261001000400_employee_lifecycle.sql`. Local validation passed 126/126 browser cases, 36/36 real integration tests and 13/13 Deno tests; public routes/assets passed 27/27. Successful cloud employee mutations, fresh business creation and physical-phone installation remain manual checks.
+The PIN policy/recovery changes were published on 1 October 2026 by Agente de Larios with new migrations `20261001000500_employee_pin_policy.sql` and `20261001000600_owner_pin_recovery.sql`; previously applied migrations remain unchanged. Final validation passed **57/57 real local integration**, **16/16 Deno** and **160/160 desktop/phone-width browser cases**, build/typechecks and the real local browser, compatibility and production-authentication smokes. Compatibility preserved existing people, PIN hashes, lockout counters and invitation codes, with canonical statement history **44/48/27/23/29/21**. Public route/asset checks passed **27/27** and anonymous API probes **20/20**. See [DEPLOYMENT.md](DEPLOYMENT.md) for release artifacts and limits.
+
+The preceding employee lifecycle correction was published on 1 October 2026 by Agente de Larios, including migration `20261001000400_employee_lifecycle.sql`. Its validation passed 126/126 browser cases, 36/36 real integration tests and 13/13 Deno tests; public routes/assets passed 27/27. Successful cloud employee mutations, fresh business creation and physical-phone installation remain manual checks.
 
 ## Cloud app
 
@@ -52,6 +58,7 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 - Never commit `.env.local`, `.env.functions`, database passwords, service-role keys, OAuth secrets or real user records. Only public Supabase browser settings belong in `VITE_` variables.
 - Backend financial/business authorization is separate from a persisted Google session. All account operations go through the typed `account` Edge Function; raw PINs are sent only over the authenticated request and never stored by the client.
+- Employee setup, owner recovery and normal PIN change have separate permissions. Setup and recovery codes contain 256 random bits; the database retains hashes, with no raw code in operation records or audit logs. Exact lost-response retries cannot overwrite a later PIN or revive a consumed/replaced authorization.
 - Lock and logout hide the private view immediately and notify other open tabs while revocation completes. New entry stays disabled until that request settles. Reloads and expired operator sessions return to PIN entry. Server PIN lockouts include a countdown and disable immediate retries.
 - Logout clears this device even when the network fails and explains when remote revocation could not be confirmed. Network failure never creates a local operator session.
 - A logout cancels any pending OAuth callback, removes this app's PKCE verifier keys and revokes a late returned Supabase session. Late authentication events cannot restore the private view after logout.
@@ -62,7 +69,13 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Catalog, sales, payments, inventory and invoicing operations are still pending.
 
-## Hosted release status
+## Current hosted release: PIN policy and recovery
+
+Agente de Larios, 1 October 2026. Supabase has all six migrations and the current account function deployed. Cloud/local comparison matched all 46 SQL functions; 18 private tables and nine public RPCs passed RLS/grant inspection. Cloudflare production `4332457e-e8b5-4ad2-8bcd-85a847714eb8` publishes the 20-file build with `index-DyQATu0Q.js`; public hashes passed 27/27 and anonymous API probes 20/20. These probes did not change production staff, PINs or recovery codes.
+
+The waiting PWA worker was activated through visible browser developer tools; ordinary reload loaded the current bundle. The existing Google identity loaded its business and the missing-code recovery screen correctly blocked a Google-only reset. A fresh real Google account selection/callback/status flow completed and showed create/join for an account without linked businesses; no business was created. No human PIN or recovery code was entered or generated. Successful authenticated cloud employee/PIN/recovery/device mutations and physical-phone installation remain unverified. Other installed windows may retain old workers because there is no update banner.
+
+## Historical hosted release: employee lifecycle
 
 Agente de Larios · 1 October 2026 · employee lifecycle correction published.
 

@@ -14,7 +14,7 @@ interface TeamPanelProps {
 type EmployeeRole = Exclude<BusinessRole, 'owner'>
 const roles: Record<BusinessRole, string> = { owner: 'Dueño', manager: 'Encargado', cashier: 'Cajero', kitchen: 'Cocina' }
 const sessionErrors = ['AUTH_REQUIRED', 'GOOGLE_REQUIRED', 'SESSION_INVALID', 'SESSION_EXPIRED', 'BUSINESS_ACCESS_DENIED', 'PERMISSION_DENIED', 'REAUTH_REQUIRED']
-type Code = { value: string; label: string; expiresAt: string; path: string; parameter: string; invitationId?: string; employeeId?: string }
+type Code = { setupId?: string; value: string; label: string; expiresAt: string; path: string; parameter: string; invitationId?: string; employeeId?: string }
 
 export default function TeamPanel({ business, operatorToken, onBack, onSessionError }: TeamPanelProps) {
   const [team, setTeam] = useState<AccountResponses['team'] | null>(null)
@@ -27,12 +27,9 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   const [form, setForm] = useState(false)
   const [editing, setEditing] = useState<EmployeeSummary | null>(null)
   const [inviteWithGoogle, setInviteWithGoogle] = useState(false)
-  const [changingPin, setChangingPin] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [name, setName] = useState('')
   const [role, setRole] = useState<EmployeeRole>('cashier')
-  const [pin, setPin] = useState('')
-  const [confirmation, setConfirmation] = useState('')
   const [code, setCode] = useState<Code | null>(null)
   const [now, setNow] = useState(Date.now)
   const heading = useRef<HTMLHeadingElement>(null)
@@ -62,8 +59,6 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
       setEditing(null)
       selectedEmployee.current = null
       setCode(null)
-      setPin('')
-      setConfirmation('')
       operation.current = null
       onSessionError?.(caught)
     }
@@ -100,8 +95,6 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     setCode(null)
     setForm(false)
     setTab('employees')
-    setPin('')
-    setConfirmation('')
     setError('')
     setNotice('')
     setDenied(business.role !== 'owner')
@@ -124,13 +117,14 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   useEffect(() => {
     const deadlines = team?.invitations.filter((item) => item.status === 'pending')
       .map((item) => new Date(item.expiresAt).getTime()).filter((value) => value > now) ?? []
+    if (code && new Date(code.expiresAt).getTime() > now) deadlines.push(new Date(code.expiresAt).getTime())
     if (!deadlines.length || denied) return
     const timer = window.setTimeout(() => {
       setNow(Date.now())
       if (!mutationBusy.current) void load(false)
     }, Math.min(Math.min(...deadlines) - Date.now() + 1, 2_147_483_647))
     return () => window.clearTimeout(timer)
-  }, [team, now, denied])
+  }, [team, code, now, denied])
 
   function rememberInvitation(employee: EmployeeSummary, invitation: NonNullable<EmployeeCreation['invitation']>) {
     setTeam((previous) => previous ? {
@@ -147,12 +141,9 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     setEditing(employee ?? null)
     selectedEmployee.current = employee?.id ?? null
     setInviteWithGoogle(false)
-    setChangingPin(false)
     setConfirmDelete(false)
     setName(employee?.name ?? '')
     setRole(employee && employee.role !== 'owner' ? employee.role : 'cashier')
-    setPin('')
-    setConfirmation('')
     setError('')
     setNotice('')
     setCode(null)
@@ -164,9 +155,6 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     setEditing(null)
     selectedEmployee.current = null
     setConfirmDelete(false)
-    setChangingPin(false)
-    setPin('')
-    setConfirmation('')
     setCode(null)
     setError('')
     operation.current = null
@@ -184,11 +172,6 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     if (mutationBusy.current || editing && !employeeDirty) return
     const employeeName = name.trim().replace(/\s+/g, ' ')
     if (employeeName.length < 2 || employeeName.length > 100) { setError('Escribe un nombre de 2 a 100 caracteres.'); return }
-    const requiresPin = editing ? changingPin : !inviteWithGoogle
-    if (requiresPin && (!/^[0-9]{6}$/.test(pin) || pin !== confirmation)) {
-      setError(pin !== confirmation ? 'Los PIN no coinciden.' : 'El PIN debe tener seis dígitos.')
-      return
-    }
     const current = generation.current
     mutationBusy.current = true
     requestSequence.current += 1
@@ -198,25 +181,25 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     try {
       const employee: EmployeeCreation = editing
         ? await accountRequest({ action: 'update_employee', businessId: business.id, operatorToken, employeeId: editing.id,
-          name: employeeName, role, active: editing.active, pin: changingPin ? pin : null })
+          name: employeeName, role, active: editing.active, pin: null })
         : await accountRequest({ action: 'create_employee', businessId: business.id, operatorToken,
-          name: employeeName, role, pin: inviteWithGoogle ? null : pin, inviteWithGoogle,
-          operationId: operationId({ action: 'create_employee', name: employeeName, role, pin: inviteWithGoogle ? null : pin, inviteWithGoogle }) })
+          name: employeeName, role, pin: null, inviteWithGoogle,
+          operationId: operationId({ action: 'create_employee', name: employeeName, role, pin: null, inviteWithGoogle }) })
       if (!mounted.current || current !== generation.current) return
       setEditing(employee)
       selectedEmployee.current = employee.id
       setName(employee.name)
-      setChangingPin(false)
+      if (employee.pinSetup) setCode({ value: employee.pinSetup.setupCode, setupId: employee.pinSetup.setupId, label: 'Código para crear o restablecer PIN', expiresAt: employee.pinSetup.expiresAt, path: '', parameter: 'setup', employeeId: employee.id })
       if (employee.invitation) {
         const invitation = employee.invitation
         rememberInvitation(employee, invitation)
         setCode({ value: invitation.invitationCode, label: 'Código de invitación', expiresAt: invitation.expiresAt, path: '/', parameter: 'invite', employeeId: employee.id, invitationId: invitation.invitationId })
       }
       operation.current = null
-      setNotice(editing ? 'Cambios guardados.' : inviteWithGoogle ? 'Empleado agregado.' : 'Empleado agregado. Ya puede entrar con su PIN en una caja vinculada.')
+      setNotice(editing ? 'Cambios guardados.' : inviteWithGoogle ? 'Empleado agregado.' : 'Empleado agregado. Comparte el código para que cree su PIN.')
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
-    finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false); setPin(''); setConfirmation('') } }
+    finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
   }
 
   async function linkGoogle(employee: EmployeeSummary) {
@@ -236,6 +219,22 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
       operation.current = null
       setNotice('Enlace creado.')
       await load()
+    } catch (caught) { if (current === generation.current) showError(caught) }
+    finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
+  }
+
+  async function authorizePin(employee: EmployeeSummary) {
+    if (mutationBusy.current) return
+    const current = generation.current
+    mutationBusy.current = true
+    requestSequence.current += 1
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const result = await accountRequest({ action: 'create_pin_setup', businessId: business.id, operatorToken, employeeId: employee.id, operationId: operationId({ action: 'create_pin_setup', employeeId: employee.id }) })
+      if (!mounted.current || current !== generation.current) return
+      setCode({ value: result.setupCode, setupId: result.setupId, label: 'Código para crear o restablecer PIN', expiresAt: result.expiresAt, path: '', parameter: 'setup', employeeId: employee.id })
+      operation.current = null
+      setNotice('Comparte el código con el empleado. Él elegirá su PIN en una caja vinculada o con su Google.')
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
   }
@@ -315,8 +314,8 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   async function copyCode() {
     if (!code) return
     try {
-      await navigator.clipboard.writeText(`${window.location.origin}${code.path}#${code.parameter}=${encodeURIComponent(code.value)}`)
-      setNotice('Enlace copiado.')
+      await navigator.clipboard.writeText(code.parameter === 'setup' ? code.value : `${window.location.origin}${code.path}#${code.parameter}=${encodeURIComponent(code.value)}`)
+      setNotice(code.parameter === 'setup' ? 'Código copiado.' : 'Enlace copiado.')
     } catch { setError('No pudimos copiar el enlace. Puedes copiar el código del campo.') }
   }
 
@@ -334,7 +333,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     if (employee.googleLinked) return 'Google y PIN'
     const pending = latestInvitation(employee)?.status === 'pending'
     if (employee.pinReady) return pending ? 'PIN en caja. Google pendiente' : 'PIN en caja'
-    return pending ? 'Invitación pendiente' : 'Sin acceso configurado'
+    return pending ? 'Invitación pendiente' : 'Pendiente de crear PIN'
   }
 
   function date(value: string) {
@@ -351,7 +350,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
 
   function invitationDetail(invitation: InvitationSummary) {
     if (invitation.status === 'accepted') return `Aceptada${invitation.acceptedAt ? ` el ${date(invitation.acceptedAt)}` : ''}. El empleado vinculó su cuenta de Google.`
-    if (invitation.status === 'pending') return `Vence el ${date(invitation.expiresAt)}. El empleado elegirá su PIN al aceptarla.`
+    if (invitation.status === 'pending') return `Vence el ${date(invitation.expiresAt)}. ${editing?.pinReady ? 'Verificará el PIN que ya usa en la caja; conservará el mismo.' : 'El empleado elegirá su PIN al aceptarla.'}`
     if (invitation.status === 'expired') return `Venció el ${date(invitation.expiresAt)}. Ese enlace ya no permite entrar.`
     const reasons: Record<NonNullable<InvitationSummary['revokeReason']>, string> = {
       user_cancelled: 'La cancelaste. Ese enlace ya no permite entrar.',
@@ -364,10 +363,10 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   }
 
   const invitation = editing ? latestInvitation(editing) : undefined
-  const currentCode = code && (form ? code.employeeId === editing?.id && invitation?.id === code.invitationId && invitation?.status === 'pending' : tab === 'devices' && code.parameter === 'pair') ? code : null
+  const currentCode = code && (form ? code.employeeId === editing?.id && (code.parameter === 'setup' ? new Date(code.expiresAt).getTime() > now : invitation?.id === code.invitationId && invitation?.status === 'pending') : tab === 'devices' && code.parameter === 'pair') ? code : null
   const employees = team?.employees.filter((employee) => employee.role !== 'owner' && !employee.deletedAt) ?? []
   const deletedEmployees = team?.deletedEmployees?.filter((employee) => employee.role !== 'owner') ?? []
-  const employeeDirty = Boolean(editing && (name.trim().replace(/\s+/g, ' ') !== editing.name || role !== editing.role || changingPin && Boolean(pin || confirmation)))
+  const employeeDirty = Boolean(editing && (name.trim().replace(/\s+/g, ' ') !== editing.name || role !== editing.role))
 
   function selectTab(next: 'employees' | 'devices', focus = false) {
     setTab(next)
@@ -383,8 +382,8 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     return <div className="management-code">
       <label htmlFor="management-code">{currentCode.label}</label>
       <input id="management-code" value={currentCode.value} readOnly onFocus={(event) => event.target.select()} />
-      <p>{currentCode.parameter === 'pair' && <>Vence el {date(currentCode.expiresAt)}. </>}Sólo se puede usar una vez.</p>
-      <button type="button" className="button secondary" disabled={busy} onClick={() => void copyCode()}>Copiar enlace</button>
+      <p>{currentCode.parameter !== 'invite' && <>Vence el {date(currentCode.expiresAt)}. </>}Sólo se puede usar una vez.</p>
+      <button type="button" className="button secondary" disabled={busy} onClick={() => void copyCode()}>{currentCode.parameter === 'setup' ? 'Copiar código' : 'Copiar enlace'}</button>
     </div>
   }
 
@@ -404,23 +403,18 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
         <form className="management-form" onSubmit={saveEmployee}>
           <div className="field"><label htmlFor="employee-name">Nombre del empleado</label><input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={busy} /></div>
           <div className="field"><label htmlFor="employee-role">Rol</label><select id="employee-role" value={role} onChange={(event) => setRole(event.target.value as EmployeeRole)} disabled={busy}><option value="manager">Encargado</option><option value="cashier">Cajero</option><option value="kitchen">Cocina</option></select></div>
-          {!editing && <><label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} onChange={(event) => { setInviteWithGoogle(event.target.checked); setPin(''); setConfirmation(''); operation.current = null }} />Invitar a usar Google</label><p className="field-help">{inviteWithGoogle ? 'Se creará un enlace para que tú lo compartas. El empleado elegirá su PIN al aceptarlo.' : 'Con este PIN podrá entrar en una caja vinculada.'}</p></>}
-          {editing && <div className="management-pin-action">{!changingPin ? <button type="button" className="button secondary" disabled={busy} onClick={() => { setChangingPin(true); setPin(''); setConfirmation('') }}>{editing.pinReady ? 'Cambiar PIN' : 'Crear PIN'}</button> : <button type="button" className="management-text-button" disabled={busy} onClick={() => { setChangingPin(false); setPin(''); setConfirmation('') }}>Cancelar cambio de PIN</button>}</div>}
-          {(!editing && !inviteWithGoogle || editing && changingPin) && <>
-            <div className="field"><label htmlFor="employee-pin">PIN del empleado</label><input id="employee-pin" type="password" inputMode="numeric" autoComplete="new-password" pattern="[0-9]{6}" maxLength={6} value={pin} onChange={(event) => setPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} required disabled={busy} /></div>
-            <div className="field"><label htmlFor="employee-confirm">Confirmar PIN del empleado</label><input id="employee-confirm" type="password" inputMode="numeric" autoComplete="new-password" maxLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} required disabled={busy} /></div>
-          </>}
+          {!editing && <><label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} onChange={(event) => { setInviteWithGoogle(event.target.checked); operation.current = null }} />Invitar a usar Google</label><p className="field-help">{inviteWithGoogle ? 'Se creará un enlace para que tú lo compartas. El empleado elegirá su PIN al aceptarlo.' : 'El empleado creará su propio PIN con un código que tú le compartes.'}</p></>}
           <div className="management-actions"><button className="button primary" disabled={busy || Boolean(editing && !employeeDirty)} aria-busy={busy}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar empleado'}</button>{!editing && <button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Cancelar</button>}</div>
         </form>
         {editing && <>
-          <section className="management-detail" aria-labelledby="access-title"><h2 id="access-title">Acceso</h2>{(editing.pinReady || editing.googleLinked || invitation?.status !== 'pending' || !editing.active) && <p>{editing.pinReady && !editing.googleLinked && editing.active ? 'PIN en caja' : accessLabel(editing)}</p>}
+          <section className="management-detail" aria-labelledby="access-title"><h2 id="access-title">Acceso</h2>{editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void authorizePin(editing)}>{editing.pinReady ? 'Restablecer PIN' : 'Autorizar creación de PIN'}</button>}{(editing.pinReady || editing.googleLinked || invitation?.status !== 'pending' || !editing.active) && <p>{editing.pinReady && !editing.googleLinked && editing.active ? 'PIN en caja' : accessLabel(editing)}</p>}
             {!editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void reactivateEmployee(editing)}>Reactivar empleado</button>}
             {invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
-            {currentCode && <p className="field-help">Comparte este enlace con {editing.name}. No se envía por correo automáticamente.</p>}
+            {currentCode?.parameter === 'invite' && <p className="field-help">Comparte este enlace con {editing.name}. No se envía por correo automáticamente.</p>}
             {codeCard()}
             {editing.active && !editing.googleLinked && <>
-              {invitation?.status === 'pending' && !currentCode && <p className="field-help">El enlace sólo se muestra al crearlo. Renueva la invitación para obtener uno nuevo.</p>}
-              <div className="management-actions">{(!currentCode || invitation?.status !== 'pending') && <button type="button" className="button secondary" disabled={busy} onClick={() => void linkGoogle(editing)}>{invitation ? 'Renovar invitación' : 'Invitar a usar Google'}</button>}{invitation?.status === 'pending' && <button type="button" className="button secondary" disabled={busy} onClick={() => void revoke('invitation', invitation.id)}>Cancelar invitación</button>}</div>
+              {invitation?.status === 'pending' && currentCode?.parameter !== 'invite' && <p className="field-help">El enlace sólo se muestra al crearlo. Renueva la invitación para obtener uno nuevo.</p>}
+              <div className="management-actions">{(currentCode?.parameter !== 'invite' || invitation?.status !== 'pending') && <button type="button" className="button secondary" disabled={busy} onClick={() => void linkGoogle(editing)}>{invitation ? 'Renovar invitación' : 'Invitar a usar Google'}</button>}{invitation?.status === 'pending' && <button type="button" className="button secondary" disabled={busy} onClick={() => void revoke('invitation', invitation.id)}>Cancelar invitación</button>}</div>
               {!invitation && <p className="field-help">Crearás un enlace para compartirlo con el empleado.</p>}
             </>}
           </section>

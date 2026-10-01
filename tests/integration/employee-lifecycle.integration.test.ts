@@ -69,8 +69,9 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
 
   it('removes PIN staff, invalidates access, and requires explicit restoration without replaying a later lifecycle change',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);
-    const creation={action:'create_employee',...args,name:'Persona eliminada',role:'cashier',pin:'024680',operationId:randomUUID()};
+    const creation={action:'create_employee',...args,name:'Persona eliminada',role:'cashier',pin:null,operationId:randomUUID()};
     const person=(await account<Person>(owner,creation)).body.data!;const pending=await invite(args,person.id);const device=await pairDevice(args);
+    await choosePin(person,device.deviceToken);
     const session=(await account<BusinessSession>(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).body.data!;
     const deletion={action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()};
     const removed=await account<{id:string;deleted:boolean}>(owner,deletion);expect(removed.status).toBe(200);expect(removed.body.data).toEqual({id:person.id,deleted:true});
@@ -147,9 +148,9 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
     const locker=await lockPersonalCredential(business.business.id,employee.userId);
     try{
       const unlocking=account<BusinessSession>(employee,{action:'unlock',businessId:business.business.id,pin:'086420'});
-      await waitForBlockedRpc('account_unlock');
+      await waitForBlockedRpc('account_unlock',locker.pinLockName);
       const deleting=account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()});
-      await waitForBlockedRpc('account_manage');
+      await waitForBlockedRpc('account_manage',locker.pinLockName);
       const restoring=account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()});
       locker.stdin.end('commit;\n');
       const [unlocked,removed,restored]=await Promise.all([unlocking,deleting,restoring]);
@@ -161,6 +162,7 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
 
   it('serializes register PIN unlock against removal without restoring its operator token',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);const person=await makePerson(args,'Persona caja concurrente');const device=await pairDevice(args);
+    await choosePin(person,device.deviceToken);
     const [unlocked,removed]=await Promise.all([
       account<BusinessSession>(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'}),
       account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()}),
@@ -185,15 +187,17 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
   },30_000);
 });
 
-type Person={id:string;name:string;role:string;active:boolean;deletedAt?:string|null;pinReady?:boolean;googleLinked?:boolean};
+type Person={id:string;name:string;role:string;active:boolean;deletedAt?:string|null;pinReady?:boolean;googleLinked?:boolean;pinSetup?:{setupCode:string}};
 type Team={employees:Person[];deletedEmployees:Person[];invitations:{id:string;employeeId:string;status:string;revokeReason:string|null;acceptedAt:string|null;revokedAt:string|null}[]};
 type Invitation={invitationCode:string;invitationId:string;expiresAt:string};
 function ownerArgs(business:BusinessSession){return{businessId:business.business.id,operatorToken:business.operatorToken};}
-async function makePerson(args:ReturnType<typeof ownerArgs>,name:string){const result=await account<Person>(owner,{action:'create_employee',...args,name,role:'cashier',pin:'024680',operationId:randomUUID()});expect(result.status).toBe(200);return result.body.data!;}
+async function makePerson(args:ReturnType<typeof ownerArgs>,name:string){const result=await account<Person>(owner,{action:'create_employee',...args,name,role:'cashier',pin:null,operationId:randomUUID()});expect(result.status).toBe(200);return result.body.data!;}
+async function choosePin(person:Person,deviceToken:string){const result=await account<BusinessSession>(null,{action:'device_set_employee_pin',deviceToken,setupCode:person.pinSetup!.setupCode,pin:'024680',operationId:randomUUID()});expect(result.status).toBe(200);return result.body.data!;}
 async function invite(args:ReturnType<typeof ownerArgs>,employeeId:string,operationId=randomUUID()){const result=await account<Invitation>(owner,{action:'create_invitation',...args,employeeId,operationId});expect(result.status).toBe(200);return result.body.data!;}
 async function pairDevice(args:ReturnType<typeof ownerArgs>){const pairing=(await account<{pairingCode:string}>(owner,{action:'create_pairing_code',...args,operationId:randomUUID()})).body.data!;return (await account<{deviceToken:string}>(null,{action:'device_pair',pairingCode:pairing.pairingCode,deviceName:'Caja lifecycle',operationId:randomUUID()})).body.data!;}
 
 async function lockPersonalCredential(businessId:string,userId:string){
+  const pinLockName=`lifecycle_pin_${randomUUID()}`;
   const child=spawn('docker',['exec','-i',config!.dbContainer,'psql','-U','postgres','-d','postgres','-v','ON_ERROR_STOP=1','-At','-q'],{stdio:['pipe','pipe','pipe']});
   const ready=new Promise<void>((resolve,reject)=>{
     const timeout=setTimeout(()=>reject(new Error('Local credential lock did not become ready.')),5_000);
@@ -201,13 +205,13 @@ async function lockPersonalCredential(businessId:string,userId:string){
     child.on('error',error=>{clearTimeout(timeout);reject(error);});
     child.on('exit',code=>{if(code){clearTimeout(timeout);reject(new Error('Local credential lock exited.'));}});
   });
-  child.stdin.write(`begin;\nselect 1 from app_private.operator_credentials where business_id=${sqlUuid(businessId)} and user_id=${sqlUuid(userId)} for update;\nselect 'credential_locked';\n`);
-  await ready;return child;
+  child.stdin.write(`set application_name='${pinLockName}';\nbegin;\nselect 1 from app_private.operator_credentials where business_id=${sqlUuid(businessId)} and user_id=${sqlUuid(userId)} for update;\nselect 'credential_locked';\n`);
+  await ready;return Object.assign(child,{pinLockName});
 }
-async function waitForBlockedRpc(name:'account_unlock'|'account_manage'){
+async function waitForBlockedRpc(name:'account_unlock'|'account_manage',pinLockName:string){
   const deadline=Date.now()+5_000;
   while(Date.now()<deadline){
-    if(Number(sql(`select count(*) from pg_stat_activity where wait_event_type='Lock' and query like '%"${name}"%';`).trim())>0)return;
+    if(Number(sql(`with recursive blocked(pid) as (select pid from pg_stat_activity where application_name='${pinLockName}' union select a.pid from pg_stat_activity a join blocked b on b.pid=any(pg_blocking_pids(a.pid))) select count(*) from blocked join pg_stat_activity using(pid) where wait_event_type='Lock' and query like '%"${name}"%';`).trim())>0)return;
     await new Promise(resolve=>setTimeout(resolve,25));
   }
   throw new Error('Expected local account request to wait on a lifecycle lock.');

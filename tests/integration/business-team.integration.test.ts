@@ -12,6 +12,7 @@ type BusinessSession = {
   expiresAt: string;
 };
 type ApiReply<T> = { status: number; body: { data?: T; error?: { code: string; message: string; retryAfterSeconds?: number } } };
+type EmployeeCreation = { id: string; pinSetup?: { setupCode: string } };
 
 const config = loadLocalConfig();
 const syntheticUserIds: string[] = [];
@@ -73,13 +74,14 @@ describe.skipIf(!config)('business profile, personal employees and shared device
 
   it('pairs restricted device, switches operators atomically, locks and denies revoked devices', async () => {
     const business = await newBusiness(owner); const ownerArgs = { businessId: business.business.id, operatorToken: business.operatorToken };
-    const create = { action: 'create_employee', ...ownerArgs, name: 'Cajero de caja', role: 'cashier', pin: '002468', operationId: randomUUID() };
-    const person = await account<{ id: string }>(owner, create); expect(person.status).toBe(200);
-    expect((await account<{ id: string }>(owner, create)).body.data?.id).toBe(person.body.data?.id);
+    const create = { action: 'create_employee', ...ownerArgs, name: 'Cajero de caja', role: 'cashier', pin: null, operationId: randomUUID() };
+    const person = await account<EmployeeCreation>(owner, create); expect(person.status).toBe(200);
+    const repeatedPerson = await account<EmployeeCreation>(owner, create); expect(repeatedPerson.body.data?.id).toBe(person.body.data?.id);
     const pairCode = await account<{ pairingCode: string }>(owner, { action: 'create_pairing_code', ...ownerArgs, operationId: randomUUID() }); expect(pairCode.status).toBe(200);
     const pairing = { action: 'device_pair', pairingCode: pairCode.body.data!.pairingCode, deviceName: 'Tablet sintética', operationId: randomUUID() };
     const paired = await account<{ deviceId: string; deviceToken: string }>(null, pairing); expect(paired.status).toBe(200); let deviceToken = paired.body.data!.deviceToken;
     const repeated = await account<{ deviceId: string; deviceToken: string }>(null, pairing); expect(repeated.status).toBe(200); expect(repeated.body.data!.deviceId).toBe(paired.body.data!.deviceId); deviceToken = repeated.body.data!.deviceToken;
+    const chosenPin = await account(null, { action: 'device_set_employee_pin', deviceToken, setupCode: repeatedPerson.body.data!.pinSetup!.setupCode, pin: '002468', operationId: randomUUID() }); expect(chosenPin.status).toBe(200);
     expect((await account(null, { ...pairing, operationId: randomUUID() })).body.error?.code).toBe('PAIRING_INVALID');
     const status = await account<{ employees: { id: string; role: string }[] }>(null, { action: 'device_status', deviceToken }); expect(status.status).toBe(200);
     const ownerEmployee = status.body.data!.employees.find(e => e.role === 'owner')!;
@@ -112,12 +114,14 @@ describe.skipIf(!config)('business profile, personal employees and shared device
 
   it('enforces shared employee PIN lockout under concurrency and removes inactive operators', async () => {
     const business = await newBusiness(owner); const ownerArgs = { businessId: business.business.id, operatorToken: business.operatorToken };
-    const request = { action: 'create_employee', ...ownerArgs, name: 'Cocina sintética', role: 'kitchen', pin: '086420', operationId: randomUUID() };
+    const request = { action: 'create_employee', ...ownerArgs, name: 'Cocina sintética', role: 'kitchen', pin: null, operationId: randomUUID() };
     const people = await Promise.all([account<{ id: string }>(owner, request), account<{ id: string }>(owner, request)]);
     expect(people[0].status).toBe(200); expect(people[1].body.data?.id).toBe(people[0].body.data?.id); const employeeId=people[0].body.data!.id;
     expect((await account(owner, { ...request, role: 'manager' })).body.error?.code).toBe('OPERATION_CONFLICT');
     const code=(await account<{ pairingCode: string }>(owner, { action: 'create_pairing_code', ...ownerArgs, operationId: randomUUID() })).body.data!.pairingCode;
     const device=(await account<{ deviceId: string; deviceToken: string }>(null, { action: 'device_pair', pairingCode: code, deviceName: 'Caja de cocina', operationId: randomUUID() })).body.data!;
+    const setup=(await account<{setupCode:string}>(owner,{action:'create_pin_setup',...ownerArgs,employeeId,operationId:randomUUID()})).body.data!;
+    expect((await account(null,{action:'device_set_employee_pin',deviceToken:device.deviceToken,setupCode:setup.setupCode,pin:'086420',operationId:randomUUID()})).status).toBe(200);
     const login={ action: 'device_unlock', deviceToken: device.deviceToken, employeeId, pin: '086420' };
     const locked=await Promise.all(Array.from({length:5},()=>account(null, {...login,pin:'999999'})));
     expect(locked.filter(r=>r.body.error?.code==='PIN_INVALID')).toHaveLength(4); expect(locked.filter(r=>r.body.error?.code==='PIN_LOCKED')).toHaveLength(1);
@@ -138,8 +142,9 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     const roster=(await account<{employees:{id:string;role:string}[]}>(null,{action:'device_status',deviceToken:device.deviceToken})).body.data!;
     const ownerId=roster.employees.find(e=>e.role==='owner')!.id;
     const session=await account<BusinessSession & {business:{profile:{address:string}}}>(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:ownerId,pin:validPin});expect(session.status).toBe(200);expect(session.body.data?.business.profile.address).toBe('');
+    const recoveryCode=await ownerRecoveryCode(business);
     sql(`update auth.sessions set created_at=now() where id=${sqlUuid(owner.sessionId)};`);
-    expect((await account(owner,{action:'reset_pin',businessId:business.business.id,pin:'901234'})).status).toBe(200);
+    expect((await account(owner,{action:'reset_pin',businessId:business.business.id,pin:'901234',recoveryCode,operationId:randomUUID()})).status).toBe(200);
     expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:session.body.data!.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
     const wrong=await Promise.all([
       account(owner,{action:'unlock',businessId:business.business.id,pin:validPin}),
@@ -173,15 +178,22 @@ describe.skipIf(!config)('business profile, personal employees and shared device
 
   it('requires fresh owner authentication to reset PIN and revokes all old operator tokens', async () => {
     const business = await newBusiness(owner);
+    const recoveryCode=await ownerRecoveryCode(business);
+    const request={action:'reset_pin',businessId:business.business.id,pin:'135790',recoveryCode,operationId:randomUUID()};
     sql(`update auth.sessions set created_at = now() - interval '6 minutes' where id = ${sqlUuid(owner.sessionId)};`);
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790' })).body.error?.code).toBe('REAUTH_REQUIRED');
+    expect((await account(owner, request)).body.error?.code).toBe('REAUTH_REQUIRED');
     sql(`update auth.sessions set created_at = now() where id = ${sqlUuid(owner.sessionId)};`);
-    const reset = await account<BusinessSession>(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790' }); expect(reset.status).toBe(200);
+    const reset = await account<BusinessSession>(owner, request); expect(reset.status).toBe(200);
     expect((await account(owner, { action: 'context', businessId: business.business.id, operatorToken: business.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
     expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin: validPin })).body.error?.code).toBe('PIN_INVALID');
     expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin: '135790' })).status).toBe(200);
   });
 });
+
+async function ownerRecoveryCode(business: BusinessSession) {
+  const result=await account<{recoveryCode:string}>(owner,{action:'create_recovery_code',businessId:business.business.id,operatorToken:business.operatorToken,currentPin:validPin,operationId:randomUUID()});
+  expect(result.status).toBe(200);return result.body.data!.recoveryCode;
+}
 
 function loadLocalConfig(): LocalConfig | null {
   let status: Record<string, string>;

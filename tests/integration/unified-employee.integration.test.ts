@@ -34,22 +34,22 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
 
   it('links Google to the same PIN-only employee and invalidates the old register session',async()=>{
     const business=await newBusiness(owner);const args={businessId:business.business.id,operatorToken:business.operatorToken};
-    const request={action:'create_employee',...args,name:'Persona única',role:'cashier',pin:'024680',operationId:randomUUID()};
-    const person=(await account<{id:string}>(owner,request)).body.data!;
+    const request={action:'create_employee',...args,name:'Persona única',role:'cashier',pin:null,operationId:randomUUID()};
+    const person=(await account<{id:string;pinSetup:{setupCode:string}}>(owner,request)).body.data!;
     const code=(await account<{pairingCode:string}>(owner,{action:'create_pairing_code',...args,operationId:randomUUID()})).body.data!.pairingCode;
     const device=(await account<{deviceToken:string}>(null,{action:'device_pair',pairingCode:code,deviceName:'Caja sintética',operationId:randomUUID()})).body.data!;
-    const old=(await account<BusinessSession>(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).body.data!;
+    const old=(await account<BusinessSession>(null,{action:'device_set_employee_pin',deviceToken:device.deviceToken,setupCode:person.pinSetup.setupCode,pin:'024680',operationId:randomUUID()})).body.data!;
     const invitation=await account<{invitationCode:string}>(owner,{action:'create_invitation',...args,employeeId:person.id,operationId:randomUUID()});
     expect(invitation.status).toBe(200);
-    const accepted=await account<BusinessSession & {business:{employee:{id:string;name:string}}}>(employee,{action:'accept_invitation',invitationCode:invitation.body.data!.invitationCode,name:'Nombre del usuario',pin:'086420',operationId:randomUUID()});
+    const accepted=await account<BusinessSession & {business:{employee:{id:string;name:string}}}>(employee,{action:'accept_invitation',invitationCode:invitation.body.data!.invitationCode,name:'Nombre del usuario',pin:'024680',operationId:randomUUID()});
     expect(accepted.status).toBe(200);expect(accepted.body.data?.business.employee).toMatchObject({id:person.id,name:'Persona única'});
     expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role<>'owner';`).trim()).toBe('1');
     expect(sql(`select count(*) from app_private.shared_employee_credentials where employee_id=${sqlUuid(person.id)};`).trim()).toBe('0');
     expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:old.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).body.error?.code).toBe('PIN_INVALID');
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'086420'})).status).toBe(200);
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'086420'})).body.error?.code).toBe('PIN_INVALID');
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
     const replay=await account<{id:string;googleLinked:boolean}>(owner,request);expect(replay.status).toBe(200);expect(replay.body.data).toMatchObject({id:person.id,googleLinked:true});
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'086420'})).status).toBe(200);
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
   },30_000);
 
   it('creates Google access atomically without a temporary PIN or duplicate on concurrent retries',async()=>{
@@ -71,7 +71,7 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
 
   it('does not merge names and blocks the ambiguous legacy duplicate path',async()=>{
     const business=await newBusiness(owner);const args={businessId:business.business.id,operatorToken:business.operatorToken};
-    const make=()=>account<{id:string}>(owner,{action:'create_employee',...args,name:'Homónimo',role:'cashier',pin:'024680',operationId:randomUUID()});
+    const make=()=>account<{id:string}>(owner,{action:'create_employee',...args,name:'Homónimo',role:'cashier',pin:null,operationId:randomUUID()});
     const first=await make(),second=await make();expect(first.status).toBe(200);expect(second.status).toBe(200);expect(first.body.data?.id).not.toBe(second.body.data?.id);
     expect((await account(owner,{action:'create_invitation',...args,name:' Homónimo ',role:'cashier',operationId:randomUUID()})).body.error?.code).toBe('OPERATION_CONFLICT');
     const legacy={action:'create_invitation',...args,name:'Persona legacy',role:'cashier',operationId:randomUUID()};
@@ -84,7 +84,7 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
 
   it('rejects foreign, owner, inactive and already-linked targets',async()=>{
     const business=await newBusiness(owner),other=await newBusiness(anotherOwner);const args={businessId:business.business.id,operatorToken:business.operatorToken};
-    const person=(await account<{id:string}>(owner,{action:'create_employee',...args,name:'Persona controlada',role:'cashier',pin:'024680',operationId:randomUUID()})).body.data!;
+    const person=(await account<{id:string}>(owner,{action:'create_employee',...args,name:'Persona controlada',role:'cashier',pin:null,operationId:randomUUID()})).body.data!;
     const ownerPerson=(await account<{employees:{id:string;role:string}[]}>(owner,{action:'team',...args})).body.data!.employees.find(e=>e.role==='owner')!;
     expect((await account(owner,{action:'create_invitation',...args,employeeId:ownerPerson.id,operationId:randomUUID()})).body.error?.code).toBe('PERMISSION_DENIED');
     const foreign=(await account<{employees:{id:string}[]}>(anotherOwner,{action:'team',businessId:other.business.id,operatorToken:other.operatorToken})).body.data!.employees[0];
@@ -101,10 +101,10 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
 
   it('preserves a shared PIN cooldown without consuming its Google invitation',async()=>{
     const business=await newBusiness(owner);const args={businessId:business.business.id,operatorToken:business.operatorToken};
-    const person=(await account<{id:string}>(owner,{action:'create_employee',...args,name:'Persona bloqueada',role:'cashier',pin:'024680',operationId:randomUUID()})).body.data!;
+    const person=await createPinPerson(args,'Persona bloqueada');
     const invitation=(await account<{invitationCode:string;invitationId:string}>(owner,{action:'create_invitation',...args,employeeId:person.id,operationId:randomUUID()})).body.data!;
     sql(`update app_private.shared_employee_credentials set failed_attempts=5,locked_until=now()+interval '15 minutes' where employee_id=${sqlUuid(person.id)};`);
-    const request={action:'accept_invitation',invitationCode:invitation.invitationCode,pin:'086420',operationId:randomUUID()};
+    const request={action:'accept_invitation',invitationCode:invitation.invitationCode,pin:'024680',operationId:randomUUID()};
     expect((await account(employee,request)).body.error?.code).toBe('PIN_LOCKED');
     expect(sql(`select accepted_by is null from app_private.business_invitations where id=${sqlUuid(invitation.invitationId)};`).trim()).toBe('t');
     expect(sql(`select count(*) from app_private.business_memberships where business_id=${sqlUuid(business.business.id)} and role='cashier';`).trim()).toBe('0');
@@ -126,19 +126,23 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
     expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and user_id=${sqlUuid(employee.userId)};`).trim()).toBe('1');
   },30_000);
 
-  it('adds a PIN to a pending employee without creating a second person',async()=>{
+  it('lets a pending employee choose a PIN with owner authorization without creating a second person',async()=>{
     const business=await newBusiness(owner);const args={businessId:business.business.id,operatorToken:business.operatorToken};
     const person=(await account<{id:string}>(owner,{action:'create_employee',...args,name:'Persona sinPIN',role:'cashier',pin:null,inviteWithGoogle:true,operationId:randomUUID()})).body.data!;
-    const updated=await account<{id:string;pinReady:boolean;googleLinked:boolean}>(owner,{action:'update_employee',...args,employeeId:person.id,name:'Persona sinPIN',role:'cashier',active:true,pin:'024680'});
-    expect(updated.status).toBe(200);expect(updated.body.data).toMatchObject({id:person.id,pinReady:true,googleLinked:false});
+    const setup=await account<{setupCode:string}>(owner,{action:'create_pin_setup',...args,employeeId:person.id,operationId:randomUUID()});
+    expect(setup.status).toBe(200);
     const pairing=(await account<{pairingCode:string}>(owner,{action:'create_pairing_code',...args,operationId:randomUUID()})).body.data!;
     const device=(await account<{deviceToken:string}>(null,{action:'device_pair',pairingCode:pairing.pairingCode,deviceName:'Caja conPIN',operationId:randomUUID()})).body.data!;
+    const chosen=await account<BusinessSession>(null,{action:'device_set_employee_pin',deviceToken:device.deviceToken,setupCode:setup.body.data!.setupCode,pin:'024680',operationId:randomUUID()});
+    expect(chosen.status).toBe(200);
+    const updated=(await account<{employees:{id:string;pinReady:boolean;googleLinked:boolean}[]}>(owner,{action:'team',...args})).body.data!.employees.find(e=>e.id===person.id);
+    expect(updated).toMatchObject({id:person.id,pinReady:true,googleLinked:false});
     expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
   },30_000);
 
   it('allows one identity to win across two invitations for the same employee',async()=>{
     const business=await newBusiness(owner);const args={businessId:business.business.id,operatorToken:business.operatorToken};
-    const person=(await account<{id:string}>(owner,{action:'create_employee',...args,name:'Una persona',role:'cashier',pin:'024680',operationId:randomUUID()})).body.data!;
+    const person=(await account<{id:string}>(owner,{action:'create_employee',...args,name:'Una persona',role:'cashier',pin:null,operationId:randomUUID()})).body.data!;
     const invitations=await Promise.all([1,2].map(()=>account<{invitationCode:string}>(owner,{action:'create_invitation',...args,employeeId:person.id,operationId:randomUUID()})));
     expect(invitations.every(i=>i.status===200)).toBe(true);
     const results=await Promise.all([employee,anotherOwner].map((identity,index)=>account<BusinessSession>(identity,{action:'accept_invitation',invitationCode:invitations[index].body.data!.invitationCode,name:'Una persona',pin:'086420',operationId:randomUUID()})));
@@ -147,6 +151,15 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
     expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role='cashier';`).trim()).toBe('1');
   });
 });
+
+
+async function createPinPerson(args:{businessId:string;operatorToken:string},name:string){
+  const person=(await account<{id:string;pinSetup:{setupCode:string}}>(owner,{action:'create_employee',...args,name,role:'cashier',pin:null,inviteWithGoogle:false,operationId:randomUUID()})).body.data!;
+  const pairing=(await account<{pairingCode:string}>(owner,{action:'create_pairing_code',...args,operationId:randomUUID()})).body.data!;
+  const device=(await account<{deviceToken:string}>(null,{action:'device_pair',pairingCode:pairing.pairingCode,deviceName:'Caja PIN propio',operationId:randomUUID()})).body.data!;
+  expect((await account(null,{action:'device_set_employee_pin',deviceToken:device.deviceToken,setupCode:person.pinSetup.setupCode,pin:'024680',operationId:randomUUID()})).status).toBe(200);
+  return person;
+}
 
 function loadLocalConfig(): LocalConfig | null {
   let status: Record<string, string>;

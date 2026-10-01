@@ -23,7 +23,7 @@ try {
   for(const session of [password.data.session,magic.data.session]) {
     const claims=JSON.parse(Buffer.from(session.access_token.split('.')[1],'base64url').toString('utf8'))
     assert(claims.amr.some(entry=>['password','magiclink','otp'].includes(entry.method)))
-    for(const payload of [{action:'status'},{action:'reset_pin',businessId:randomUUID(),pin:'024680'}]) {
+    for(const payload of [{action:'status'},{action:'reset_pin',businessId:randomUUID(),pin:'024680',recoveryCode:'a'.repeat(64),operationId:randomUUID()}]) {
       const response=await fetch(`${config.API_URL}/functions/v1/account`,{method:'POST',headers:{apikey:config.ANON_KEY,authorization:`Bearer ${session.access_token}`,'content-type':'application/json'},body:JSON.stringify(payload)})
       assert.equal(response.status,403,'Production mode must reject non-Google authentication')
       assert.equal((await response.json()).error.code,'GOOGLE_REQUIRED')

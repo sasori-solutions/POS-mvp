@@ -3,6 +3,8 @@ import type { AccountRequest, BusinessContext, BusinessRole, DeviceSummary, Empl
 import { fixtureBusiness, fixtureOperatorToken, fixturePin, mockAccount } from './account-fixture';
 
 export const fixtureInvitation = 'c1'.repeat(32);
+export const fixturePinSetup = 'e4'.repeat(32);
+export const fixtureRecoveryCode = 'f5'.repeat(32);
 export const fixturePairingCode = 'b2'.repeat(32);
 export const fixtureDeviceToken = 'd3'.repeat(32);
 export const fixtureKitchen = { id: '84c75082-4633-4f53-8f34-a2ed0c7b2e66', name: 'Cocina de prueba', role: 'kitchen' as const, active: true, googleLinked: false, pinReady: true };
@@ -19,6 +21,7 @@ export async function mockOnboarding(page: Page, options: {
   createEmployeeResponseLosses?: number;
   invitations?: InvitationSummary[];
   employees?: EmployeeSummary[];
+  recoveryReady?: boolean;
 } = {}) {
   await mockAccount(page, { existingBusiness: options.existingBusiness, authenticated: options.authenticated });
   const calls: AccountRequest[] = [];
@@ -39,6 +42,8 @@ export async function mockOnboarding(page: Page, options: {
   ]);
   const invitations: InvitationSummary[] = structuredClone(options.invitations ?? []);
   const deletedEmployees: EmployeeSummary[] = [];
+  let pinSetupEmployeeId: string = fixtureCashier.id;
+  const employeePins = new Map<string, string>([[fixtureCashier.id, fixtureCashierPin], [fixtureKitchen.id, fixturePin]]);
   const devices: DeviceSummary[] = [];
   const employeeOperations = new Map<string, unknown>();
   const invitationOperations = new Map<string, unknown>();
@@ -54,10 +59,10 @@ export async function mockOnboarding(page: Page, options: {
     currentDeviceOperator = '';
   }
   const expiresAt = () => new Date(Date.now() + 8 * 3_600_000).toISOString();
-  const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType });
+  const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType, canRecoverPin: googleRole === 'owner', recoveryReady: options.recoveryReady ?? true });
   const projection = (role = googleRole, employee: EmployeeSummary = role === 'kitchen' ? fixtureKitchen : fixtureCashier): BusinessContext => role === 'owner'
-    ? { ...business, role }
-    : { ...business, role, employee: { id: employee.id, name: employee.name, role }, profile: {
+    ? { ...business, role, canRecoverPin: undefined, recoveryReady: undefined }
+    : { ...business, role, canRecoverPin: undefined, recoveryReady: undefined, employee: { id: employee.id, name: employee.name, role }, profile: {
       branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: [],
     } };
   const unlocked = () => ({ business: projection(), operatorToken: fixtureOperatorToken, expiresAt: expiresAt() });
@@ -111,20 +116,54 @@ export async function mockOnboarding(page: Page, options: {
       }
       case 'reset_pin':
         if (options.requirePinReauth && calls.filter((call) => call.action === 'status').length < 2) return reject(401, 'REAUTH_REQUIRED', 'Vuelve a verificar tu cuenta de Google.');
+        if (body.recoveryCode !== fixtureRecoveryCode) return reject(401, 'RECOVERY_INVALID', 'Revisa el código de recuperación.');
         currentPin = body.pin;
         locked = false;
+        return reply({ ...unlocked(), recoveryCode: 'f6'.repeat(32) });
+      case 'create_recovery_code':
+        if (locked || body.currentPin !== currentPin) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
+        return reply({ recoveryCode: fixtureRecoveryCode });
+      case 'change_pin':
+        if (locked || body.currentPin !== currentPin) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
+        currentPin = body.pin;
         return reply(unlocked());
+      case 'invitation_details': {
+        if (body.invitationCode !== fixtureInvitation) return reject(400, 'INVITATION_INVALID', 'Invitación no válida.');
+        const invitation = [...invitations].reverse().find((item) => item.active);
+        const employee = employees.find((item) => item.id === invitation?.employeeId);
+        return reply({ business: summary(), employee: employee ?? { ...fixtureKitchen, pinReady: false }, expiresAt: expiresAt() });
+      }
+      case 'create_pin_setup':
+        pinSetupEmployeeId = body.employeeId;
+        return reply({ setupCode: fixturePinSetup, setupId: crypto.randomUUID(), expiresAt: expiresAt() });
+      case 'employee_pin_setup_details': case 'device_pin_setup_details': {
+        const employee = employees.find((item) => item.id === pinSetupEmployeeId);
+        return body.setupCode === fixturePinSetup && employee
+          ? reply({ business: summary(), employee, expiresAt: expiresAt() })
+          : reject(400, 'PIN_SETUP_INVALID', 'Código inválido.');
+      }
+      case 'set_employee_pin': case 'device_set_employee_pin': {
+        const employee = employees.find((item) => item.id === pinSetupEmployeeId);
+        if (body.setupCode !== fixturePinSetup || !employee) return reject(400, 'PIN_SETUP_INVALID', 'Código inválido.');
+        employee.pinReady = true;
+        employeePins.set(employee.id, body.pin);
+        if (body.action === 'set_employee_pin') { googleRole = employee.role; currentPin = body.pin; locked = false; return reply(unlocked()); }
+        currentDeviceEmployee = employee; operatorGeneration += 1; currentDeviceOperator = operatorGeneration.toString(16).padStart(64, '0');
+        return reply({ business: projection(employee.role, employee), operatorToken: currentDeviceOperator, expiresAt: expiresAt() });
+      }
       case 'team':
         if (locked || googleRole !== 'owner') return reject(403, 'PERMISSION_DENIED', 'Acceso restringido.');
         return reply({ employees, invitations, devices, deletedEmployees });
       case 'create_employee': {
         if (employeeOperations.has(body.operationId)) return reply(employeeOperations.get(body.operationId));
-        if (body.inviteWithGoogle ? body.pin !== null : typeof body.pin !== 'string') return reject(400, 'VALIDATION_ERROR', 'Revisa el acceso del empleado.');
-        const employee: EmployeeSummary = { id: crypto.randomUUID(), name: body.name, role: body.role, active: true, pinReady: !body.inviteWithGoogle, googleLinked: false };
+        if (body.pin !== null) return reject(400, 'VALIDATION_ERROR', 'Revisa el acceso del empleado.');
+        const employee: EmployeeSummary = { id: crypto.randomUUID(), name: body.name, role: body.role, active: true, pinReady: false, googleLinked: false };
         employees.push(employee);
         const invitation = body.inviteWithGoogle ? { invitationCode: fixtureInvitation, invitationId: crypto.randomUUID(), expiresAt: expiresAt() } : undefined;
         if (invitation) invitations.push({ id: invitation.invitationId, employeeId: employee.id, name: employee.name, role: body.role, active: true, expiresAt: invitation.expiresAt, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null });
-        const result = { ...employee, ...(invitation ? { invitation } : {}) };
+        const pinSetup = invitation ? undefined : { setupCode: fixturePinSetup, setupId: crypto.randomUUID(), expiresAt: expiresAt() };
+        if (pinSetup) pinSetupEmployeeId = employee.id;
+        const result = { ...employee, ...(invitation ? { invitation } : {}), ...(pinSetup ? { pinSetup } : {}) };
         employeeOperations.set(body.operationId, result);
         if (createEmployeeResponseLosses > 0) { createEmployeeResponseLosses -= 1; return route.abort('failed'); }
         return reply(result);
@@ -177,7 +216,7 @@ export async function mockOnboarding(page: Page, options: {
         : reject(401, 'DEVICE_REVOKED', 'El dispositivo fue revocado.');
       case 'device_unlock':
         currentDeviceEmployee = employees.find((employee) => employee.id === body.employeeId) ?? fixtureCashier;
-        if (body.pin !== (body.employeeId === fixtureCashier.id ? fixtureCashierPin : fixturePin)) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
+        if (body.pin !== employeePins.get(body.employeeId)) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
         operatorGeneration += 1;
         currentDeviceOperator = operatorGeneration.toString(16).padStart(64, '0');
         return reply({ business: projection(currentDeviceEmployee.role, currentDeviceEmployee), operatorToken: currentDeviceOperator, expiresAt: expiresAt() });

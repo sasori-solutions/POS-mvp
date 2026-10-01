@@ -23,6 +23,11 @@ const errorDefinitions: Record<AccountErrorCode, { status: number; message: stri
   DEVICE_REVOKED: { status: 403, message: 'This device is no longer authorized.' },
   REAUTH_REQUIRED: { status: 401, message: 'Sign in again with Google before changing the PIN.' },
   EMPLOYEE_INACTIVE: { status: 403, message: 'This employee is unavailable.' },
+  PIN_SETUP_INVALID: { status: 400, message: 'The PIN setup code is unavailable or expired.' },
+  PIN_SETUP_ACCOUNT_MISMATCH: { status: 403, message: 'Sign in as the employee assigned to this PIN setup code.' },
+  RECOVERY_INVALID: { status: 401, message: 'The recovery code is invalid or unavailable.' },
+  RECOVERY_LOCKED: { status: 429, message: 'Too many recovery attempts. Try again later.' },
+  RECOVERY_UNAVAILABLE: { status: 409, message: 'An owner recovery code has not been prepared.' },
   SERVER_ERROR: { status: 500, message: 'The request could not be completed. Try again.' },
 }
 
@@ -69,7 +74,7 @@ function responseHeaders(origin: string | null): Headers {
 function errorResponse(code: AccountErrorCode, headers: Headers, retryAfterSeconds?: number): Response {
   const definition = errorDefinitions[code]
   const error: AccountError = { code, message: definition.message }
-  if (code === 'PIN_LOCKED' && retryAfterSeconds && Number.isFinite(retryAfterSeconds)) {
+  if ((code === 'PIN_LOCKED' || code === 'RECOVERY_LOCKED') && retryAfterSeconds && Number.isFinite(retryAfterSeconds)) {
     error.retryAfterSeconds = Math.max(1, Math.ceil(retryAfterSeconds))
     headers.set('Retry-After', String(error.retryAfterSeconds))
   }
@@ -136,7 +141,7 @@ function rpcFor(request: AccountRequest): { name: string; args: Record<string, u
       return { name: `account_${request.action}`, args: { p_business_id: request.businessId, p_operator_token: request.operatorToken } }
     case 'revoke_sessions':
       return { name: 'account_revoke_sessions', args: {} }
-    case 'device_pair': case 'device_status': case 'device_unlock': case 'device_context': case 'device_lock': case 'device_forget':
+    case 'device_pair': case 'device_status': case 'device_unlock': case 'device_context': case 'device_lock': case 'device_forget': case 'device_pin_setup_details': case 'device_set_employee_pin':
       return { name: 'account_device', args: { p_action: request.action, p_payload: request } }
     default:
       return { name: 'account_manage', args: { p_action: request.action, p_payload: request } }

@@ -11,7 +11,7 @@ function exactKeys(input: Record<string, unknown>, keys: string[], optional: str
   if (keys.some((key) => !Object.hasOwn(input, key)) || Object.keys(input).some((key) => !keys.includes(key) && !optional.includes(key))) invalid()
 }
 function uuid(input: Record<string, unknown>, key: string) { if (!isUuid(input[key])) invalid(); return input[key] as string }
-function pin(input: Record<string, unknown>) { if (typeof input.pin !== 'string' || !pinPattern.test(input.pin)) invalid(); return input.pin }
+function pin(input: Record<string, unknown>, key = 'pin') { if (typeof input[key] !== 'string' || !pinPattern.test(input[key])) invalid(); return input[key] as string }
 function token(input: Record<string, unknown>, key: string) { if (typeof input[key] !== 'string' || !tokenPattern.test(input[key])) invalid(); return input[key] as string }
 function name(value: unknown, min = 2, max = 100) {
   if (typeof value !== 'string' || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) invalid()
@@ -47,18 +47,24 @@ export function parseAccountRequest(value: unknown): AccountRequest {
       return { action: input.action, ...businessDetails(input), operationId: uuid(input, 'operationId'), pin: pin(input), ...(Object.hasOwn(input, 'profile') ? { profile: profile(input.profile) } : {}) }
     case 'update_business':
       exactKeys(input, [...owner, 'name', 'businessType', 'timezone', 'profile']); return { action: input.action, ...ownerArgs(), ...businessDetails(input), profile: profile(input.profile) }
-    case 'unlock': case 'reset_pin':
+    case 'unlock':
       exactKeys(input, ['action', 'businessId', 'pin']); return { action: input.action, businessId: uuid(input, 'businessId'), pin: pin(input) }
     case 'context': case 'lock': case 'team':
       exactKeys(input, owner); return { action: input.action, ...ownerArgs() }
     case 'create_employee':
       exactKeys(input, [...owner, 'name', 'role', 'pin', 'operationId'], ['inviteWithGoogle'])
       if (Object.hasOwn(input, 'inviteWithGoogle') && typeof input.inviteWithGoogle !== 'boolean') invalid()
-      if (input.inviteWithGoogle === true && input.pin !== null) invalid()
-      return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), pin: input.inviteWithGoogle === true ? null : pin(input), operationId: uuid(input, 'operationId'), ...(Object.hasOwn(input, 'inviteWithGoogle') ? { inviteWithGoogle: input.inviteWithGoogle as boolean } : {}) }
+      if (input.pin !== null) invalid()
+      return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), pin: null, operationId: uuid(input, 'operationId'), ...(Object.hasOwn(input, 'inviteWithGoogle') ? { inviteWithGoogle: input.inviteWithGoogle as boolean } : {}) }
     case 'update_employee':
-      exactKeys(input, [...owner, 'employeeId', 'name', 'role', 'active', 'pin']); if (typeof input.active !== 'boolean') invalid()
-      return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), name: name(input.name), role: role(input), active: input.active, pin: input.pin === null ? null : pin(input) }
+      exactKeys(input, [...owner, 'employeeId', 'name', 'role', 'active', 'pin']); if (typeof input.active !== 'boolean' || input.pin !== null) invalid()
+      return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), name: name(input.name), role: role(input), active: input.active, pin: null }
+    case 'create_pin_setup':
+      exactKeys(input, [...owner, 'employeeId', 'operationId']); return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), operationId: uuid(input, 'operationId') }
+    case 'employee_pin_setup_details':
+      exactKeys(input, ['action', 'setupCode']); return { action: input.action, setupCode: token(input, 'setupCode') }
+    case 'set_employee_pin':
+      exactKeys(input, ['action', 'setupCode', 'pin', 'operationId']); return { action: input.action, setupCode: token(input, 'setupCode'), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'delete_employee': case 'restore_employee':
       exactKeys(input, [...owner, 'employeeId', 'operationId']); return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), operationId: uuid(input, 'operationId') }
     case 'create_invitation':
@@ -71,6 +77,14 @@ export function parseAccountRequest(value: unknown): AccountRequest {
       exactKeys(input, [...owner, 'invitationId']); return { action: input.action, ...ownerArgs(), invitationId: uuid(input, 'invitationId') }
     case 'accept_invitation':
       exactKeys(input, ['action', 'invitationCode', 'pin', 'operationId'], ['name']); return { action: input.action, invitationCode: token(input, 'invitationCode'), ...(Object.hasOwn(input, 'name') ? { name: name(input.name) } : {}), pin: pin(input), operationId: uuid(input, 'operationId') }
+    case 'invitation_details':
+      exactKeys(input, ['action', 'invitationCode']); return { action: input.action, invitationCode: token(input, 'invitationCode') }
+    case 'create_recovery_code':
+      exactKeys(input, [...owner, 'currentPin', 'operationId']); return { action: input.action, ...ownerArgs(), currentPin: pin(input, 'currentPin'), operationId: uuid(input, 'operationId') }
+    case 'change_pin':
+      exactKeys(input, [...owner, 'currentPin', 'pin', 'operationId']); return { action: input.action, ...ownerArgs(), currentPin: pin(input, 'currentPin'), pin: pin(input), operationId: uuid(input, 'operationId') }
+    case 'reset_pin':
+      exactKeys(input, ['action', 'businessId', 'recoveryCode', 'pin', 'operationId']); return { action: input.action, businessId: uuid(input, 'businessId'), recoveryCode: token(input, 'recoveryCode'), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'create_pairing_code':
       exactKeys(input, [...owner, 'operationId']); return { action: input.action, ...ownerArgs(), operationId: uuid(input, 'operationId') }
     case 'revoke_device':
@@ -81,6 +95,10 @@ export function parseAccountRequest(value: unknown): AccountRequest {
       exactKeys(input, ['action', 'deviceToken']); return { action: input.action, deviceToken: token(input, 'deviceToken') }
     case 'device_unlock':
       exactKeys(input, ['action', 'deviceToken', 'employeeId', 'pin']); return { action: input.action, deviceToken: token(input, 'deviceToken'), employeeId: uuid(input, 'employeeId'), pin: pin(input) }
+    case 'device_pin_setup_details':
+      exactKeys(input, ['action', 'deviceToken', 'setupCode']); return { action: input.action, deviceToken: token(input, 'deviceToken'), setupCode: token(input, 'setupCode') }
+    case 'device_set_employee_pin':
+      exactKeys(input, ['action', 'deviceToken', 'setupCode', 'pin', 'operationId']); return { action: input.action, deviceToken: token(input, 'deviceToken'), setupCode: token(input, 'setupCode'), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'device_context': case 'device_lock':
       exactKeys(input, ['action', 'deviceToken', 'operatorToken']); return { action: input.action, deviceToken: token(input, 'deviceToken'), operatorToken: token(input, 'operatorToken') }
     default: return invalid()
