@@ -79,7 +79,7 @@ try {
   if (!files.includes('index.html') || !files.includes('manifest.webmanifest') || !files.includes('sw.js') || !files.some((file) => file.startsWith('assets/') && file.endsWith('.js'))) {
     throw new Error('Production assets missing; run npm run build first.')
   }
-  const routes = ['/', '/login', '/business/new', '/unlock', '/auth/callback?error=access_denied']
+  const routes = ['/', '/login', '/business/new', '/business/ready', '/unlock', '/auth/callback?error=access_denied']
   const checks = routes.map((path) => ({ path, file: 'index.html' }))
   for (const file of files) {
     if (file === 'index.html' || file === '_redirects' || file === '_headers') continue

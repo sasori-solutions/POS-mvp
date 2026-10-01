@@ -1,6 +1,6 @@
 # POS México PWA
 
-Authentication MVP: Google identity → business details → confirmed six-digit PIN → private business context. Existing owners choose a business and unlock with their PIN. Reloading the app requires the PIN again. Locking revokes the current operator session; signing out revokes operator sessions for this Google session and clears the local Google identity.
+Account and home MVP: Google identity → business details → confirmed six-digit PIN → “Tu negocio está listo” → “Ir al inicio” → Venta. Existing owners choose a business and unlock directly into home with their PIN. Home shows the saved business name and five navigation destinations; catalog, orders and sales use clear availability messages until those modules are implemented. Más contains business details, lock and logout. Reloading the app requires the PIN again. Locking revokes the current operator session; signing out revokes operator sessions for this Google session and clears the local Google identity.
 
 ## Cloud app
 
@@ -54,7 +54,7 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 ## Design source
 
-Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls. See the local design system and reference read. This implementation includes only business/access setup, not catalog, sales, payments, inventory or invoicing.
+Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Catalog, sales, payments, inventory and invoicing operations are still pending.
 
 ## Hosted release status
 
@@ -62,9 +62,9 @@ Supabase project **POS México** (`sdisalomdxgejyhpxtri`) has its canonical sche
 
 The Google Cloud project is `pos-mexico-510316`. Its existing Web application OAuth client uses the hosted JavaScript origin and the Supabase provider callback. The human entered its credentials in Supabase. Real Google login, logout without a warning, a fresh login with the old logged-out tab still open, and reload all passed on the final hosted build. The human entered the existing PIN and reached the private business screen; the live lock action also completed successfully. Fresh cloud business creation and installation on a physical phone have not been verified in this release.
 
-The production HTTP gate passes 20/20 route and asset checks, including direct `/auth/callback` serving with no redirect and SHA256 comparison against `dist`. Eight anonymous API checks confirm the hosted origin is allowed, unauthenticated requests return `AUTH_REQUIRED`, and localhost/loopback/unrelated origins return `ORIGIN_FORBIDDEN`. Run `npm run check:live -- https://pos-mexico-mvp.pages.dev` against the same production build after each upload. Cloudflare currently uses Direct Upload; a GitHub push by itself does not deploy the frontend.
+The home release passes 21/21 production HTTP route and asset checks, including `/business/ready`, direct `/auth/callback` serving with no redirect and SHA256 comparison against `dist`. Eight anonymous API checks in the preceding auth release confirmed the hosted origin is allowed, unauthenticated requests return `AUTH_REQUIRED`, and localhost/loopback/unrelated origins return `ORIGIN_FORBIDDEN`. Run `npm run check:live -- https://pos-mexico-mvp.pages.dev` against the same production build after each upload. Cloudflare currently uses Direct Upload; a GitHub push by itself does not deploy the frontend.
 
-The final client changes passed 40 desktop/mobile browser tests and 11 real local database integration tests, including duplicate logout, fresh cross-tab login, and cancelled callbacks preserving newer identity/verifier storage. Production typecheck and build passed before the verified upload.
+The home release passed 44 desktop/mobile browser tests and production typecheck/build before upload. Coverage includes the ready button, direct PIN entry into Venta, navigation, and the existing duplicate logout, fresh cross-tab login and cancelled callback regressions. On the current hosted build, the human's existing PIN opened Venta; Ver productos and Más opened their expected views with saved business details, and Venta reopened from navigation. The preceding auth release passed 11 real local database integration tests. This home release changes no backend code or schema; those integration tests were not rerun.
 
 The earlier frontend preview at `http://127.0.0.1:5173` targeted the development cloud through `.env.local`; it did not use a local production database. `.env.cloud` holds that cloud public configuration and `.env.local-stack` preserves the local-stack configuration; both are ignored by Git. Production builds now use the checked-in public `.env.production` settings. Keep server and Google secrets out of the browser environment and shared Drive documents.
 

@@ -52,7 +52,7 @@ The current worker uses prompt-style updates but has no update banner. A new wor
 Before calling the public deployment ready:
 
 1. Open the HTTPS URL in a fresh browser without a Cloudflare account. Confirm the app loads and does not require a hosting login.
-2. Directly open and reload `/login`, `/business/new`, `/unlock`, and `/auth/callback?error=access_denied`. Each must serve the app shell; the denied callback should show the app's Google error message.
+2. Directly open and reload `/login`, `/business/new`, `/business/ready`, `/unlock`, and `/auth/callback?error=access_denied`. Each must serve the app shell; the denied callback should show the app's Google error message. Private home and ready routes must still require a valid operator session.
 3. Fetch `/manifest.webmanifest`, `/sw.js`, the actual hashed JS/CSS paths, and both icon files. Confirm each serves its own expected content, not `index.html`.
 4. Confirm the built bundle uses the expected cloud Supabase URL. An unauthenticated account POST with the public app origin should return `AUTH_REQUIRED`, not `ORIGIN_FORBIDDEN`.
 5. Complete Google consent, callback exchange, and account loading from that public origin with the human's authorized account. Then verify business creation, PIN unlock, lock, reload requiring PIN, and logout. Existing mocked browser tests do not establish this live OAuth result.
@@ -64,6 +64,6 @@ After building and deploying the same `dist`, run the anonymous HTTP gate with t
 npm run check:live -- https://pos-mexico-mvp.pages.dev
 ```
 
-It checks that all four exact SPA paths return HTTP 200 without redirects, validates asset content types, and compares public response hashes with the local build. It sends only anonymous GETs; it does not test CORS, sign in, or verify Google consent. Complete the live Google flow before the next GitHub push.
+It checks the root and all five exact SPA paths return HTTP 200 without redirects, validates asset content types, and compares public response hashes with the local build. It sends only anonymous GETs; it does not test CORS, sign in, or verify Google consent. Complete the live Google flow before the next GitHub push.
 
-The final hosted route and asset gate passed 20/20 checks. Eight anonymous cloud API checks passed for allowed-origin authentication and rejected origins. Real Google login, logout, a fresh cross-tab login and reload passed on the final build. The human's existing PIN unlocked the business screen, and the live lock request succeeded. The same source passed 40 desktop/mobile browser tests, 11 real local database integration tests, and production typecheck/build. Fresh cloud business creation and physical-phone installation remain separate manual checks.
+The home release passed 21/21 hosted route and asset checks, 44 desktop/mobile browser tests and production typecheck/build. The current live bundle was verified in Brave after closing app windows to activate the new worker. The human's existing PIN opened Venta; Ver productos, Más with saved business details and navigation back to Venta also passed live. The preceding auth release passed eight anonymous cloud API checks, real Google login/logout/relogin/reload, an existing PIN unlock and live lock, plus 11 real local database integration tests. The home release changes no backend code or schema; database integration tests were not rerun. Fresh cloud business creation and physical-phone installation remain separate manual checks.

@@ -4,8 +4,9 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, Coffee, LockKeyhole, LogOut
 import { accountRequest, AccountClientError } from './lib/account'
 import type { AccountErrorCode, BusinessSummary, BusinessType, OperatorSession } from './lib/contracts'
 import { allowIdentitySignIn, closeIdentity, hasCurrentStoredIdentity, initializeIdentity, supabase } from './lib/supabase'
+import HomeScreen from './components/HomeScreen'
 
-type Screen = 'loading' | 'login' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'home' | 'retry'
+type Screen = 'loading' | 'login' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'ready' | 'home' | 'retry'
 interface BusinessDraft { name: string; businessType: BusinessType; timezone: string }
 const initialDraft: BusinessDraft = { name: '', businessType: 'cafe', timezone: 'America/Mexico_City' }
 const accountMessages: Record<AccountErrorCode | 'NETWORK_ERROR', string> = {
@@ -85,7 +86,7 @@ export default function App() {
 
   function navigate(next: Screen) {
     setScreen(next)
-    const path = next === 'login' ? '/login' : next === 'business' || next === 'create-pin' ? '/business/new' : next === 'unlock' ? '/unlock' : '/'
+    const path = next === 'login' ? '/login' : next === 'business' || next === 'create-pin' ? '/business/new' : next === 'unlock' ? '/unlock' : next === 'ready' ? '/business/ready' : '/'
     window.history.replaceState({}, '', path)
   }
 
@@ -289,9 +290,10 @@ export default function App() {
     if (!/^\d{6}$/.test(pin)) { setError('Ingresa un PIN de 6 dígitos.'); return }
     if (screen === 'create-pin' && confirmation !== pin) { setError('Los PIN no coinciden. Revísalos e intenta de nuevo.'); return }
     const requestEpoch = epoch.current
+    const creatingBusiness = screen === 'create-pin'
     setBusy(true)
     try {
-      const data = screen === 'create-pin'
+      const data = creatingBusiness
         ? await accountRequest({ action: 'create_business', ...draft, operationId: operationId.current, pin })
         : await accountRequest({ action: 'unlock', businessId: selected!.id, pin })
       if (requestEpoch !== epoch.current) return
@@ -302,7 +304,7 @@ export default function App() {
       setConfirmation('')
       setDraft(initialDraft)
       operationDraft.current = null
-      navigate('home')
+      navigate(creatingBusiness ? 'ready' : 'home')
     } catch (problem) {
       if (requestEpoch === epoch.current) showFailure(problem)
     } finally {
@@ -357,17 +359,18 @@ export default function App() {
 
   const hasIdentity = Boolean(session)
   const createPin = screen === 'create-pin'
-  const isHome = screen === 'home' && operator
+  const isHome = screen === 'home' && Boolean(operator)
+  const isReady = screen === 'ready' && Boolean(operator)
   const back = () => {
     setError(''); setPin(''); setConfirmation('')
     navigate(createPin ? 'business' : 'choose')
   }
 
-  return <div className={`app-shell ${isHome ? 'home-shell' : ''}`}>
-    <header className="app-header"><span className="wordmark">POS México<span className="wordmark-square" aria-hidden="true" /></span>
+  return <div className={`app-shell ${isHome ? 'pos-shell' : isReady ? 'home-shell' : ''}`}>
+    {!isHome && <header className="app-header"><span className="wordmark">POS México<span className="wordmark-square" aria-hidden="true" /></span>
       {hasIdentity && <button className="header-logout" onClick={() => void logout()} disabled={busy}><LogOut size={18} aria-hidden="true" /><span>Cerrar sesión</span></button>}
-    </header>
-    <main className={isHome ? 'business-home' : 'auth-panel'}>
+    </header>}
+    <main className={isHome ? 'pos-home' : isReady ? 'business-home' : 'auth-panel'}>
       {!supabase ? <section className="screen"><div className="screen-icon"><Store aria-hidden="true" /></div><h1>La app está en preparación</h1><p>Falta conectar el servicio de acceso. Contacta al equipo de POS México para terminar la configuración.</p></section>
       : screen === 'loading' ? <section className="screen loading-screen" aria-live="polite" aria-busy="true"><span className="loader" aria-hidden="true" /><p>Preparando tu acceso…</p></section>
       : screen === 'login' ? <section className="screen login-screen">
@@ -400,9 +403,10 @@ export default function App() {
         </form>
       </section>
       : screen === 'choose' ? <section className="screen"><h1>Tus negocios</h1><p>Elige dónde quieres entrar.</p><div className="business-list">{businesses.map((business) => <button className="business-choice" key={business.id} onClick={() => { setSelected(business); setError(''); setPin(''); navigate('unlock') }}><span className="business-icon"><Coffee size={22} strokeWidth={1.5} aria-hidden="true" /></span><span>{business.name}</span><ChevronRight size={20} aria-hidden="true" /></button>)}</div><button className="button secondary" onClick={() => { operationId.current = crypto.randomUUID(); setDraft(initialDraft); setError(''); navigate('business') }}>Crear otro negocio</button></section>
-      : isHome ? <section className="ready-screen"><div className="ready-mark"><Check size={28} strokeWidth={2} aria-hidden="true" /></div><p className="business-name">{operator.business.name}</p><h1>Tu negocio está listo</h1><p>Ya puedes entrar con tu PIN y bloquear la app cuando termines.</p><dl className="business-details"><div><dt>Tipo de negocio</dt><dd>{{ cafe: 'Cafetería', restaurant: 'Restaurante', other: 'Otro' }[operator.business.businessType]}</dd></div><div><dt>Zona horaria</dt><dd>{timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone}</dd></div></dl>{error && <p className="error-message" role="alert">{error}</p>}<div className="home-actions"><button className="button primary" onClick={() => void lock()} disabled={busy}><LockKeyhole size={20} aria-hidden="true" />{busy ? 'Un momento…' : 'Bloquear'}</button></div></section>
+      : isReady && operator ? <section className="ready-screen"><div className="ready-mark"><Check size={28} strokeWidth={2} aria-hidden="true" /></div><p className="business-name">{operator.business.name}</p><h1>Tu negocio está listo</h1><p>Ya puedes entrar con tu PIN y bloquear la app cuando termines.</p><dl className="business-details"><div><dt>Tipo de negocio</dt><dd>{{ cafe: 'Cafetería', restaurant: 'Restaurante', other: 'Otro' }[operator.business.businessType]}</dd></div><div><dt>Zona horaria</dt><dd>{timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone}</dd></div></dl>{error && <p className="error-message" role="alert">{error}</p>}<div className="home-actions"><button className="button primary" onClick={() => navigate('home')} disabled={busy}>Ir al inicio<ArrowRight size={20} aria-hidden="true" /></button><button className="button secondary" onClick={() => void lock()} disabled={busy}><LockKeyhole size={20} aria-hidden="true" />{busy ? 'Un momento…' : 'Bloquear'}</button></div></section>
+      : isHome && operator ? <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} timezoneLabel={timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone} />
       : <section className="screen"><h1>No pudimos cargar tu negocio</h1>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" onClick={() => void loadBusinesses()}>Intentar de nuevo</button></div></section>}
     </main>
-    <footer className="app-footer">POS México</footer>
+    {!isHome && <footer className="app-footer">POS México</footer>}
   </div>
 }
