@@ -403,7 +403,11 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
         <form className="management-form" onSubmit={saveEmployee}>
           <div className="field"><label htmlFor="employee-name">Nombre del empleado</label><input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={busy} /></div>
           <div className="field"><label htmlFor="employee-role">Rol</label><select id="employee-role" value={role} onChange={(event) => setRole(event.target.value as EmployeeRole)} disabled={busy}><option value="manager">Encargado</option><option value="cashier">Cajero</option><option value="kitchen">Cocina</option></select></div>
-          {!editing && <><label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} onChange={(event) => { setInviteWithGoogle(event.target.checked); operation.current = null }} />Invitar a usar Google</label><p className="field-help">{inviteWithGoogle ? 'Se creará un enlace para que tú lo compartas. El empleado elegirá su PIN al aceptarlo.' : 'El empleado creará su propio PIN con un código que tú le compartes.'}</p></>}
+          {!editing && <fieldset>
+            <legend>Acceso del empleado</legend>
+            <label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} aria-describedby="employee-access-help" onChange={(event) => { setInviteWithGoogle(event.target.checked); operation.current = null }} />Acceso personal con Google (opcional)</label>
+            <p id="employee-access-help" className="field-help">{inviteWithGoogle ? 'Comparte el enlace de invitación. Entrará con su propia cuenta de Google y creará su PIN, que también usará en la caja.' : 'Para trabajar en una caja vinculada sólo necesita su PIN. Comparte el código para que lo cree. Activa Google si también necesita entrar desde su propio dispositivo.'}</p>
+          </fieldset>}
           <div className="management-actions"><button className="button primary" disabled={busy || Boolean(editing && !employeeDirty)} aria-busy={busy}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar empleado'}</button>{!editing && <button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Cancelar</button>}</div>
         </form>
         {editing && <>

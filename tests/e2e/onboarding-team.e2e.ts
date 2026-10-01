@@ -425,7 +425,7 @@ test('a created invitation remains shareable when refreshing the employee list f
   await page.getByRole('button', { name: 'Equipo y dispositivos', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Enlace conservado');
-  await page.getByLabel('Invitar a usar Google', { exact: true }).check();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check();
   await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
@@ -499,7 +499,7 @@ test('employee creation uses one form with optional Google access', async ({ pag
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
-  const google = page.getByLabel('Invitar a usar Google', { exact: true });
+  const google = page.getByLabel('Acceso personal con Google (opcional)', { exact: true });
   await expect(google).not.toBeChecked();
   await expect(page.getByLabel('PIN del empleado', { exact: true })).not.toBeVisible();
   await google.check();
@@ -518,7 +518,7 @@ test('Google employee creation saves one pending person without requesting their
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cocina invitada');
   await page.getByLabel('Rol', { exact: true }).selectOption('kitchen');
-  await page.getByLabel('Invitar a usar Google', { exact: true }).check();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check();
   await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
   await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
@@ -571,10 +571,10 @@ test('a lost Google employee response retries the same atomic creation without a
   await page.getByRole('button', { name: 'Equipo y dispositivos', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado con reintento');
-  await page.getByLabel('Invitar a usar Google', { exact: true }).check();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check();
   await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByLabel('Invitar a usar Google', { exact: true })).toBeChecked();
+  await expect(page.getByLabel('Acceso personal con Google (opcional)', { exact: true })).toBeChecked();
   await expect(page.getByLabel('PIN del empleado', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
   await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
@@ -596,12 +596,12 @@ test('changing optional Google access keeps PIN ownership with the employee', as
   await page.getByRole('button', { name: 'Equipo y dispositivos', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado sin PIN oculto');
-  await page.getByLabel('Invitar a usar Google', { exact: true }).check();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check();
   await capture(page, testInfo.project.name, 'unified-google-form');
-  await page.getByLabel('Invitar a usar Google', { exact: true }).uncheck();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).uncheck();
   await expect(page.getByLabel('PIN del empleado', { exact: true })).not.toBeVisible();
   await expect(page.getByLabel('Confirmar PIN del empleado', { exact: true })).not.toBeVisible();
-  await page.getByLabel('Invitar a usar Google', { exact: true }).check();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check();
   await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
   await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
   expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ pin: null, inviteWithGoogle: true });
@@ -637,7 +637,7 @@ test('the owner creates employee access and invitations with assigned roles', as
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cocina');
   await page.getByLabel('Rol', { exact: true }).selectOption('kitchen');
-  await page.getByLabel('Invitar a usar Google', { exact: true }).check();
+  await page.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check();
   await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
   await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
   await page.getByRole('button', { name: 'Cancelar invitación', exact: true }).click();

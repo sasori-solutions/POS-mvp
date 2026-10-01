@@ -69,7 +69,13 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Catalog, sales, payments, inventory and invoicing operations are still pending.
 
-## Current hosted release: PIN policy and recovery
+## Current hosted release: access UI correction
+
+Agente de Larios, 1 October 2026. Cambiar PIN now shares the same width and spacing as the other Más actions. Business settings, PIN and session actions are grouped consistently. Recuperación de mi PIN explains its independent recovery code. Employee creation labels Google as optional personal access and explains that a paired register needs only the employee's PIN. The existing backend and security policy remain unchanged.
+
+Cloudflare production `e88f5deb-077f-419b-af15-1f366dd398d9` publishes the 20-file build with `index-Blvjyc9v.js`. Validation passed 162/162 browser cases, typecheck/build and 27/27 exact public hashes. The desktop/phone layout regression first reproduced the reported failure. Existing installed windows can retain an old worker; close and reopen the PWA to load the updated interface. See DEPLOYMENT.md and tests/README.md for scope and the local integration timeout reruns.
+
+## PIN policy and recovery backend release
 
 Agente de Larios, 1 October 2026. Supabase has all six migrations and the current account function deployed. Cloud/local comparison matched all 46 SQL functions; 18 private tables and nine public RPCs passed RLS/grant inspection. Cloudflare production `4332457e-e8b5-4ad2-8bcd-85a847714eb8` publishes the 20-file build with `index-DyQATu0Q.js`; public hashes passed 27/27 and anonymous API probes 20/20. These probes did not change production staff, PINs or recovery codes.
 

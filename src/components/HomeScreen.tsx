@@ -75,8 +75,14 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, ti
           <div><dt>Zona horaria</dt><dd>{timezoneLabel}</dd></div>
           <div><dt>Moneda</dt><dd>{business.currency}</dd></div>
         </dl>
-        {business.role === 'owner' && <div className="pos-security-actions">{onSettings && <button className="pos-button pos-secondary" disabled={busy} onClick={onSettings}>Configurar negocio</button>}{onTeam && <button className="pos-button pos-secondary" disabled={busy} onClick={onTeam}>Equipo y dispositivos</button>}{onRecoveryCode && <button className="pos-button pos-secondary" disabled={busy} onClick={onRecoveryCode}>Código de recuperación</button>}</div>}
-        {onChangePin && <button className="pos-button pos-secondary" disabled={busy} onClick={onChangePin}>Cambiar PIN</button>}
+        {business.role === 'owner' && <div className="pos-security-actions">
+          {onSettings && <button className="pos-button pos-secondary" disabled={busy} onClick={onSettings}>Configurar negocio</button>}
+          {onTeam && <button className="pos-button pos-secondary" disabled={busy} onClick={onTeam}>Equipo y dispositivos</button>}
+        </div>}
+        {(onChangePin || (business.role === 'owner' && onRecoveryCode)) && <div className="pos-security-actions">
+          {onChangePin && <button className="pos-button pos-secondary" disabled={busy} onClick={onChangePin}>Cambiar PIN</button>}
+          {business.role === 'owner' && onRecoveryCode && <button className="pos-button pos-secondary" disabled={busy} onClick={onRecoveryCode}>Recuperación de mi PIN</button>}
+        </div>}
         <div className="pos-security-actions">
           {onSwitchBusiness && <button className="pos-button pos-secondary" disabled={busy} onClick={onSwitchBusiness}>Cambiar negocio</button>}
           {onSwitchEmployee && <button className="pos-button pos-secondary" disabled={busy} onClick={onSwitchEmployee}>Cambiar empleado</button>}

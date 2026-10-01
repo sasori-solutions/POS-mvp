@@ -1,6 +1,12 @@
 # Account flow verification
 
-## Current PIN policy and recovery work
+## Current access UI correction
+
+Agente de Larios, 1 October 2026. **162/162 Playwright cases**, frontend typecheck/build and **27/27 exact hosted route/asset checks** passed. The new Más geometry regression reproduced mismatched Cambiar PIN widths on desktop and phone before the fix, then verified consistent action widths, at least 12px gaps, 48px touch targets and logout reachable above the fixed navigation after scrolling. Synthetic screenshots are `/tmp/pos-mexico-{desktop|mobile}-more-pin-layout.png`. Google checkbox locators were adapted to the explicit optional-personal-access label; the real browser smoke's locator was adapted but the smoke itself was not rerun for this text/layout correction.
+
+The initial default parallel integration run passed 22/57 and failed 35 cases, largely at five-/30-second time limits, plus owner-suite cleanup. A serial full-suite rerun passed **54/57**; remaining five-second timeouts were owner recovery's “changes only the signed-in person’s PIN with its current PIN, preserves recovery and invalidates stale change/creation retries” and “uses the existing bounded PIN counter for normal changes and exact lost-response change retries”, and unified employee's “allows one identity to win across two invitations for the same employee”. All **three passed** with `--testTimeout=30000` in a targeted serial rerun (18 unrelated cases filtered out there were already covered in the full run). This covers all 57 cases across the serial run and retries, without claiming a green default parallel execution on this runtime. One leftover synthetic identity from the failed cleanup was removed in the loopback instance. No backend, app timeout or source-test timeout was changed.
+
+## PIN policy and recovery release verification
 
 Agente de Larios, 1 October 2026. Final current-schema suites passed **57/57 real local Auth/Edge/Postgres integration cases without skips**, **16/16 Deno validation/authentication tests** and **160/160 desktop/phone-width Playwright cases**, plus frontend/backend typechecks, build and independent review. Integration comprises account foundation (11), employee PIN policy (8), owner recovery (13), business/team (8), unified employee (8) and employee lifecycle (9).
 

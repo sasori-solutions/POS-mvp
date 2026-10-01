@@ -67,6 +67,27 @@ async function owner(page: Page) {
   await page.getByRole('button', { name: 'Más', exact: true }).click()
 }
 
+test('Más keeps every action aligned and separated, including PIN settings', async ({ page }, testInfo) => {
+  await mockOnboarding(page, { existingBusiness: true })
+  await owner(page)
+  const actions = await page.locator('.pos-more').getByRole('button').evaluateAll((buttons) => buttons.map((button) => {
+    const rect = button.getBoundingClientRect()
+    return { label: button.textContent, left: rect.left, width: rect.width, top: rect.top, bottom: rect.bottom, height: rect.height }
+  }))
+  expect(actions.length).toBeGreaterThan(4)
+  for (const [index, action] of actions.entries()) {
+    expect(action.height, action.label ?? '').toBeGreaterThanOrEqual(48)
+    expect(Math.abs(action.left - actions[0].left), action.label ?? '').toBeLessThan(1)
+    expect(Math.abs(action.width - actions[0].width), action.label ?? '').toBeLessThan(1)
+    if (index > 0) expect(action.top - actions[index - 1].bottom, action.label ?? '').toBeGreaterThanOrEqual(12)
+  }
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+  const logout = await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).boundingBox()
+  const navigation = await page.getByRole('navigation', { name: 'Navegación principal' }).boundingBox()
+  expect(logout!.y + logout!.height).toBeLessThanOrEqual(navigation!.y - 12)
+  await page.screenshot({ path: `/tmp/pos-mexico-${testInfo.project.name}-more-pin-layout.png` })
+})
+
 async function replaceIdentity(page: Page) {
   const replacement = fixtureAuthSession({}, '63b1c26d-4b3a-4f92-8ef1-890950c33827')
   await page.evaluate(async (identity) => {
@@ -103,7 +124,7 @@ test('a new Google session for the same user cancels a pending PIN change', asyn
 test('a new Google session cannot inherit a recovery code shown after PIN verification', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true })
   await owner(page)
-  await page.getByRole('button', { name: 'Código de recuperación', exact: true }).click()
+  await page.getByRole('button', { name: 'Recuperación de mi PIN', exact: true }).click()
   await page.getByLabel('PIN actual', { exact: true }).fill(fixturePin)
   await page.getByRole('button', { name: 'Generar código de recuperación', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Guarda tu código de recuperación', exact: true })).toBeVisible()
@@ -185,7 +206,7 @@ test('a copied recovery code is cleared after acknowledgement even if the copy c
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { writes.push(text); if (text) await new Promise<void>((resolve) => { release = resolve }) } } })
     Object.assign(window, { testClipboardWrites: writes, releaseClipboardCopy: () => release?.() })
   })
-  await page.getByRole('button', { name: 'Código de recuperación', exact: true }).click()
+  await page.getByRole('button', { name: 'Recuperación de mi PIN', exact: true }).click()
   await page.getByLabel('PIN actual', { exact: true }).fill(fixturePin)
   await page.getByRole('button', { name: 'Generar código de recuperación', exact: true }).click()
   await page.getByRole('button', { name: 'Copiar código', exact: true }).click()

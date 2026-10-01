@@ -89,7 +89,7 @@ try {
   assert.equal(await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).count(), 0)
   await ownerPage.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
   await ownerPage.getByLabel('Nombre del empleado', { exact: true }).fill('Pendiente Google smoke')
-  await ownerPage.getByLabel('Invitar a usar Google', { exact: true }).check()
+  await ownerPage.getByLabel('Acceso personal con Google (opcional)', { exact: true }).check()
   assert.equal(await ownerPage.getByLabel('PIN del empleado', { exact: true }).count(), 0)
   await ownerPage.setViewportSize({ width: 393, height: 851 })
   await ownerPage.screenshot({ path: '/tmp/pos-mexico-lifecycle-employee-form.png', fullPage: false })
