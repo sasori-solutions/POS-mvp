@@ -12,7 +12,8 @@
     "db:start": "supabase start -x realtime,storage-api,imgproxy,postgres-meta,studio,logflare,vector,supavisor",
     "db:reset": "supabase db reset",
     "api:serve": "supabase functions serve account --env-file .env.functions",
-    "check": "npm run test && npm run build"
+    "check": "npm run test && npm run build",
+    "check:live": "node scripts/check-live.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",

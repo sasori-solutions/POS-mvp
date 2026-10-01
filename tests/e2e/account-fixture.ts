@@ -24,7 +24,12 @@ const fixtureUser = {
   identities: [{ provider: 'google', identity_id: 'test-google-identity' }],
 };
 
-export function fixtureAuthSession(overrides: Record<string, unknown> = {}) {
+export type FixtureAuthLogoutState = {
+  revokedTokens: Set<string>;
+  responses: { authorization: string | undefined; status: number; errorCode?: string }[];
+};
+
+export function fixtureAuthSession(overrides: Record<string, unknown> = {}, sessionId = '4653a47d-0b0c-46b6-afc6-de40245d04ab') {
   const expiresAt = Math.floor(Date.now() / 1000) + 3_600;
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({
@@ -33,7 +38,7 @@ export function fixtureAuthSession(overrides: Record<string, unknown> = {}) {
     role: 'authenticated',
     email: fixtureUser.email,
     exp: expiresAt,
-    session_id: '4653a47d-0b0c-46b6-afc6-de40245d04ab',
+    session_id: sessionId,
   })).toString('base64url');
   return {
     access_token: `${header}.${payload}.test-browser-fixture-signature`,
@@ -53,7 +58,10 @@ export async function mockAccount(page: Page, options: {
   createResponseLosses?: number;
   sessionOverrides?: Record<string, unknown>;
   revokeSessionAuthRequired?: boolean;
-  authLogoutFailureStatus?: 401 | 403 | 404;
+  authLogoutFailureStatus?: 400 | 401 | 403 | 404;
+  authLogoutFailureCode?: string;
+  authLogoutNetworkFailure?: boolean;
+  authLogoutState?: FixtureAuthLogoutState;
 } = {}) {
   const calls: Record<string, unknown>[] = [];
   const authCalls: { url: string; authorization: string | undefined }[] = [];
@@ -76,13 +84,28 @@ export async function mockAccount(page: Page, options: {
     const request = route.request();
     authCalls.push({ url: request.url(), authorization: request.headers().authorization });
     if (request.url().includes('/logout')) {
+      if (options.authLogoutNetworkFailure) return route.abort('failed');
       if (options.authLogoutFailureStatus) {
         await route.fulfill({
           status: options.authLogoutFailureStatus,
           contentType: 'application/json',
-          body: JSON.stringify({ code: 'bad_jwt', message: 'JWT has expired.' }),
+          body: JSON.stringify({ error_code: options.authLogoutFailureCode ?? 'bad_jwt', msg: 'Authentication logout rejected.' }),
         });
         return;
+      }
+      const state = options.authLogoutState;
+      const authorization = request.headers().authorization;
+      if (state && authorization && state.revokedTokens.has(authorization)) {
+        state.responses.push({ authorization, status: 403, errorCode: 'session_not_found' });
+        return route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({ error_code: 'session_not_found', msg: 'Session not found' }),
+        });
+      }
+      if (state && authorization) {
+        state.revokedTokens.add(authorization);
+        state.responses.push({ authorization, status: 204 });
       }
       locked = true;
       await route.fulfill({ status: 204, body: '' });

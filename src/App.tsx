@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Coffee, LockKeyhole, LogOut, Store } from 'lucide-react'
 import { accountRequest, AccountClientError } from './lib/account'
 import type { AccountErrorCode, BusinessSummary, BusinessType, OperatorSession } from './lib/contracts'
-import { allowIdentitySignIn, closeIdentity, clearStoredIdentity, discardLateIdentity, initializeIdentity, supabase } from './lib/supabase'
+import { allowIdentitySignIn, closeIdentity, hasCurrentStoredIdentity, initializeIdentity, supabase } from './lib/supabase'
 
 type Screen = 'loading' | 'login' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'home' | 'retry'
 interface BusinessDraft { name: string; businessType: BusinessType; timezone: string }
@@ -123,8 +123,12 @@ export default function App() {
     setSession(null)
     navigate('login')
     setError(message)
-    await identityClose
-    if (requestEpoch === epoch.current) { closingPending.current = false; setBusy(false) }
+    const confirmed = await identityClose
+    if (requestEpoch === epoch.current) {
+      if (!confirmed) setError('Saliste de este dispositivo. No pudimos confirmar el cierre en el servidor; vuelve a conectar para revocar las sesiones.')
+      closingPending.current = false
+      setBusy(false)
+    }
   }
 
   function showFailure(problem: unknown) {
@@ -168,6 +172,7 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, identity) => {
       if (!alive) return
       if (event === 'SIGNED_OUT') {
+        if (!endingIdentity.current && hasCurrentStoredIdentity()) return
         if (!endingIdentity.current) epoch.current += 1
         clearSensitive()
         if (closingPending.current) setBusy(true)
@@ -178,15 +183,9 @@ export default function App() {
         setSession(null)
         navigate('login')
       } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        if (endingIdentity.current) {
-          clearStoredIdentity()
-          if (identity?.access_token) {
-            void discardLateIdentity(identity.access_token).then((confirmed) => {
-              if (alive && endingIdentity.current && !confirmed) setError('Saliste de este dispositivo. No pudimos confirmar el cierre en el servidor; vuelve a conectar para revocar las sesiones.')
-            })
-          }
-          return
-        }
+        // SDK broadcasts can belong to a newer login in another document.
+        // Cancelled requests are revoked by this document's generation guard.
+        if (endingIdentity.current || !identity || !hasCurrentStoredIdentity(identity.access_token)) return
         setSession(identity)
       }
     })

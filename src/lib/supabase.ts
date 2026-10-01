@@ -1,4 +1,4 @@
-import { createClient, type Session } from '@supabase/supabase-js'
+import { createClient, isAuthSessionMissingError, type Session } from '@supabase/supabase-js'
 
 export const authStorageKey = 'pos-mexico-auth'
 export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? ''
@@ -7,6 +7,7 @@ let acceptIdentityWrites = true
 let acceptVerifierWrites = true
 let identityGeneration = 0
 let cancellationConfirmed = true
+let closingStorage: Map<string, string> | undefined
 
 function isVerifierKey(key: string) {
   return key === `${authStorageKey}-code-verifier` || key === `${authStorageKey}-flows-code-verifier` ||
@@ -28,6 +29,8 @@ function sanitizeIdentity(value: string): string | null {
 
 const identityStorage = {
   getItem(key: string) {
+    // A closed document must not load another document's fresh identity.
+    if (!acceptIdentityWrites && key === authStorageKey) return null
     const value = localStorage.getItem(key)
     if (!value || key !== authStorageKey) return value
     const safe = sanitizeIdentity(value)
@@ -40,7 +43,23 @@ const identityStorage = {
     const safe = key === authStorageKey ? sanitizeIdentity(value) : value
     if (safe !== null) localStorage.setItem(key, safe)
   },
-  removeItem(key: string) { localStorage.removeItem(key) },
+  removeItem(key: string) {
+    if (!acceptIdentityWrites && localStorage.getItem(key) !== closingStorage?.get(key)) return
+    localStorage.removeItem(key)
+  },
+}
+
+export function hasCurrentStoredIdentity(accessToken?: string): boolean {
+  try {
+    const value = localStorage.getItem(authStorageKey)
+    if (!value) return false
+    const identity = JSON.parse(value) as Partial<Session>
+    return typeof identity.access_token === 'string' &&
+      typeof identity.expires_at === 'number' && identity.expires_at * 1_000 > Date.now() &&
+      (!accessToken || identity.access_token === accessToken)
+  } catch {
+    return false
+  }
 }
 
 function validConfiguration() {
@@ -91,7 +110,7 @@ export function initializeIdentity(): Promise<Session | null> {
       if (code) {
         const { data, error } = await client.auth.exchangeCodeForSession(code)
         if (generation !== identityGeneration) {
-          if (!await discardIdentity(data.session?.access_token)) cancellationConfirmed = false
+          if (!await discardLateIdentity(data.session?.access_token)) cancellationConfirmed = false
           return null
         }
         if (error) throw new Error('El enlace de acceso venció. Vuelve a continuar con Google.')
@@ -100,7 +119,7 @@ export function initializeIdentity(): Promise<Session | null> {
     }
     const { data, error } = await client.auth.getSession()
     if (generation !== identityGeneration) {
-      if (!await discardIdentity(data.session?.access_token)) cancellationConfirmed = false
+      if (!await discardLateIdentity(data.session?.access_token)) cancellationConfirmed = false
       return null
     }
     if (error) throw new Error('No pudimos recuperar tu sesión. Vuelve a entrar con Google.')
@@ -113,7 +132,7 @@ export function clearStoredIdentity() {
   // Include the SDK's per-flow verifiers without touching other applications.
   for (const key of Object.keys(localStorage)) {
     if (key === authStorageKey || isVerifierKey(key)) {
-      localStorage.removeItem(key)
+      identityStorage.removeItem(key)
     }
   }
 }
@@ -134,10 +153,22 @@ async function discardIdentity(accessToken?: string): Promise<boolean> {
   const local = client.auth.signOut({ scope: 'local' })
   const results = await Promise.allSettled([remote, local])
   clearStoredIdentity()
-  return results.every((result) => result.status === 'fulfilled' && !result.value.error)
+  // Repeated logout is confirmed when Auth says this session no longer exists.
+  // The SDK maps session_not_found to AuthSessionMissingError and drops its code.
+  return results.every((result) => result.status === 'fulfilled' && (
+    !result.value.error || result.value.error.code === 'session_not_found' ||
+    isAuthSessionMissingError(result.value.error)
+  ))
 }
 
 export async function closeIdentity(accessToken?: string): Promise<boolean> {
+  if (acceptIdentityWrites) {
+    closingStorage = new Map(Object.keys(localStorage).flatMap((key) => {
+      if (key !== authStorageKey && !isVerifierKey(key)) return []
+      const value = localStorage.getItem(key)
+      return value === null ? [] : [[key, value] as const]
+    }))
+  }
   acceptIdentityWrites = false
   acceptVerifierWrites = false
   identityGeneration += 1
@@ -150,8 +181,17 @@ export async function closeIdentity(accessToken?: string): Promise<boolean> {
   return confirmed && cancellationConfirmed
 }
 
-export async function discardLateIdentity(accessToken: string): Promise<boolean> {
-  const confirmed = await discardIdentity(accessToken)
-  if (!confirmed) cancellationConfirmed = false
-  return confirmed
+export async function discardLateIdentity(accessToken?: string): Promise<boolean> {
+  if (!supabase || !accessToken) return true
+  // The cancelled request owns this JWT, but newer shared storage belongs to
+  // another document. Revoke only the returned session without local signout.
+  try {
+    const { error } = await supabase.auth.admin.signOut(accessToken, 'local')
+    const confirmed = !error || error.code === 'session_not_found' || isAuthSessionMissingError(error)
+    if (!confirmed) cancellationConfirmed = false
+    return confirmed
+  } catch {
+    cancellationConfirmed = false
+    return false
+  }
 }

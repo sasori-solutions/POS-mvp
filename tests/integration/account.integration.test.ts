@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, isAuthSessionMissingError, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 type LocalConfig = { url: string; anonKey: string; serviceRoleKey: string; dbContainer: string };
@@ -227,7 +227,7 @@ describe.skipIf(!config)('account API against a real local Supabase database', (
     expect(afterAuthRevocation.body.error?.code).toBe('AUTH_REQUIRED');
   });
 
-  it('logout revokes all operator sessions for the current authentication session', async () => {
+  it('logout revokes operator sessions and repeated Auth logout confirms the removed authentication session', async () => {
     const first = await newBusiness(anotherOwner);
     const second = await newBusiness(anotherOwner);
     const revoked = await account(anotherOwner, { action: 'revoke_sessions' });
@@ -239,6 +239,10 @@ describe.skipIf(!config)('account API against a real local Supabase database', (
     }
     const { error } = await anotherOwner.client.auth.signOut({ scope: 'local' });
     expect(error).toBeNull();
+    const duplicate = await anotherOwner.client.auth.admin.signOut(anotherOwner.token, 'local');
+    expect(isAuthSessionMissingError(duplicate.error)).toBe(true);
+    expect(duplicate.error?.code).toBeUndefined();
+    expect(sql(`select count(*) from auth.sessions where id = ${sqlUuid(anotherOwner.sessionId)};`).trim()).toBe('0');
     const oldJwt = await account(anotherOwner, {
       action: 'context', businessId: first.business.id, operatorToken: first.operatorToken,
     });
