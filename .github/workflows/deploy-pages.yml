@@ -61,9 +61,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$CLOUDFLARE_API_TOKEN"
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo '::error::Production configuration is incomplete. In Settings > Environments > production, set the CLOUDFLARE_ACCOUNT_ID variable and CLOUDFLARE_API_TOKEN secret. See DEPLOYMENT.md.'
+            exit 1
+          fi
       - name: Upload the checked build
+        id: upload
         if: steps.latest.outputs.current == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
@@ -72,6 +75,7 @@ jobs:
           command: pages deploy dist --project-name=pos-mexico-mvp --branch=main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify the public assets after propagation
+        id: verify
         if: steps.latest.outputs.current == 'true'
         run: |
           for attempt in 1 2 3; do
@@ -79,3 +83,29 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep 10; fi
           done
           exit 1
+      - name: Report production release status
+        if: always()
+        env:
+          IS_CURRENT: ${{ steps.latest.outputs.current }}
+          UPLOAD_STATUS: ${{ steps.upload.outcome }}
+          VERIFY_STATUS: ${{ steps.verify.outcome }}
+          DEPLOYMENT_URL: ${{ steps.upload.outputs.deployment-url }}
+          DEPLOYMENT_ID: ${{ steps.upload.outputs.pages-deployment-id }}
+        run: |
+          {
+            echo '## Production release'
+            printf 'Commit: [`%s`](%s/%s/commit/%s)\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            if [ "$IS_CURRENT" = 'false' ]; then
+              echo '**Skipped: a newer commit is on main.** This run did not upload. Check the newer main run for its deployment result.'
+            elif [ "$UPLOAD_STATUS" = 'success' ] && [ "$VERIFY_STATUS" = 'success' ]; then
+              echo '**Published and verified.** Public routes and assets matched the checked build at verification time.'
+              echo 'Production: https://pos-mexico-mvp.pages.dev'
+            elif [ "$UPLOAD_STATUS" = 'success' ]; then
+              echo '**Uploaded, but public verification did not pass.** The site may already have changed. Inspect the verification step before reporting this release as live.'
+            else
+              echo '**Release not confirmed.** Inspect the failed or cancelled step; this run does not establish what is currently live.'
+            fi
+            printf '\nCloudflare deployment ID: `%s`\n' "${DEPLOYMENT_ID:-unavailable}"
+            printf '\nDeployment URL: %s\n' "${DEPLOYMENT_URL:-unavailable}"
+            printf '\nThis workflow publishes the frontend only. Supabase release evidence is recorded separately in the PR. See DEPLOYMENT.md.\n'
+          } >> "$GITHUB_STEP_SUMMARY"
