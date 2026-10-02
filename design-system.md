@@ -1,5 +1,7 @@
 # Alpha account and home implementation
 
+Products and checkout, 2 October 2026: Square reference selected by the human. White workspace, #F6F6F6 tile/section surfaces, #111111 text, #626262 supporting text, #E4E4E4 dividers, #006AFF operational CTA/selected state. IBM Plex Sans 14/16/20/26px, 8px spacing rhythm, 48px minimum controls. Checkout uses visual square tiles and a 360px account column; phones use two columns and the existing account step. Product editing uses a wide sheet with section navigation, identity/photo, pricing, variations, modifiers, inventory and additional details. No continuous animation; honor reduced motion.
+
 Palette: ink #111111, background #FFFFFF, surface #F6F6F6, border #E4E4E4, secondary #626262. Error text remains high-contrast; no decorative accent.
 Type: local IBM Plex Sans 400/500/600. Body 16px/1.5, captions 14px/1.4, titles 30px/1.15 with restrained negative tracking.
 Spacing: 8px base, 16px input gaps, 24px groups, 40px major separation. Controls 52px minimum; content width 420px auth, 1040px business shell.

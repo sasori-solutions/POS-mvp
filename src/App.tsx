@@ -39,7 +39,7 @@ function entryIntent() {
   return { device: url.pathname === '/register' || (url.pathname === '/employee' && new URLSearchParams(url.hash.slice(1)).has('pair')), employee: url.pathname === '/employee', create: url.pathname === '/business/new', join: url.pathname === '/join' || Boolean(invitation) }
 }
 const accountMessages: Record<AccountErrorCode | 'NETWORK_ERROR', string> = {
-  PRODUCT_CHANGED: 'El producto cambió. Actualiza el catálogo y revisa la venta.',
+  PRODUCT_CHANGED: 'El producto cambió. Revisa la cuenta antes de cobrar.',
   PRODUCT_UNAVAILABLE: 'Un producto ya no está disponible. Revisa la venta.',
   SALE_NOT_FOUND: 'No encontramos esta venta.',
   PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado. Elige otro.',

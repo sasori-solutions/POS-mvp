@@ -1,3 +1,4 @@
+import { emptyDetails } from '../../src/lib/product-details'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
@@ -120,6 +121,34 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect(data(await pos<Sale>(operator, command)).totalCents).toBe(1001)
     expect(count('sales', operator)).toBe(1)
   })
+  it('persists expanded details and exact selections through Edge and serializes limited inventory', async () => {
+    const operator = await business(), variationId = randomUUID(), modifierId = randomUUID()
+    const details = { ...emptyDetails(), trackStock:true,stock:2,taxBps:1600,description:'Producto sintético',variations:[{id:variationId,name:'Grande',priceCents:5801,sku:'TEST-G',barcode:'',soldOut:false}],modifierSets:[{id:randomUUID(),name:'Leche',min:1,max:1,options:[{id:modifierId,name:'Avena',priceCents:101}]}] }
+    const imageId = randomUUID()
+    const upload = { command:'upload_product_image' as const, operationId:randomUUID(),imageId,part:0,parts:1,data:'/9j/2f/Z' }
+    expect(data(await pos(operator,upload))).toMatchObject({imageId,complete:true})
+    const product = data(await pos<Product>(operator,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Latte de prueba',category:'Café',priceCents:5801,details:{...details,imageId}}))
+    expect(product.details?.description).toBe(details.description)
+    expect(product.image).toBe('data:image/jpeg;base64,/9j/2f/Z')
+    const selection = {variationId,modifierIds:[modifierId],variablePriceCents:null}
+    const command = {...sale(product,2),items:[{productId:product.id,quantity:2,unitPriceCents:5902,version:product.version,selection}],totalCents:11804}
+    const competing = {...command,operationId:randomUUID()}
+    const replies = await Promise.all([pos<Sale>(operator,command),pos<Sale>(operator,competing)])
+    expect(replies.map(r=>r.status).sort()).toEqual([200,409])
+    const accepted = replies.find(r=>r.status===200)!
+    expect(accepted.body.data?.items[0]).toMatchObject({selectionLabel:'Grande, Avena',unitPriceCents:5902,taxCents:1628})
+    expect(count('sales',operator)).toBe(1)
+    const stock = data(await pos<{products:Product[]}>(operator,{command:'catalog'})).products.find(p=>p.id===product.id)!
+    expect(stock.details?.stock).toBe(0)
+    expect(stock.version).toBe(product.version+1)
+    const retryCommand = replies[0].status===200 ? command : competing
+    expect(data(await pos<Sale>(operator,retryCommand))).toEqual(accepted.body.data)
+    const availability = {command:'set_product_sold_out' as const,operationId:randomUUID(),productId:stock.id,expectedVersion:stock.version,soldOut:true}
+    const unavailable = data(await pos<Product>(operator,availability))
+    expect(unavailable.details?.soldOut).toBe(true)
+    expect(data(await pos(operator,availability))).toEqual(unavailable)
+  },30000)
+
 })
 
 function localConfig() {
