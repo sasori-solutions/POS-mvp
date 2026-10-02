@@ -93,11 +93,12 @@ describe.skipIf(!config)('email recovery and PIN security against real local Aut
     expect((await account(null, { action: 'device_request_pin_email', deviceToken: '0'.repeat(64), employeeId: member.business.employee.id })).body.error?.code).toBe('DEVICE_REVOKED');
   });
 
-  it('cannot revive a recovery after employee removal and restoration, or use one after a ban', async () => {
+  it('cannot revive a recovery after permanent employee removal, or use one after a ban', async () => {
     const business = await newBusiness(); const member = await invitedEmployee(business); const mail = await requestMail(business, employee);
     expect((await account(owner, { action: 'delete_employee', ...args(business), employeeId: member.business.employee.id, operationId: randomUUID() })).status).toBe(200);
-    expect((await account(owner, { action: 'restore_employee', ...args(business), employeeId: member.business.employee.id, operationId: randomUUID() })).status).toBe(200);
+    expect((await account(owner, { action: 'restore_employee', ...args(business), employeeId: member.business.employee.id, operationId: randomUUID() })).body.error?.code).toBe('VALIDATION_ERROR');
     expect((await account(null, { action: 'pin_email_details', recoveryToken: mail.token })).body.error?.code).toBe('RECOVERY_INVALID');
+    await invitedEmployee(business);
     const fresh = await requestMail(business, employee);
     sql(`update auth.users set banned_until=now()+interval '1 hour' where id=${uuid(employee.userId)};`);
     expect((await account(null, { action: 'pin_email_details', recoveryToken: fresh.token })).body.error?.code).toBe('RECOVERY_INVALID');

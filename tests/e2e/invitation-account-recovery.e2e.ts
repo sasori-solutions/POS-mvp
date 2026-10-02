@@ -84,17 +84,20 @@ test('changing Google accounts after a conflict retries the preserved invitation
   expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBeNull()
 })
 
-for (const scenario of ['same-device', 'new-device', 'status-unavailable']) {
-  test(`a deleted employee follows a new invitation with the existing PIN: ${scenario}`, async ({ page }, info) => {
+for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable']) {
+  test(scenario === 'fresh-invitation' ? 'a new invitation starts fresh access and a new PIN' : 'an accepted invitation retry stays recoverable when its device needs approval and status refresh fails', async ({ page }, info) => {
     if (info.project.name === 'mobile') await page.setViewportSize({ width: 320, height: 640 })
     await mockOnboarding(page, { authenticated: false })
-    const needsApproval = scenario !== 'same-device'
-    let statusUnavailable = scenario === 'status-unavailable'
+    const needsApproval = scenario === 'accepted-replay-status-unavailable'
+    let statusUnavailable = needsApproval
+    const newPin = '731864'
+    const newEmployeeId = 'a7359eb0-1e44-4fcb-9f99-abf51a109bc9'
     let failedStatusRequests = 0
     let accepted = false
     let approved = false
     let acceptanceCount = 0
-    const employeeBusiness = { ...fixtureBusiness, role: 'kitchen', employee: { id: fixtureKitchen.id, name: 'Persona reinvitada', role: 'kitchen' } }
+    const operationIds: string[] = []
+    const employeeBusiness = { ...fixtureBusiness, role: 'kitchen', employee: { id: newEmployeeId, name: 'Persona reinvitada', role: 'kitchen' } }
     const businessSummary = { id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType, canRecoverPin: true, recoveryReady: true }
     await page.route(accountEndpoint, (route) => {
       const body = route.request().postDataJSON()
@@ -104,16 +107,20 @@ for (const scenario of ['same-device', 'new-device', 'status-unavailable']) {
         if (accepted && statusUnavailable) { failedStatusRequests += 1; return route.abort('failed') }
         return reply({ businesses: accepted ? [businessSummary] : [] })
       }
-      if (body.action === 'invitation_details') return reply({ business: businessSummary, employee: { ...fixtureKitchen, name: 'Persona reinvitada', pinReady: true }, returningEmployee: true, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
+      if (body.action === 'invitation_details') return reply({ business: businessSummary, employee: { ...fixtureKitchen, id: newEmployeeId, name: 'Persona reinvitada', pinReady: false }, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
       if (body.action === 'accept_invitation') {
-        expect(body).toMatchObject({ invitationCode: fixtureInvitation, pin: fixturePin })
+        expect(body).toMatchObject({ invitationCode: fixtureInvitation, pin: newPin })
         acceptanceCount += 1
+        operationIds.push(body.operationId)
         accepted = true
+        // The initial acceptance committed but its response was lost; a later retry can need device approval.
+        if (needsApproval && acceptanceCount === 1) return route.abort('failed')
         if (needsApproval) return requireApproval()
         return reply({ business: employeeBusiness, operatorToken: fixtureOperatorToken, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
       }
       if (body.action === 'unlock' && accepted) {
-        if (!approved) return requireApproval()
+        if (needsApproval && !approved) return requireApproval()
+        if (body.pin !== newPin) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { code: 'PIN_INVALID' } }) })
         return reply({ business: employeeBusiness, operatorToken: fixtureOperatorToken, expiresAt: new Date(Date.now() + 3_600_000).toISOString() })
       }
       return route.fallback()
@@ -124,14 +131,19 @@ for (const scenario of ['same-device', 'new-device', 'status-unavailable']) {
     const authorization = page.waitForRequest((request) => request.url().includes('/auth/v1/authorize'))
     await page.getByRole('button', { name: 'Continuar con Google', exact: true }).click()
     await authorization
-    await page.goto('/auth/callback?code=returning-employee-fixture-code')
-    await expect(page.getByText('Ya tenías acceso a este negocio. Ingresa tu PIN actual para volver a entrar.')).toBeVisible()
-    await expect(page.getByLabel('Confirma tu PIN', { exact: true })).toHaveCount(0)
+    await page.goto('/auth/callback?code=fresh-employee-fixture-code')
+    await expect(page.getByText('Elige tu PIN personal de seis dígitos.')).toBeVisible()
+    await expect(page.getByLabel('PIN actual', { exact: true })).toHaveCount(0)
+    await expect(page.getByLabel('Confirma tu PIN', { exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    if (scenario === 'same-device') await page.screenshot({ path: `/tmp/pos-invitation-returning-${info.project.name}.png`, fullPage: true })
-    await page.getByLabel('PIN actual', { exact: true }).fill(fixturePin)
+    if (!needsApproval) await page.screenshot({ path: `/tmp/pos-invitation-fresh-${info.project.name}.png`, fullPage: true })
+    await page.getByLabel('PIN', { exact: true }).fill(newPin)
+    await page.getByLabel('Confirma tu PIN', { exact: true }).fill(newPin)
     await page.getByRole('button', { name: 'Unirme', exact: true }).click()
     if (needsApproval) {
+      await expect(page.getByRole('alert')).toContainText('No pudimos conectar.')
+      expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBe(fixtureInvitation)
+      await page.getByRole('button', { name: 'Unirme', exact: true }).click()
       await expect(page.getByRole('heading', { name: 'Ingresa tu PIN', exact: true })).toBeVisible()
       await expect(page.getByRole('alert')).toContainText('Este dispositivo no está autorizado.')
       expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBeNull()
@@ -144,12 +156,22 @@ for (const scenario of ['same-device', 'new-device', 'status-unavailable']) {
       await expect(page.getByRole('heading', { name: 'Ingresa tu PIN', exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: 'Unirme a un negocio', exact: true })).toHaveCount(0)
       approved = true
-      await page.getByLabel('Tu PIN', { exact: true }).fill(fixturePin)
+      await page.getByLabel('Tu PIN', { exact: true }).fill(newPin)
       await page.getByRole('button', { name: 'Entrar', exact: true }).click()
     }
     await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
-    expect(acceptanceCount).toBe(1)
+    expect(acceptanceCount).toBe(needsApproval ? 2 : 1)
+    expect(new Set(operationIds).size).toBe(1)
     expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBeNull()
+    if (!needsApproval) {
+      await page.reload()
+      await page.getByLabel('Tu PIN', { exact: true }).fill(fixturePin)
+      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await expect(page.getByRole('alert')).toContainText('PIN incorrecto.')
+      await page.getByLabel('Tu PIN', { exact: true }).fill(newPin)
+      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
+    }
   })
 }
 

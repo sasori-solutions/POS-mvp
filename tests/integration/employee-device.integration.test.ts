@@ -214,19 +214,20 @@ describe.skipIf(!config)('employee device binding and owner notifications', () =
     expect((await call(employee, { ...unlock(enrolled), pin: nextPin }, second)).status).toBe(200)
   }, 30_000)
 
-  it('deleting and restoring an employee closes pending requests without approving them or losing the original binding', async () => {
+  it('permanent deletion removes pending requests and the personal device binding', async () => {
     const enrolled = await enroll()
     const second = await newDevice()
     expectDenied(await call(employee, unlock(enrolled), second), 'DEVICE_APPROVAL_REQUIRED')
     const pending = (await inbox(enrolled)).notifications.find((item) => item.type === 'employee_device_requested')!
     expect((await call(owner, { action: 'delete_employee', ...args(enrolled.business), employeeId: enrolled.employeeId, operationId: randomUUID() })).status).toBe(200)
-    expect((await inbox(enrolled)).notifications.find((item) => item.id === pending.id)?.status).toBe('rejected')
-    expect((await call(owner, { action: 'restore_employee', ...args(enrolled.business), employeeId: enrolled.employeeId, operationId: randomUUID() })).status).toBe(200)
-    expectDenied(await call(owner, { action: 'review_employee_device', ...args(enrolled.business), notificationId: pending.id, decision: 'approve' }), 'OPERATION_CONFLICT')
-    expect((await call(employee, unlock(enrolled), enrolled.device)).status).toBe(200)
-    expectDenied(await call(employee, unlock(enrolled), second), 'DEVICE_APPROVAL_REQUIRED')
-    expect((await inbox(enrolled)).notifications.filter((item) => item.type === 'employee_device_requested')).toHaveLength(1)
+    expect((await inbox(enrolled)).notifications.find((item) => item.id === pending.id)).toBeUndefined()
+    expect((await call(owner, { action: 'restore_employee', ...args(enrolled.business), employeeId: enrolled.employeeId, operationId: randomUUID() })).body.error?.code).toBe('VALIDATION_ERROR')
+    expectDenied(await call(owner, { action: 'review_employee_device', ...args(enrolled.business), notificationId: pending.id, decision: 'approve' }), 'BUSINESS_ACCESS_DENIED')
+    expectDenied(await call(employee, unlock(enrolled), enrolled.device), 'BUSINESS_ACCESS_DENIED')
+    expectDenied(await call(employee, unlock(enrolled), second), 'BUSINESS_ACCESS_DENIED')
+    expect(sql(`select count(*) from app_private.employee_personal_devices where employee_id=${uuid(enrolled.employeeId)};`).trim()).toBe('0')
   }, 30_000)
+
 })
 
 function expectDenied(reply: Reply<unknown>, code?: string) {

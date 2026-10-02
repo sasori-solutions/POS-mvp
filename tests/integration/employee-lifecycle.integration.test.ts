@@ -68,7 +68,7 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
     expect(team.employees.filter(e=>e.role!=='owner')).toHaveLength(1);
   },30_000);
 
-  it('removes PIN staff, invalidates access, and requires explicit restoration without replaying a later lifecycle change',async()=>{
+  it('permanently removes PIN staff and invalidates every setup, invitation and operator',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);
     const creation={action:'create_employee',...args,name:'Persona eliminada',role:'cashier',pin:null,operationId:randomUUID()};
     const person=(await account<Person>(owner,creation)).body.data!;const pending=await invite(args,person.id);const device=await pairDevice(args);
@@ -77,73 +77,62 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
     const deletion={action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()};
     const removed=await account<{id:string;deleted:boolean}>(owner,deletion);expect(removed.status).toBe(200);expect(removed.body.data).toEqual({id:person.id,deleted:true});
     expect((await account(owner,deletion)).body.data).toEqual(removed.body.data);
-    let team=(await account<Team>(owner,{action:'team',...args})).body.data!;
-    expect(team.employees.map(e=>e.id)).not.toContain(person.id);expect(team.deletedEmployees).toEqual([expect.objectContaining({id:person.id,active:false,deletedAt:expect.any(String)})]);
-    expect(team.invitations.find(i=>i.id===pending.invitationId)).toMatchObject({status:'revoked',revokeReason:'employee_deleted'});
+    const team=(await account<Team>(owner,{action:'team',...args})).body.data!;
+    expect(team.employees.map(e=>e.id)).not.toContain(person.id);expect(team.deletedEmployees).toBeUndefined();
+    expect(team.invitations.find(i=>i.id===pending.invitationId)).toBeUndefined();
+    expect(sql(`select count(*) from app_private.employees where id=${sqlUuid(person.id)};`).trim()).toBe('0');
     expect((await account<{employees:Person[]}>(null,{action:'device_status',deviceToken:device.deviceToken})).body.data!.employees.map(e=>e.id)).not.toContain(person.id);
     expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:session.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(owner,{action:'update_employee',...args,employeeId:person.id,name:'Cambio tardío',role:'manager',active:true,pin:null})).body.error?.code).toBe('EMPLOYEE_INACTIVE');
+    expect((await account(owner,{action:'update_employee',...args,employeeId:person.id,name:'Cambio tardío',role:'manager',active:true,pin:null})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
     expect((await account(owner,creation)).body.error?.code).toBe('EMPLOYEE_INACTIVE');
-    expect((await account(owner,{action:'create_invitation',...args,employeeId:person.id,operationId:randomUUID()})).body.error?.code).toBe('EMPLOYEE_INACTIVE');
+    expect((await account(owner,{action:'create_invitation',...args,employeeId:person.id,operationId:randomUUID()})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
     expect((await account(employee,{action:'accept_invitation',invitationCode:pending.invitationCode,pin:'086420',operationId:randomUUID()})).body.error?.code).toBe('INVITATION_INVALID');
-    const restoration={action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()};
-    expect((await account<Person>(owner,restoration)).body.data).toMatchObject({id:person.id,active:true,deletedAt:null,pinReady:true});
-    // Lost responses must not undo a more recent human action.
-    expect((await account(owner,deletion)).status).toBe(200);
-    team=(await account<Team>(owner,{action:'team',...args})).body.data!;expect(team.employees.map(e=>e.id)).toContain(person.id);expect(team.deletedEmployees).toEqual([]);
-    expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:session.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
-    await account(owner,{...deletion,operationId:randomUUID()});
-    expect((await account(owner,restoration)).status).toBe(200);
-    team=(await account<Team>(owner,{action:'team',...args})).body.data!;expect(team.employees.map(e=>e.id)).not.toContain(person.id);
+    expect((await account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()})).body.error?.code).toBe('VALIDATION_ERROR');
   },30_000);
 
-  it('preserves Google acceptance history and PIN cooldown while permanently invalidating old invitation retries',async()=>{
+  it('removes Google PIN cooldown and acceptance data while invalidating old invitation retries',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);const person=await makePerson(args,'Persona Google');
     const invitation=await invite(args,person.id);const acceptance={action:'accept_invitation',invitationCode:invitation.invitationCode,pin:'086420',operationId:randomUUID()};
     const session=(await account<BusinessSession>(employee,acceptance)).body.data!;expect(session.operatorToken).toBeTruthy();
     sql(`update app_private.operator_credentials set failed_attempts=5,locked_until=now()+interval '15 minutes' where business_id=${sqlUuid(business.business.id)} and user_id=${sqlUuid(employee.userId)};`);
-    const removed=await account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()});expect(removed.status).toBe(200);
+    expect((await account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()})).status).toBe(200);
     expect((await account(employee,{action:'context',businessId:business.business.id,operatorToken:session.operatorToken})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
     expect((await account<{businesses:{id:string}[]}>(employee,{action:'status'})).body.data!.businesses.map(b=>b.id)).not.toContain(business.business.id);
-    expect((await account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()})).status).toBe(200);
     expect((await account(employee,acceptance)).body.error?.code).toBe('INVITATION_INVALID');
-    expect((await account(employee,{action:'unlock',businessId:business.business.id,pin:'086420'})).body.error?.code).toBe('PIN_LOCKED');
-    expect((await account(employee,{action:'context',businessId:business.business.id,operatorToken:session.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
+    expect(sql(`select count(*) from app_private.operator_credentials where business_id=${sqlUuid(business.business.id)} and user_id=${sqlUuid(employee.userId)};`).trim()).toBe('0');
     const team=(await account<Team>(owner,{action:'team',...args})).body.data!;
-    expect(team.invitations.find(i=>i.id===invitation.invitationId)).toMatchObject({status:'accepted',acceptedAt:expect.any(String),revokeReason:'employee_deleted'});
-    expect(team.employees.find(e=>e.id===person.id)).toMatchObject({active:true,googleLinked:true,pinReady:true});
+    expect(team.invitations.find(i=>i.id===invitation.invitationId)).toBeUndefined();
+    expect(team.employees.find(e=>e.id===person.id)).toBeUndefined();
   },30_000);
 
-  it('does not revive a pending Google creation operation or its cancelled code after restoration',async()=>{
+  it('does not revive a deleted Google creation operation and allows a fresh invitation with a new PIN',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);
     const creation={action:'create_employee',...args,name:'Persona Google pendiente',role:'cashier',pin:null,inviteWithGoogle:true,operationId:randomUUID()};
     const person=(await account<Person & {invitation:Invitation}>(owner,creation)).body.data!;
     expect((await account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()})).status).toBe(200);
     expect((await account(owner,creation)).body.error?.code).toBe('EMPLOYEE_INACTIVE');
-    expect((await account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()})).body.data).toMatchObject({id:person.id,active:true,pinReady:false});
-    expect((await account(owner,creation)).body.error?.code).toBe('INVITATION_INVALID');
     expect((await account(employee,{action:'accept_invitation',invitationCode:person.invitation.invitationCode,pin:'086420',operationId:randomUUID()})).body.error?.code).toBe('INVITATION_INVALID');
-    const fresh=await invite(args,person.id);
-    expect((await account(employee,{action:'accept_invitation',invitationCode:fresh.invitationCode,pin:'086420',operationId:randomUUID()})).status).toBe(200);
+    const fresh=(await account<Person & {invitation:Invitation}>(owner,{...creation,operationId:randomUUID()})).body.data!;
+    expect(fresh.id).not.toBe(person.id);
+    expect((await account(employee,{action:'accept_invitation',invitationCode:fresh.invitation.invitationCode,pin:'086420',operationId:randomUUID()})).status).toBe(200);
     expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role<>'owner';`).trim()).toBe('1');
   },30_000);
 
-  it('restricts delete and restore to the owner and the correct employee/business operation',async()=>{
+  it('restricts deletion to the owner and the correct employee/business operation',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);const person=await makePerson(args,'Persona protegida');
     const team=(await account<Team>(owner,{action:'team',...args})).body.data!;const ownerPerson=team.employees.find(e=>e.role==='owner')!;
-    for(const action of ['delete_employee','restore_employee']){
+    for(const action of ['delete_employee']){
       expect((await account(owner,{action,...args,employeeId:ownerPerson.id,operationId:randomUUID()})).body.error?.code).toBe('PERMISSION_DENIED');
       const other=await newBusiness(anotherOwner);expect((await account(anotherOwner,{action,...ownerArgs(other),employeeId:person.id,operationId:randomUUID()})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
     }
     const invitation=await invite(args,person.id);const joined=(await account<BusinessSession>(employee,{action:'accept_invitation',invitationCode:invitation.invitationCode,pin:'086420',operationId:randomUUID()})).body.data!;
-    for(const action of ['delete_employee','restore_employee'])expect((await account(employee,{action,...ownerArgs(joined),employeeId:person.id,operationId:randomUUID()})).body.error?.code).toBe('PERMISSION_DENIED');
+    for(const action of ['delete_employee'])expect((await account(employee,{action,...ownerArgs(joined),employeeId:person.id,operationId:randomUUID()})).body.error?.code).toBe('PERMISSION_DENIED');
     const operationId=randomUUID();expect((await account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId})).status).toBe(200);
-    expect((await account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId})).body.error?.code).toBe('OPERATION_CONFLICT');
+    expect((await account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId})).body.error?.code).toBe('VALIDATION_ERROR');
     expect((await account(owner,{action:'delete_employee',...args,employeeId:ownerPerson.id,operationId})).body.error?.code).toBe('OPERATION_CONFLICT');
   },30_000);
 
-  it('revokes a personal unlock already waiting on the PIN credential before restoring access',async()=>{
+  it('removes a personal unlock already waiting on the PIN credential',async()=>{
     const business=await newBusiness(owner);const args=ownerArgs(business);const person=await makePerson(args,'Persona desbloqueando');const invitation=await invite(args,person.id);
     expect((await account(employee,{action:'accept_invitation',invitationCode:invitation.invitationCode,pin:'086420',operationId:randomUUID()})).status).toBe(200);
     const locker=await lockPersonalCredential(business.business.id,employee.userId);
@@ -152,12 +141,11 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
       await waitForBlockedRpc(1,locker.pinLockName);
       const deleting=account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()});
       await waitForBlockedRpc(2,locker.pinLockName);
-      const restoring=account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()});
       locker.stdin.end('commit;\n');
-      const [unlocked,removed,restored]=await Promise.all([unlocking,deleting,restoring]);
-      expect(unlocked.status).toBe(200);expect(removed.status).toBe(200);expect(restored.status).toBe(200);
-      expect((await account(employee,{action:'context',businessId:business.business.id,operatorToken:unlocked.body.data!.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
-      expect((await account(employee,{action:'unlock',businessId:business.business.id,pin:'086420'})).status).toBe(200);
+      const [unlocked,removed]=await Promise.all([unlocking,deleting]);
+      expect(unlocked.status).toBe(200);expect(removed.status).toBe(200);
+      expect((await account(employee,{action:'context',businessId:business.business.id,operatorToken:unlocked.body.data!.operatorToken})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
+      expect((await account(employee,{action:'unlock',businessId:business.business.id,pin:'086420'})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
     }finally{locker.stdin.end('rollback;\n');}
   },30_000);
 
@@ -169,9 +157,8 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
       account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()}),
     ]);
     expect(removed.status).toBe(200);expect([200,403]).toContain(unlocked.status);
-    expect((await account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()})).status).toBe(200);
     if(unlocked.body.data)expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:unlocked.body.data.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).body.error?.code).toBe('EMPLOYEE_INACTIVE');
   },30_000);
 
   it('serializes Google acceptance against deletion and leaves no access after removal',async()=>{
@@ -181,7 +168,7 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
       account(employee,{action:'accept_invitation',invitationCode:invitation.invitationCode,pin:'086420',operationId:randomUUID()}),
     ]);
     expect(removed.status).toBe(200);expect([200,400,403]).toContain(accepted.status);
-    expect(sql(`select active=false and deleted_at is not null from app_private.employees where id=${sqlUuid(person.id)};`).trim()).toBe('t');
+    expect(sql(`select count(*) from app_private.employees where id=${sqlUuid(person.id)};`).trim()).toBe('0');
     expect(sql(`select count(*) from app_private.business_memberships where business_id=${sqlUuid(business.business.id)} and user_id=${sqlUuid(employee.userId)} and active;`).trim()).toBe('0');
     expect(sql(`select count(*) from app_private.operator_sessions where business_id=${sqlUuid(business.business.id)} and user_id=${sqlUuid(employee.userId)} and revoked_at is null;`).trim()).toBe('0');
     expect((await account(employee,{action:'unlock',businessId:business.business.id,pin:'086420'})).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');

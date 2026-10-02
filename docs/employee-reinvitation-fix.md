@@ -2,6 +2,8 @@
 
 Agente de Larios · 2 October 2026, America/Chicago.
 
+> Historical record of PR #5. Its restoration behavior was explicitly rejected by Larios and superseded by [permanent employee unlinking](employee-permanent-unlink.md). Do not use restoration as a current workaround.
+
 ## Report and cause
 
 After an employee accepted an invitation, the owner deleted that employee and created another invitation. Signing in with the same employee Google account then displayed “No tienes acceso a este negocio.” Deletion intentionally retained an inactive membership so the owner could restore the employee, but invitation lookup and acceptance rejected every existing membership, including deleted employees. The QR itself encoded the correct invitation link.

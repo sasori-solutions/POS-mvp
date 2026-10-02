@@ -263,7 +263,8 @@ test('employee forms focus on one person and keep their PIN private', async ({ p
   await capture(page, testInfo.project.name, 'focused-employee-form');
 });
 
-test('employee deletion requires a scoped confirmation and removes the person from the main list', async ({ page }) => {
+test('employee deletion permanently removes business access without a restore action', async ({ page }, info) => {
+  if (info.project.name === 'mobile') await page.setViewportSize({ width: 320, height: 640 });
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
@@ -272,6 +273,10 @@ test('employee deletion requires a scoped confirmation and removes the person fr
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await page.getByRole('button', { name: 'Eliminar empleado', exact: true }).click();
   await expect(page.getByRole('heading', { name: `¿Eliminar a ${fixtureCashier.name}?`, exact: true })).toBeVisible();
+  await expect(page.getByText('Se eliminarán su acceso a este negocio, su PIN y su dispositivo vinculado. Sus sesiones e invitaciones dejarán de funcionar.', { exact: true })).toBeVisible();
+  await expect(page.getByText('Esta acción no se puede deshacer. Si vuelve al equipo, necesitará una nueva invitación y elegirá un nuevo PIN.', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: `/tmp/pos-permanent-employee-delete-${info.project.name}.png`, fullPage: true });
   expect(calls.filter((call) => call.action === 'delete_employee')).toHaveLength(0);
   await page.getByRole('button', { name: 'Cancelar eliminación', exact: true }).click();
   await expect(page.getByRole('heading', { name: `¿Eliminar a ${fixtureCashier.name}?`, exact: true })).not.toBeVisible();
@@ -280,10 +285,8 @@ test('employee deletion requires a scoped confirmation and removes the person fr
   await expect(page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true })).not.toBeVisible();
   await expect(page.getByRole('list', { name: 'Empleados' }).getByRole('listitem')).toHaveCount(1);
   expect(calls.find((call) => call.action === 'delete_employee')).toMatchObject({ employeeId: fixtureCashier.id });
-  await page.getByText('Empleados eliminados', { exact: true }).click();
-  await page.getByRole('button', { name: `Restaurar ${fixtureCashier.name}`, exact: true }).click();
-  await expect(page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true })).toBeVisible();
-  expect(calls.find((call) => call.action === 'restore_employee')).toMatchObject({ employeeId: fixtureCashier.id });
+  await expect(page.getByText('Empleados eliminados', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Restaurar / })).toHaveCount(0);
 });
 
 for (const entry of [
@@ -428,8 +431,8 @@ test('a person removed elsewhere cannot remain in an editable employee detail', 
   await expect(page.getByRole('list', { name: 'Empleados' })).toBeVisible();
   await expect(page.getByLabel('Nombre del empleado', { exact: true })).not.toBeVisible();
   await expect(page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true })).not.toBeVisible();
-  await page.getByText('Empleados eliminados', { exact: true }).click();
-  await expect(page.getByRole('button', { name: `Restaurar ${fixtureCashier.name}`, exact: true })).toBeVisible();
+  await expect(page.getByText('Empleados eliminados', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Restaurar / })).toHaveCount(0);
 });
 
 test('employee creation has one invitation method and keeps PIN entry with the employee', async ({ page }) => {
