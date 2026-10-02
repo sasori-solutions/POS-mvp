@@ -15,4 +15,3 @@ export default function PinField({ label, value, onChange, confirm = false, disa
     </div>
   </div>
 }
-
