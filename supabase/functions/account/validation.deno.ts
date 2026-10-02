@@ -79,14 +79,22 @@ Deno.test('targets an existing employee explicitly and accepts without asking th
   assert.deepEqual(parseAccountRequest(acceptance), acceptance)
 })
 
-Deno.test('requires explicit owner-scoped employee lifecycle identifiers without injected state', () => {
-  for (const action of ['delete_employee', 'restore_employee']) {
+Deno.test('requires explicit owner-scoped employee deletion identifiers without injected state', () => {
+  for (const action of ['delete_employee']) {
     const request = { action, businessId: validCreate.operationId, operatorToken: 'a'.repeat(64), employeeId: validCreate.operationId, operationId: validCreate.operationId }
     assert.deepEqual(parseAccountRequest(request), request)
     for (const patch of [{ employeeId: 'invalid' }, { operationId: 'invalid' }, { active: true }, { deletedAt: null }, { userId: validCreate.operationId }]) assert.throws(() => parseAccountRequest({ ...request, ...patch }))
     const { operationId: _operationId, ...missingOperation } = request
     assert.throws(() => parseAccountRequest(missingOperation))
   }
+})
+
+Deno.test('rejects restoration of permanently deleted employees', () => {
+  assert.throws(() => parseAccountRequest({
+    action: 'restore_employee', businessId: validCreate.operationId,
+    operatorToken: 'a'.repeat(64), employeeId: validCreate.operationId,
+    operationId: validCreate.operationId,
+  }))
 })
 
 Deno.test('owner staff commands cannot choose or overwrite an employee PIN', () => {

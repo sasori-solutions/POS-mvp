@@ -76,10 +76,9 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
       const result = await accountRequest({ action: 'team', businessId: business.id, operatorToken })
       if (mounted.current && current === generation.current && sequence === requestSequence.current) {
         setTeam(result)
-        const deleted = result.deletedEmployees?.find((item) => item.id === selectedEmployee.current)
-        if (deleted) {
+        if (selectedEmployee.current && !result.employees.some((item) => item.id === selectedEmployee.current)) {
           closeForm()
-          setNotice(`${deleted.name} ya fue eliminado. Su acceso está cerrado.`)
+          setNotice('El empleado ya fue eliminado de este negocio. Su acceso está cerrado.')
         }
         setEditing((employee) => employee ? result.employees.find((item) => item.id === employee.id) ?? employee : null)
       }
@@ -244,7 +243,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
   }
 
-  async function employeeLifecycle(employee: EmployeeSummary, action: 'delete_employee' | 'restore_employee') {
+  async function deleteEmployee(employee: EmployeeSummary) {
     if (mutationBusy.current) return
     const current = generation.current
     mutationBusy.current = true
@@ -253,11 +252,11 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     setError('')
     setNotice('')
     try {
-      await accountRequest({ action, businessId: business.id, operatorToken, employeeId: employee.id, operationId: operationId({ action, employeeId: employee.id }) })
+      await accountRequest({ action: 'delete_employee', businessId: business.id, operatorToken, employeeId: employee.id, operationId: operationId({ action: 'delete_employee', employeeId: employee.id }) })
       if (!mounted.current || current !== generation.current) return
       operation.current = null
-      if (action === 'delete_employee') closeForm()
-      setNotice(action === 'delete_employee' ? `${employee.name} fue eliminado. Su acceso y sus invitaciones quedaron cerrados.` : `${employee.name} fue restaurado. Tendrá que entrar de nuevo; los enlaces anteriores no se reactivan.`)
+      closeForm()
+      setNotice(`${employee.name} fue eliminado de este negocio. Su PIN y su dispositivo quedaron desvinculados. Para volver necesitará una nueva invitación.`)
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -388,8 +387,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
 
   const invitation = editing ? latestInvitation(editing) : undefined
   const currentCode = code && new Date(code.expiresAt).getTime() > now && (form ? code.employeeId === editing?.id && (code.parameter === 'setup' || invitation?.id === code.invitationId && invitation?.status === 'pending') : tab === 'devices' && code.parameter === 'pair') ? code : null
-  const employees = team?.employees.filter((employee) => employee.role !== 'owner' && !employee.deletedAt) ?? []
-  const deletedEmployees = team?.deletedEmployees?.filter((employee) => employee.role !== 'owner') ?? []
+  const employees = team?.employees.filter((employee) => employee.role !== 'owner') ?? []
   const employeeDirty = Boolean(editing && (name.trim().replace(/\s+/g, ' ') !== editing.name || role !== editing.role))
 
   function codeCard() {
@@ -424,9 +422,9 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
       {loading && <div className="management-loading" role="status"><span className="loader" aria-hidden="true" />{section === 'devices' ? 'Cargando dispositivos…' : 'Cargando empleados…'}</div>}
       {!loading && !team && <button type="button" className="button secondary" onClick={() => { setError(''); void load() }}>Reintentar</button>}
       {form ? confirmDelete && editing ? <section className="management-confirmation">
-        <p>Se cerrarán sus sesiones y sus invitaciones. Dejará de aparecer en las cajas.</p>
-        <p className="field-help">Sus registros se conservan y podrás restaurarlo desde Empleados eliminados.</p>
-        <div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void employeeLifecycle(editing, 'delete_employee')}>Confirmar eliminación</button><button type="button" className="button secondary" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancelar eliminación</button></div>
+        <p>Se eliminarán su acceso a este negocio, su PIN y su dispositivo vinculado. Sus sesiones e invitaciones dejarán de funcionar.</p>
+        <p className="field-help">Esta acción no se puede deshacer. Si vuelve al equipo, necesitará una nueva invitación y elegirá un nuevo PIN.</p>
+        <div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void deleteEmployee(editing)}>Confirmar eliminación</button><button type="button" className="button secondary" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancelar eliminación</button></div>
       </section> : invitationReady && editing ? <section className="employee-invitation-ready" aria-label="Compartir invitación">
         <div className="employee-invited-person"><UserRound size={24} aria-hidden="true" /><div><strong>{editing.name}</strong><span>{roles[editing.role]}</span></div></div>
         {currentCode ? <>
@@ -465,7 +463,6 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
           <button ref={listButton} type="button" className="button primary" disabled={busy} onClick={() => openForm()}>Agregar empleado</button>
           <ul className="management-list" aria-label="Empleados">{employees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}. {accessLabel(employee)}</p></div><button type="button" className="button secondary" aria-label={`Administrar ${employee.name}`} disabled={busy} onClick={() => openForm(employee)}>Administrar</button></li>)}</ul>
           {!employees.length && <p className="management-empty">Aún no has agregado empleados.</p>}
-          {deletedEmployees.length > 0 && <details className="management-deleted"><summary>Empleados eliminados</summary><p>Restaurar devuelve el acceso por PIN o Google que ya tenía. Los enlaces y las sesiones anteriores no se reactivan.</p><ul className="management-list" aria-label="Empleados eliminados">{deletedEmployees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}{employee.deletedAt ? `. Eliminado el ${date(employee.deletedAt)}` : ''}</p></div><button type="button" className="button secondary" aria-label={`Restaurar ${employee.name}`} disabled={busy} onClick={() => void employeeLifecycle(employee, 'restore_employee')}>Restaurar</button></li>)}</ul></details>}
         </section><section hidden={tab !== 'devices'} id="management-devices-panel" aria-label="Dispositivos de caja" className="management-section"><p>Vincula una tablet o computadora para empleados que tienen acceso de caja con PIN. Quienes usan Google deben entrar desde su dispositivo vinculado.</p>
           {codeCard()}
           {deviceToRemove && <div className="management-device-confirm" role="region" aria-labelledby="remove-device-title" aria-describedby="remove-device-help"><h2 id="remove-device-title">¿Desvincular {deviceToRemove.name}?</h2><p id="remove-device-help">Se cerrarán las sesiones en ese dispositivo. Necesitarás vincularlo de nuevo para usarlo como caja.</p><div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void revoke('device', deviceToRemove.id)}>Confirmar desvinculación</button><button type="button" className="button secondary" disabled={busy} onClick={() => setDeviceToRemove(null)}>Cancelar</button></div></div>}

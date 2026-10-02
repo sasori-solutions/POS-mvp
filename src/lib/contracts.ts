@@ -35,7 +35,7 @@ export interface EmployeePinSetupDetails {
   employee: EmployeeSummary
   expiresAt?: string
 }
-export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string; returningEmployee?: boolean }
+export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string }
 
 export interface EmployeeSummary {
   id: string
@@ -44,7 +44,6 @@ export interface EmployeeSummary {
   active: boolean
   googleLinked?: boolean
   pinReady?: boolean
-  deletedAt?: string | null
 }
 export interface EmployeeCreation extends EmployeeSummary {
   invitation?: { invitationCode: string; invitationId: string; expiresAt: string }
@@ -90,7 +89,6 @@ export interface AccountContext {
 }
 export interface TeamContext {
   employees: EmployeeSummary[]
-  deletedEmployees?: EmployeeSummary[]
   invitations: InvitationSummary[]
   devices: DeviceSummary[]
 }
@@ -144,7 +142,7 @@ type AccountRequestBody =
   | ({ action: 'create_pin_setup'; employeeId: string; operationId: string } & OwnerRequest)
   | { action: 'employee_pin_setup_details'; setupCode: string }
   | { action: 'set_employee_pin'; setupCode: string; pin: string; operationId: string }
-  | ({ action: 'delete_employee' | 'restore_employee'; employeeId: string; operationId: string } & OwnerRequest)
+  | ({ action: 'delete_employee'; employeeId: string; operationId: string } & OwnerRequest)
   | ({ action: 'create_invitation'; operationId: string } & OwnerRequest & ({ employeeId: string } | { name: string; role: EmployeeRole }))
   | ({ action: 'revoke_invitation'; invitationId: string } & OwnerRequest)
   | { action: 'invitation_details'; invitationCode: string }
@@ -187,7 +185,6 @@ export interface AccountResponses {
   employee_pin_setup_details: EmployeePinSetupDetails
   set_employee_pin: OperatorSession
   delete_employee: { id: string; deleted: true }
-  restore_employee: EmployeeSummary
   create_invitation: { invitationCode: string; invitationId: string; expiresAt: string }
   revoke_invitation: { revoked: true }
   invitation_details: InvitationDetails

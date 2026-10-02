@@ -109,7 +109,7 @@ describe.skipIf(!local)('employees choose their PIN and owner authorizes one-use
     expect((await deviceCall('device_unlock', { deviceToken: device.deviceToken, employeeId: person.id, pin: '135790' })).data).toBeTruthy();
   }, 30_000);
 
-  it('rejects foreign devices, owners, expired codes, and removed or deactivated people even after restoration', async () => {
+  it('rejects foreign devices, owners, expired codes, and removed or deactivated people', async () => {
     const business = await newBusiness(); const person = await createPerson(business); const device = await pair(business);
     const foreignBusiness = await newBusiness(); const foreign = await pair(foreignBusiness);
     expect((await deviceCall('device_set_employee_pin', { deviceToken: foreign.deviceToken, setupCode: person.pinSetup!.setupCode, pin: '024680', operationId: randomUUID() })).error?.code).toBe('PIN_SETUP_INVALID');
@@ -120,11 +120,12 @@ describe.skipIf(!local)('employees choose their PIN and owner authorizes one-use
     expect((await deviceCall('device_pin_setup_details', { deviceToken: device.deviceToken, setupCode: person.pinSetup!.setupCode })).error?.code).toBe('PIN_SETUP_INVALID');
     const fresh = (await manage<Setup>(owner, 'create_pin_setup', { ...args(business), employeeId: person.id, operationId: randomUUID() })).data!;
     await manage(owner, 'delete_employee', { ...args(business), employeeId: person.id, operationId: randomUUID() });
-    await manage(owner, 'restore_employee', { ...args(business), employeeId: person.id, operationId: randomUUID() });
+    expect((await manage(owner, 'restore_employee', { ...args(business), employeeId: person.id, operationId: randomUUID() })).error?.code).toBe('VALIDATION_ERROR');
     expect((await deviceCall('device_set_employee_pin', { deviceToken: device.deviceToken, setupCode: fresh.setupCode, pin: '024680', operationId: randomUUID() })).error?.code).toBe('PIN_SETUP_INVALID');
-    const restored = (await manage<Setup>(owner, 'create_pin_setup', { ...args(business), employeeId: person.id, operationId: randomUUID() })).data!;
-    await manage(owner, 'update_employee', { ...args(business), employeeId: person.id, name: 'Persona pausada', role: 'cashier', active: false, pin: null });
-    await manage(owner, 'update_employee', { ...args(business), employeeId: person.id, name: 'Persona pausada', role: 'cashier', active: true, pin: null });
+    const replacement = await createPerson(business);
+    const restored = replacement.pinSetup!;
+    await manage(owner, 'update_employee', { ...args(business), employeeId: replacement.id, name: 'Persona pausada', role: 'cashier', active: false, pin: null });
+    await manage(owner, 'update_employee', { ...args(business), employeeId: replacement.id, name: 'Persona pausada', role: 'cashier', active: true, pin: null });
     expect((await deviceCall('device_set_employee_pin', { deviceToken: device.deviceToken, setupCode: restored.setupCode, pin: '024680', operationId: randomUUID() })).error?.code).toBe('PIN_SETUP_INVALID');
   }, 30_000);
 
@@ -138,7 +139,7 @@ describe.skipIf(!local)('employees choose their PIN and owner authorizes one-use
     expect(sql(`select count(*) from app_private.shared_employee_credentials where employee_id=${uuid(person.id)};`).trim()).toBe('1');
   }, 30_000);
 
-  it('serializes PIN setup against deletion and restoration without reviving its code or operator token', async () => {
+  it('serializes PIN setup against permanent deletion without reviving its code or operator token', async () => {
     const business = await newBusiness(); const person = await createPerson(business); const device = await pair(business);
     const choosing = { deviceToken: device.deviceToken, setupCode: person.pinSetup!.setupCode, pin: '024680', operationId: randomUUID() };
     const [chosen, deleted] = await Promise.all([
@@ -147,7 +148,7 @@ describe.skipIf(!local)('employees choose their PIN and owner authorizes one-use
     ]);
     expect(deleted.data).toEqual({ id: person.id, deleted: true });
     expect(chosen.data || chosen.error?.code === 'PIN_SETUP_INVALID').toBeTruthy();
-    expect((await manage(owner, 'restore_employee', { ...args(business), employeeId: person.id, operationId: randomUUID() })).data).toBeTruthy();
+    expect((await manage(owner, 'restore_employee', { ...args(business), employeeId: person.id, operationId: randomUUID() })).error?.code).toBe('VALIDATION_ERROR');
     if (chosen.data) expect((await deviceCall('device_context', { deviceToken: device.deviceToken, operatorToken: chosen.data.operatorToken })).error?.code).toBe('SESSION_INVALID');
     expect((await deviceCall('device_set_employee_pin', choosing)).error?.code).toBe('PIN_SETUP_INVALID');
     expect(sql(`select count(*) from app_private.device_operator_sessions where employee_id=${uuid(person.id)} and revoked_at is null;`).trim()).toBe('0');
