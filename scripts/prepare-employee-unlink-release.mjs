@@ -1,10 +1,11 @@
-// Agente de Larios. Builds reviewable 0010 SQL artifacts; never deploys or reads credentials.
+// Agente de Larios. Builds reviewable 0011 SQL artifacts; never deploys or reads credentials.
 // Run the isolated employee-unlink migration smoke first. Its CLI ledger and
 // schema manifest are tied to the exact migration source hashes used below.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { buildAccountSource } from './build-account-source.mjs'
 
 const hash = value => createHash('sha256').update(value).digest('hex')
 const quote = value => `'${value.replaceAll("'", "''")}'`
@@ -15,28 +16,32 @@ const literal = (value, index) => {
 }
 const evidence = JSON.parse(readFileSync('/tmp/pos-employee-unlink-schema-manifest.json', 'utf8'))
 const ledger = JSON.parse(readFileSync('/tmp/pos-employee-unlink-canonical-ledger.json', 'utf8'))
-assert.equal(ledger.length, 10, 'Run the isolated 0009→0010 migration smoke first')
-assert.equal(ledger.at(-1).version, '20261002001000')
-assert.equal(evidence.sources.length, 10)
+assert.equal(ledger.length, 11, 'Run the isolated 0010→0011 migration smoke first')
+assert.equal(ledger.at(-2).version, '20261002001000')
+assert.equal(ledger.at(-2).name, 'products_sales')
+assert.equal(ledger.at(-1).version, '20261002001100')
+assert.equal(evidence.sources.length, 11)
 assert.equal(evidence.ledgerSha256, hash(JSON.stringify(ledger)), 'Canonical ledger differs from tested evidence')
 for (const source of evidence.sources) assert.equal(hash(readFileSync(source.path)), source.sha256, `Migration changed after compatibility check: ${source.path}`)
 const latest = evidence.sources.at(-1)
-assert(latest.path.startsWith('supabase/migrations/20261002001000_'))
-const migration = readFileSync(latest.path, 'utf8')
-const previous = ledger.slice(0, -1)
-const row = ledger.at(-1)
-const historyChecks = previous.map((entry, index) => `or not exists(select 1 from supabase_migrations.schema_migrations where version=${quote(entry.version)} and name=${quote(entry.name)} and statements=array[${entry.statements.map((statement, item) => literal(statement, `${index}_${item}`)).join(',')}]::text[])`).join('\n')
-const guarded = `begin;
+assert.equal(latest.path, 'supabase/migrations/20261002001100_employee_permanent_unlink.sql')
+function guardedMigration(priorCount) {
+  const previous = ledger.slice(0, priorCount)
+  const historyChecks = previous.map((entry, index) => `or not exists(select 1 from supabase_migrations.schema_migrations where version=${quote(entry.version)} and name=${quote(entry.name)} and statements=array[${entry.statements.map((statement, item) => literal(statement, `${index}_${item}`)).join(',')}]::text[])`).join('\n')
+  const changes = ledger.slice(priorCount).map((row, index) => `${readFileSync(evidence.sources[priorCount + index].path, 'utf8')}\ninsert into supabase_migrations.schema_migrations(version,name,statements) values(${quote(row.version)},${quote(row.name)},array[${row.statements.map((statement, item) => literal(statement, `${row.version}_${item}`)).join(',')}]::text[]);`).join('\n\n')
+  return `begin;
 do $history_guard$ begin
-if (select count(*) from supabase_migrations.schema_migrations)<>9
+if (select count(*) from supabase_migrations.schema_migrations)<>${priorCount}
 ${historyChecks}
-then raise exception 'Expected exact 0001-0009 ledger; no changes applied.'; end if;
+then raise exception 'Expected exact first ${priorCount} canonical migrations; no changes applied.'; end if;
 end $history_guard$;
 
-${migration}
-insert into supabase_migrations.schema_migrations(version,name,statements) values(${quote(row.version)},${quote(row.name)},array[${row.statements.map(literal).join(',')}]::text[]);
+${changes}
 commit;
 `
+}
+const guarded = guardedMigration(9)
+const afterProducts = guardedMigration(10)
 
 const functionValues = evidence.functions.map(item => `(${quote(item.signature)},${quote(item.sourceSha256)},${item.securityDefiner})`).join(',\n')
 const tableValues = evidence.tables.map(name => `(${quote(name)})`).join(',\n')
@@ -44,7 +49,7 @@ const ledgerValues = ledger.map(entry => `(${quote(entry.version)},${quote(entry
 const constraintValues = evidence.constraints.map(item => `(${quote(item.table)},${quote(item.name)},${quote(item.definition)})`).join(',\n')
 const columnValues = evidence.columns.map(item => `(${quote(item.table)},${quote(item.name)},${quote(item.type)},${item.notNull},${item.default === null ? 'null::text' : quote(item.default)})`).join(',\n')
 const triggerValues = evidence.triggers.map(item => `(${quote(item.table)},${quote(item.name)},${quote(item.definition)},${quote(item.enabled)})`).join(',\n')
-const verification = `-- Agente de Larios. READ ONLY verification after additive migration 0010.
+const verification = `-- Agente de Larios. READ ONLY verification after additive migration 0011.
 -- Expected definitions come from the disposable CLI-migrated database whose
 -- exact migration source hashes are recorded in the release manifest.
 -- No user data, credentials, email addresses, PINs or tokens are selected.
@@ -63,7 +68,7 @@ ${columnValues}
 ${triggerValues}
 ), actual_functions as (
  select p.*,n.nspname from pg_proc p join pg_namespace n on n.oid=p.pronamespace
- where n.nspname='app_private' or n.nspname='public' and p.proname like 'account_%'
+ where n.nspname='app_private' or n.nspname='public' and (p.proname like 'account_%' or p.proname like 'pos_%')
 ), body_failures as (
  select e.signature from expected_functions e left join pg_proc p on p.oid=to_regprocedure(e.signature)
  where p.oid is null or encode(extensions.digest(p.prosrc,'sha256'),'hex')<>e.source_sha256
@@ -123,26 +128,22 @@ commit;
 `
 
 const migrationPath = '/tmp/pos-employee-unlink-migration-with-history.sql'
+const afterProductsPath = '/tmp/pos-employee-unlink-migration-after-products.sql'
 const verificationPath = '/tmp/pos-employee-unlink-verify.sql'
 const preflightPath = '/tmp/pos-employee-unlink-purge-preflight.sql'
 const preflight = readFileSync('scripts/employee-unlink-purge-preflight.sql', 'utf8')
 writeFileSync(migrationPath, guarded)
+writeFileSync(afterProductsPath, afterProducts)
 writeFileSync(verificationPath, verification)
 writeFileSync(preflightPath, preflight)
-const edgePaths = ['src/lib/contracts.ts', 'supabase/functions/account/validation.ts', 'supabase/functions/account/device-proof.ts', 'supabase/functions/account/authentication.ts', 'supabase/functions/account/email.ts', 'supabase/functions/account/index.ts']
-const edgeSources = edgePaths.map(path => ({ path, text: readFileSync(path, 'utf8') }))
-const npmImport = "import { createClient } from 'npm:@supabase/supabase-js@2.117.2'"
-const edge = npmImport + '\n\n' + edgeSources.map(({ path, text }) => {
-  const body = text.replace(npmImport + '\n', '').replace(/^import[^\n]*from ['"](?:\.\.\/\.\.\/\.\.\/src\/lib\/contracts\.ts|\.\/validation\.ts|\.\/authentication\.ts|\.\/email\.ts|\.\/device-proof\.ts)['"]\r?\n/gm, '')
-  assert(!/^import\b/m.test(body), `Unresolved bundled import in ${path}`)
-  return `// Source: ${path}; SHA-256 ${hash(text)}\n${body.trimEnd()}\n`
-}).join('\n')
+const { source: edgeSources, edge } = buildAccountSource()
 const edgePath = '/tmp/pos-employee-unlink-account-cloud.ts'
 writeFileSync(edgePath, edge)
 execFileSync('deno', ['check', edgePath], { stdio: ['ignore', 'pipe', 'pipe'] })
 for (const { path, text } of edgeSources) assert.equal(hash(readFileSync(path)), hash(text), `Edge source changed while preparing artifacts: ${path}`)
 const metadata = {
-  migration: { path: migrationPath, bytes: Buffer.byteLength(guarded), sha256: hash(guarded) },
+  migration: { path: migrationPath, priorMigrations: 9, includes: ['products_sales', 'employee_permanent_unlink'], bytes: Buffer.byteLength(guarded), sha256: hash(guarded) },
+  migrationAfterProducts: { path: afterProductsPath, priorMigrations: 10, includes: ['employee_permanent_unlink'], bytes: Buffer.byteLength(afterProducts), sha256: hash(afterProducts) },
   verification: { path: verificationPath, bytes: Buffer.byteLength(verification), sha256: hash(verification) },
   preflight: { path: preflightPath, bytes: Buffer.byteLength(preflight), sha256: hash(preflight) },
   sources: evidence.sources,
@@ -150,7 +151,7 @@ const metadata = {
   functions: evidence.functions.length,
   tables: evidence.tables.length,
   edge: { path: edgePath, bytes: Buffer.byteLength(edge), sha256: hash(edge), redeployRequired: true, denoCheckPassed: true,
-    note: 'The request parser retires restore_employee. Deploy account after 0010 and before the matching frontend.',
+    note: 'Includes products/sales and retires restore_employee. Requires exact products_sales 0010 then employee_permanent_unlink 0011 before this Edge bundle and matching frontend.',
     sources: edgeSources.map(({ path, text }) => ({ path, sha256: hash(text) })) },
 }
 writeFileSync('/tmp/pos-employee-unlink-release.json', `${JSON.stringify(metadata, null, 2)}\n`)

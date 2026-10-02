@@ -2,10 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowLeftRight, Bell, ChevronRight, ClipboardList, KeyRound, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText, Store, Tablet, Users, type LucideIcon } from 'lucide-react'
 import type { BusinessContext } from '../lib/contracts'
 import { roleSections } from '../lib/navigation'
+import type { AccountClientError } from '../lib/account'
+import ProductsScreen from './ProductsScreen'
+import SaleScreen from './SaleScreen'
+import SalesScreen from './SalesScreen'
+import { useCatalog } from './useCatalog'
 import './home-screen.css'
+import './products-sales.css'
 
 interface HomeScreenProps {
   business: BusinessContext
+  operatorToken: string
+  deviceToken?: string
+  onSessionError?: (error: AccountClientError) => void
   onLock: () => void
   onLogout: () => void
   busy: boolean
@@ -38,13 +47,13 @@ export type Destination = typeof destinations[number]['name']
 
 const upcoming = {
   Comandas: { title: 'Comandas, próximamente', description: 'Aquí podrás consultar las cuentas abiertas de tu negocio.', icon: ClipboardList },
-  Ventas: { title: 'Ventas, próximamente', description: 'Aquí podrás consultar tus ventas registradas.', icon: ReceiptText },
-  Productos: { title: 'Tu catálogo, próximamente', description: 'Aquí podrás agregar y organizar los productos de tu negocio.', icon: Package },
 } as const
 
-export default function HomeScreen({ business, onLock, onLogout, busy, error, notice, destination: selectedDestination, onDestinationChange, focusOnReturn, onSettings, onTeam, onDevices, onSwitchBusiness, onChangePin, onSwitchEmployee, onNotifications, unreadCount = 0, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
+export default function HomeScreen({ business, operatorToken, deviceToken, onSessionError, onLock, onLogout, busy, error, notice, destination: selectedDestination, onDestinationChange, focusOnReturn, onSettings, onTeam, onDevices, onSwitchBusiness, onChangePin, onSwitchEmployee, onNotifications, unreadCount = 0, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
   const [localDestination, setLocalDestination] = useState<Destination>(business.role === 'kitchen' ? 'Comandas' : 'Venta')
   const destination = selectedDestination ?? localDestination
+  const access = { businessId: business.id, operatorToken, deviceToken }
+  const catalog = useCatalog(access, business.role !== 'kitchen', onSessionError)
   const more = useRef<HTMLDivElement>(null)
   function setActive(next: Destination) {
     setLocalDestination(next)
@@ -62,7 +71,7 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, no
   }
   const allowedDestinations = destinations.filter(({ name }) => name === 'Más' || roleSections[business.role].includes(name))
   const active = allowedDestinations.some(({ name }) => name === destination) ? destination : business.role === 'kitchen' ? 'Comandas' : 'Venta'
-  const upcomingSection = active === 'Comandas' || active === 'Ventas' || active === 'Productos' ? upcoming[active] : null
+  const upcomingSection = active === 'Comandas' ? upcoming.Comandas : null
   const SectionIcon = upcomingSection?.icon
 
   return <div className="pos-home-shell">
@@ -80,19 +89,10 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, no
       {notice && <p className="pos-notice" role="status">{notice}</p>}
       {error && <p className="pos-error" role="alert">{error}</p>}
 
-      {active === 'Venta' ? <>
-        <div className="pos-categories" aria-label="Categorías">
-          <span className="pos-category">Todo</span>
-        </div>
-        <div className="pos-empty">
-          <Package className="pos-empty-icon" size={32} strokeWidth={1.4} aria-hidden="true" />
-          <h2>Aún no hay productos</h2>
-          <p>La venta estará disponible próximamente.</p>
-        </div>
-        <div className="pos-sale-action">
-          <button className="pos-button pos-primary" type="button" onClick={() => setActive('Productos')}>Ver productos</button>
-        </div>
-      </> : active === 'Más' ? <div className="pos-more" ref={more}>
+      {business.role !== 'kitchen' && <div hidden={active !== 'Venta'}><SaleScreen access={access} employeeId={business.employee?.id ?? 'owner'} catalog={catalog} onProducts={() => setActive('Productos')} onHistory={() => setActive('Ventas')} onSessionError={onSessionError} /></div>}
+      {active === 'Productos' ? <ProductsScreen access={access} catalog={catalog} canManage={business.role === 'owner' || business.role === 'manager'} onSessionError={onSessionError} />
+        : active === 'Ventas' ? <SalesScreen key={`${business.employee?.id}:${business.role}`} access={access} ownOnly={business.role === 'cashier'} onSessionError={onSessionError} />
+        : active === 'Más' ? <div className="pos-more" ref={more}>
         {business.role === 'owner' && <section className="pos-menu-group" aria-labelledby="more-business-title">
           <h2 id="more-business-title">Negocio</h2>
           {onNotifications && row('notifications', 'Notificaciones', Bell, onNotifications, 'Solicitudes de cambio de dispositivo')}

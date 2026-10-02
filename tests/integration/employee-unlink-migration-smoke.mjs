@@ -1,4 +1,4 @@
-// Agente de Larios. Real 0009→0010 purge/reinvite compatibility in disposable DBs.
+// Agente de Larios. Real 0009/0010→0011 purge/reinvite compatibility in disposable DBs.
 // Does not reset, migrate or mutate the running stack's primary database.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
@@ -17,16 +17,20 @@ assert(project, 'Local stack project required')
 const container = `supabase_db_${project}`
 const database = `pos_unlink_compat_${randomUUID().replaceAll('-', '')}`
 const releaseDatabase = `pos_unlink_release_${randomUUID().replaceAll('-', '')}`
+const combinedDatabase = `pos_unlink_combined_${randomUUID().replaceAll('-', '')}`
 const workspace = mkdtempSync(`${tmpdir()}/pos-unlink-compat-`)
 const migrations = readdirSync('supabase/migrations').filter(file => /^\d{14}_.+\.sql$/.test(file)).sort()
-assert.equal(migrations.length, 10)
-assert.equal(migrations.at(-1), '20261002001000_employee_permanent_unlink.sql')
+assert.equal(migrations.length, 11)
+assert.equal(new Set(migrations.map(file => file.slice(0, 14))).size, 11, 'Migration versions must be unique')
+assert.equal(migrations.at(-2), '20261002001000_products_sales.sql')
+assert.equal(migrations.at(-1), '20261002001100_employee_permanent_unlink.sql')
 const hash = value => createHash('sha256').update(value).digest('hex')
 const sources = migrations.map(file => ({ path: `supabase/migrations/${file}`, sha256: hash(readFileSync(`supabase/migrations/${file}`)) }))
 connection.pathname = `/${database}`
 connection.searchParams.set('sslmode', 'disable')
 let created = false
 let releaseCreated = false
+let combinedCreated = false
 let stage = 'prepare'
 
 function sql(statement, target = database) {
@@ -52,6 +56,15 @@ function preserved(target = database) {
 function fullSnapshot(target) {
   const tables = JSON.parse(sql(`select jsonb_agg(tablename order by tablename) from pg_tables where schemaname='app_private';`, target))
   return Object.fromEntries(tables.map(table => [table, sql(`select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text),'[]'::jsonb) from app_private.${table} x;`, target).trim()]))
+}
+function financialSnapshot(target = database) {
+  return sql(`select jsonb_build_object(
+    'products',(select jsonb_agg(to_jsonb(x) order by id) from app_private.products x),
+    'sales',(select jsonb_agg(to_jsonb(x)-'employee_id' order by id) from app_private.sales x),
+    'items',(select jsonb_agg(to_jsonb(x) order by sale_id,product_id) from app_private.sale_items x),
+    'operations',(select jsonb_agg(to_jsonb(x)-'actor_id' order by operation_id) from app_private.pos_operations x),
+    'ownerOperations',(select jsonb_agg(to_jsonb(x) order by operation_id) from app_private.pos_operations x where actor_id in(select id from app_private.employees where role='owner'))
+  );`, target).trim()
 }
 function assertClean(target = database) {
   const result = JSON.parse(sql(`select jsonb_build_object(
@@ -79,7 +92,7 @@ try {
   sql(execFileSync('docker', ['exec', container, 'pg_dump', '-U', 'postgres', '-d', 'postgres', '--schema=auth', '--schema=extensions', '--schema-only', '--no-owner', '--no-privileges'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
   mkdirSync(`${workspace}/supabase/migrations`, { recursive: true })
   copyFileSync('supabase/config.toml', `${workspace}/supabase/config.toml`)
-  for (const file of migrations.slice(0, -1)) copyFileSync(`supabase/migrations/${file}`, `${workspace}/supabase/migrations/${file}`)
+  for (const file of migrations.slice(0, -2)) copyFileSync(`supabase/migrations/${file}`, `${workspace}/supabase/migrations/${file}`)
   stage = 'baseline'
   migrate()
   stage = '0009 archived, merged, legacy and cross-business fixtures'
@@ -125,7 +138,7 @@ try {
       'recovery',recovery,'freshPerson',fresh,'secondBusiness',second,'purgedIds',jsonb_build_array(eid,rehire#>>'{data,id}',legacy)));
   end $$;`)
   const before = preserved()
-  const completeBefore = fullSnapshot(database)
+  const combinedBefore = fullSnapshot(database)
   const preflight = JSON.parse(sql(readFileSync('scripts/employee-unlink-purge-preflight.sql', 'utf8')))
   assert.equal(preflight.employees_to_remove, 3)
   assert.equal(preflight.linked_employees_to_remove, 1)
@@ -135,6 +148,28 @@ try {
   assert.equal(preflight.global_auth_accounts_preserved, 1)
   assert.equal(preflight.personal_device_bindings_to_remove, 1)
   assert.equal(preflight.email_recoveries_to_remove, 1)
+  sql(`create database ${combinedDatabase} template ${database};`, 'postgres')
+  combinedCreated = true
+  stage = 'products 0010 and historical sales fixture'
+  copyFileSync(`supabase/migrations/${migrations.at(-2)}`, `${workspace}/supabase/migrations/${migrations.at(-2)}`)
+  migrate()
+  sql(`do $$ declare f jsonb; product uuid:=gen_random_uuid(); op uuid:=gen_random_uuid(); sale app_private.sales%rowtype; request jsonb; r jsonb; begin
+    select value into f from public.compat_fixture;
+    r:=public.account_secure((f->>'owner')::uuid,(f->>'ownerSession')::uuid,'pos',f->'ownerArgs'||jsonb_build_object('command','save_product','operationId',gen_random_uuid(),'productId',product,'name','Café de prueba','category','Bebidas','priceCents',4500,'expectedVersion',null));
+    if r->'error' is not null then raise exception 'Baseline product creation failed'; end if;
+    -- Historical sale from before the existing soft deletion; all financial
+    -- fields must survive 0011, while employee/operation actor IDs are cleared.
+    insert into app_private.sales(business_id,employee_id,operator_name,operation_id,total_cents,item_count,payment_method,timezone)
+      values((f->>'business')::uuid,(f#>>'{oldPerson,data,id}')::uuid,'Empleado anterior',op,9000,2,'cash','America/Mexico_City') returning * into sale;
+    insert into app_private.sale_items(business_id,sale_id,product_id,name,category,quantity,unit_price_cents,total_cents)
+      values(sale.business_id,sale.id,product,'Café de prueba','Bebidas',2,4500,9000);
+    request:=jsonb_build_object('command','complete_sale','operationId',op,'items',jsonb_build_array(jsonb_build_object('productId',product,'quantity',2,'unitPriceCents',4500,'version',1)),'totalCents',9000,'paymentMethod','cash');
+    insert into app_private.pos_operations(business_id,operation_id,actor_id,payload_fingerprint,result)
+      values(sale.business_id,op,sale.employee_id,extensions.digest((request-'operationId')::text,'sha256'),app_private.sale_json(sale));
+    update public.compat_fixture set value=value||jsonb_build_object('oldSaleRequest',request,'oldSaleId',sale.id);
+  end $$;`)
+  const financialBefore = financialSnapshot()
+  const completeBefore = fullSnapshot(database)
   sql(`create database ${releaseDatabase} template ${database};`, 'postgres')
   releaseCreated = true
   copyFileSync(`supabase/migrations/${migrations.at(-1)}`, `${workspace}/supabase/migrations/${migrations.at(-1)}`)
@@ -142,13 +177,17 @@ try {
   migrate()
   assert.equal(hash(preserved()), hash(before), 'Auth identities/sessions, other-business access, active/disabled employees, shared registers and nonce replay records must survive unchanged')
   assertClean()
+  assert.equal(hash(financialSnapshot()), hash(financialBefore), 'All products, amounts, items, operator-name snapshots and accepted POS results must survive')
+  assert.equal(sql(`select count(*) from app_private.sales where employee_id is not null;`).trim(), '0', 'Old sale no longer references deleted employee')
+  assert.equal(sql(`select count(*) from app_private.pos_operations where operation_id=(select (value#>>'{oldSaleRequest,operationId}')::uuid from public.compat_fixture) and actor_id is null;`).trim(), '1', 'Old POS operation keeps its identity with no employee association')
 
   stage = 'canonical schema and release artifacts'
   const ledger = JSON.parse(sql('select jsonb_agg(row_to_json(m) order by version) from supabase_migrations.schema_migrations m;'))
-  assert.equal(ledger.length, 10)
-  assert.deepEqual(ledger.slice(0, -1).map(entry => entry.statements.length), [44, 48, 27, 23, 29, 21, 16, 26, 11])
+  assert.equal(ledger.length, 11)
+  assert.deepEqual(ledger.slice(0, 9).map(entry => entry.statements.length), [44, 48, 27, 23, 29, 21, 16, 26, 11])
+  assert.equal(ledger[9].name, 'products_sales')
   const schema = JSON.parse(sql(`select jsonb_build_object(
-    'functions',(select jsonb_agg(jsonb_build_object('signature',n.nspname||'.'||p.proname||'('||oidvectortypes(p.proargtypes)||')','sourceSha256',encode(extensions.digest(p.prosrc,'sha256'),'hex'),'securityDefiner',p.prosecdef) order by n.nspname,p.proname,p.oid::regprocedure::text) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='app_private' or n.nspname='public' and p.proname like 'account_%'),
+    'functions',(select jsonb_agg(jsonb_build_object('signature',n.nspname||'.'||p.proname||'('||oidvectortypes(p.proargtypes)||')','sourceSha256',encode(extensions.digest(p.prosrc,'sha256'),'hex'),'securityDefiner',p.prosecdef) order by n.nspname,p.proname,p.oid::regprocedure::text) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='app_private' or n.nspname='public' and (p.proname like 'account_%' or p.proname like 'pos_%')),
     'tables',(select jsonb_agg(n.nspname||'.'||c.relname order by c.relname) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='app_private' and c.relkind='r'),
     'constraints',(select jsonb_agg(jsonb_build_object('table',c.conrelid::regclass::text,'name',c.conname,'definition',pg_get_constraintdef(c.oid)) order by c.conrelid::regclass::text,c.conname) from pg_constraint c join pg_namespace n on n.oid=c.connamespace where n.nspname='app_private'),
     'columns',(select jsonb_agg(jsonb_build_object('table',c.oid::regclass::text,'name',a.attname,'type',format_type(a.atttypid,a.atttypmod),'notNull',a.attnotnull,'default',pg_get_expr(d.adbin,d.adrelid)) order by c.oid::regclass::text,a.attnum) from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid left join pg_attrdef d on d.adrelid=c.oid and d.adnum=a.attnum where n.nspname='app_private' and c.relkind='r' and a.attnum>0 and not a.attisdropped),
@@ -166,19 +205,25 @@ try {
   assert.equal(verified.private_tables_count, schema.tables.length)
   writeFileSync('/tmp/pos-employee-unlink-local-verification.json', `${JSON.stringify(verified, null, 2)}\n`)
 
-  stage = 'exact history guard and dashboard artifact'
-  sql("update supabase_migrations.schema_migrations set name=name||'_guard_probe' where version='20261002000900';", releaseDatabase)
-  const guarded = readFileSync('/tmp/pos-employee-unlink-migration-with-history.sql', 'utf8')
-  let rejected = false
-  try { sql(guarded, releaseDatabase) } catch (error) { rejected = String(error.stderr).includes('Expected exact 0001-0009 ledger; no changes applied.') }
-  assert.equal(rejected, true, 'Ledger mismatch must reject the complete release transaction')
-  assert.equal(sql("select count(*) from pg_tables where schemaname='app_private' and tablename='employee_operation_tombstones';", releaseDatabase).trim(), '0')
-  assert.equal(hash(JSON.stringify(fullSnapshot(releaseDatabase))), hash(JSON.stringify(completeBefore)), 'Rejected release must not change any private data')
-  sql("update supabase_migrations.schema_migrations set name='employee_reinvitation' where version='20261002000900';", releaseDatabase)
-  sql(guarded, releaseDatabase)
-  assert.equal(hash(preserved(releaseDatabase)), hash(before), 'Guarded dashboard SQL preserves unaffected data')
-  assertClean(releaseDatabase)
-  assert.deepEqual(JSON.parse(sql(readFileSync('/tmp/pos-employee-unlink-verify.sql', 'utf8'), releaseDatabase)), verified, 'Dashboard and CLI schema/permissions/history must match exactly')
+  stage = 'exact history guards and both dashboard artifacts'
+  for (const route of [
+    { target: combinedDatabase, priorCount: 9, snapshot: combinedBefore, path: '/tmp/pos-employee-unlink-migration-with-history.sql' },
+    { target: releaseDatabase, priorCount: 10, snapshot: completeBefore, path: '/tmp/pos-employee-unlink-migration-after-products.sql' },
+  ]) {
+    sql("update supabase_migrations.schema_migrations set name=name||'_guard_probe' where version='20261002000900';", route.target)
+    const guarded = readFileSync(route.path, 'utf8')
+    let rejected = false
+    try { sql(guarded, route.target) } catch (error) { rejected = String(error.stderr).includes(`Expected exact first ${route.priorCount} canonical migrations; no changes applied.`) }
+    assert.equal(rejected, true, 'Ledger mismatch must reject the complete release transaction')
+    assert.equal(sql("select count(*) from pg_tables where schemaname='app_private' and tablename='employee_operation_tombstones';", route.target).trim(), '0')
+    assert.equal(hash(JSON.stringify(fullSnapshot(route.target))), hash(JSON.stringify(route.snapshot)), 'Rejected release must not change any private data')
+    sql("update supabase_migrations.schema_migrations set name='employee_reinvitation' where version='20261002000900';", route.target)
+    sql(guarded, route.target)
+    assert.equal(hash(preserved(route.target)), hash(before), 'Guarded dashboard SQL preserves unaffected data')
+    assertClean(route.target)
+    assert.deepEqual(JSON.parse(sql(readFileSync('/tmp/pos-employee-unlink-verify.sql', 'utf8'), route.target)), verified, 'Both dashboard routes and CLI schema/permissions/history must match exactly')
+    if (route.priorCount === 10) assert.equal(hash(financialSnapshot(route.target)), hash(financialBefore), 'Dashboard artifact preserves financial history')
+  }
 
   stage = 'fresh reinvite and stale authorization denial'
   sql(`create function public.compat_secure_denial(u uuid,s uuid,a text,p jsonb,k text default null) returns text language plpgsql as $$
@@ -204,6 +249,8 @@ try {
     if denial<>'PIN_INVALID' then raise exception 'Old PIN remains usable'; end if;
     r:=public.account_secure((f->>'employee')::uuid,(f->>'employeeSession')::uuid,'unlock',jsonb_build_object('businessId',f->>'business','pin','086420'),repeat('b',64),gen_random_uuid());
     if r->'error' is not null then raise exception 'New PIN could not unlock'; end if;
+    denial:=public.compat_secure_denial((f->>'employee')::uuid,(f->>'employeeSession')::uuid,'pos',f->'oldSaleRequest'||jsonb_build_object('businessId',f->>'business','operatorToken',r#>>'{data,operatorToken}'),repeat('b',64));
+    if denial<>'OPERATION_CONFLICT' then raise exception 'New employee can replay old POS operation'; end if;
     denial:=public.compat_secure_denial((f->>'employee')::uuid,(f->>'employeeSession')::uuid,'context',jsonb_build_object('businessId',f->>'business','operatorToken',f->>'oldOperator'),repeat('b',64));
     if denial<>'SESSION_INVALID' then raise exception 'Old session regained access after fresh membership'; end if;
     if public.compat_secure_denial((f->>'employee')::uuid,(f->>'employeeSession')::uuid,'accept_invitation',f->'rejoinRequest',repeat('b',64))<>'INVITATION_INVALID' then raise exception 'Old invitation regained access after fresh membership'; end if;
@@ -227,14 +274,15 @@ try {
     if exists(select 1 from app_private.employee_operation_tombstones) then raise exception 'Business cascade left operation tombstones'; end if;
   end $$;`)
   for (const source of sources) assert.equal(hash(readFileSync(source.path)), source.sha256, 'Source changed during final verification')
-  console.log(`PASS real 0009→0010 compatibility: three old employee rows purged with scoped PIN/session/device/invitation/recovery associations; global Auth, other-business access, active/disabled people and shared registers preserved; new invitation/PIN/device works; stale session/invitation/recovery/create/restore paths denied; Auth/business cascades safe; drift guard rejects without changes; dashboard SQL matches CLI; ${schema.functions.length} function bodies, ${schema.tables.length} private tables, all columns/constraints/triggers/permissions verified; canonical ledger ${ledger.map(entry => entry.statements.length).join('/')}.`)
+  console.log(`PASS real 0009/0010→0011 compatibility: three old employee rows purged with scoped PIN/session/device/invitation/recovery associations; global Auth, other-business access, active/disabled people and shared registers preserved; sale amounts/items/operator-name snapshots/POS results preserved with employee associations cleared; new invitation/PIN/device works; stale session/invitation/recovery/create/restore/POS replay denied; Auth/business cascades safe; both ledger guards reject drift without changes; combined9→11 and products10→11 dashboard SQL match CLI; ${schema.functions.length} function bodies, ${schema.tables.length} private tables, all columns/constraints/triggers/permissions verified; canonical ledger ${ledger.map(entry => entry.statements.length).join('/')}.`)
 } catch (error) {
-  const diagnostic = String(error.stderr ?? '').split('\n').find(line => /^ERROR:/.test(line))
+  const diagnostic = String(error.stderr ?? '').split('\n').find(line => line.startsWith('ERROR:'))
   const safeError = error.status !== undefined ? `Local command exited with status ${error.status}` : error.message
   console.error(`Unlink migration smoke failed at ${stage}: ${error instanceof assert.AssertionError ? error.message : diagnostic ?? safeError}`)
   process.exitCode = 1
 } finally {
   if (created) sql(`drop database ${database} with (force);`, 'postgres')
   if (releaseCreated) sql(`drop database ${releaseDatabase} with (force);`, 'postgres')
+  if (combinedCreated) sql(`drop database ${combinedDatabase} with (force);`, 'postgres')
   rmSync(workspace, { recursive: true, force: true })
 }

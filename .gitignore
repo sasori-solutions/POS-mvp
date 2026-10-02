@@ -14,5 +14,6 @@ playwright-report/
 test-results/
 coverage/
 artifacts/
+.local-reference/
 *.tsbuildinfo
 .DS_Store

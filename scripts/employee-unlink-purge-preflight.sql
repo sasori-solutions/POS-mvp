@@ -1,5 +1,5 @@
--- Agente de Larios. Read-only aggregate preview of 0010's legacy deletion purge.
--- Run on the exact 0001–0009 schema before approving the guarded migration.
+-- Agente de Larios. Read-only aggregate preview of 0011's legacy deletion purge.
+-- Supports either the 0001–0009 schema or 0001–0010 including products_sales.
 -- No names, IDs, emails, hashes, PINs, tokens or row-level records are returned.
 -- Counts are a snapshot; the migration transaction rechecks its exact ledger.
 begin read only;

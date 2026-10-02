@@ -1,0 +1,9 @@
+{
+  "rules": {
+    "no-control-regex": "off"
+  },
+  "ignorePatterns": [
+    "tests/integration/real-onboarding-smoke.mjs",
+    "tests/integration/production-google-guard.mjs"
+  ]
+}

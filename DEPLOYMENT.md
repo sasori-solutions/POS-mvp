@@ -1,6 +1,6 @@
 ## PIN email recovery — production deployment
 
-Current employee deletion behavior and the 0010 release procedure are documented in [permanent employee unlinking](docs/employee-permanent-unlink.md). The release notes below include historical behavior; restoration is superseded by permanent removal and a fresh PIN on reinvitation.
+Current employee deletion behavior and the 0011 release procedure are documented in [permanent employee unlinking](docs/employee-permanent-unlink.md). The release notes below include historical behavior; restoration is superseded by permanent removal and a fresh PIN on reinvitation.
 
 Agente de Larios, 1 October 2026. Resend verified larioscow.dev; the human saved RESEND_API_KEY, PIN_RECOVERY_FROM and APP_ORIGIN in Supabase. The existing key now has Sending access restricted to this domain. Migration 0007, the account function and frontend are deployed.
 

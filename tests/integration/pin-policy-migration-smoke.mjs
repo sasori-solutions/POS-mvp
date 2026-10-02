@@ -91,7 +91,7 @@ try {
   writeFileSync('/tmp/pos-mexico-pin-canonical-history.json', JSON.stringify(rows.map(row => ({ version: row.version, name: row.name, count: row.statements.length, hash: createHash('sha256').update(row.statements.join('\n')).digest('hex') })), null, 2))
   console.log(`PASS: real 0004→0005/0006 migration preserves people, hashes, counters and pending invitation; linking verifies existing PIN; legacy owners remain unenrolled; browser RPC denied; canonical ledger ${rows.map(row => row.statements.length).join('/')}.`)
 } catch (error) {
-  const diagnostic = String(error.stderr ?? '').split('\n').find(line => /^ERROR:/.test(line))?.replace(/DETAIL:.*/, '')
+  const diagnostic = String(error.stderr ?? '').split('\n').find(line => line.startsWith('ERROR:'))?.replace(/DETAIL:.*/, '')
   console.error(`PIN migration compatibility failed at ${stage}: ${error instanceof assert.AssertionError ? error.message : diagnostic ?? error.name ?? 'Error'}`)
   process.exitCode = 1
 } finally {

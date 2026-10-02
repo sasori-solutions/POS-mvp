@@ -19,7 +19,7 @@ const container = `supabase_db_${project}`
 const database = `pos_rejoin_compat_${randomUUID().replaceAll('-', '')}`
 const releaseDatabase = `pos_rejoin_release_${randomUUID().replaceAll('-', '')}`
 const workspace = mkdtempSync(`${tmpdir()}/pos-rejoin-compat-`)
-const migrations = readdirSync('supabase/migrations').filter(file => /^\d{14}_.+\.sql$/.test(file)).sort()
+const migrations = readdirSync('supabase/migrations').filter(file => /^\d{14}_.+\.sql$/.test(file) && file <= '20261002000900_employee_reinvitation.sql').sort()
 assert.equal(migrations.length, 9)
 assert.equal(migrations.at(-1), '20261002000900_employee_reinvitation.sql')
 const hash = value => createHash('sha256').update(value).digest('hex')
@@ -142,7 +142,7 @@ try {
   assert.deepEqual(deployed, verified, 'Guarded dashboard SQL and CLI migrations must produce identical verified schema/permissions/history')
   console.log(`PASS real 0008→0009 compatibility: exact existing data preserved; rejoin retains identity/PIN hash/device and owner assignment; correct PIN clears failure count; placeholder restore blocked; exact-history guard rejects drift; dashboard artifact matches CLI; ${schema.functions.length} function bodies and ${schema.tables.length} private tables/permissions verified; canonical ledger ${ledger.map(entry => entry.statements.length).join('/')}.`)
 } catch (error) {
-  const diagnostic = String(error.stderr ?? '').split('\n').find(line => /^ERROR:/.test(line))
+  const diagnostic = String(error.stderr ?? '').split('\n').find(line => line.startsWith('ERROR:'))
   const safeError = error.status !== undefined ? `Local command exited with status ${error.status}` : error.message
   console.error(`Rejoin migration smoke failed at ${stage}: ${error instanceof assert.AssertionError ? error.message : diagnostic ?? safeError}`)
   process.exitCode = 1

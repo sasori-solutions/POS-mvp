@@ -18,7 +18,10 @@ const admin = url ? createClient(url, service, { auth: { persistSession: false, 
 
 describe.skipIf(!url)('permanent employee unlink and fresh invitations', () => {
   beforeAll(async () => {
-    if (url !== 'http://127.0.0.1:55321' || container !== 'supabase_db_pos-employee-device-test') throw new Error('Requires the isolated local employee test stack')
+    const developerStack = url === 'http://127.0.0.1:55321' && container === 'supabase_db_pos-employee-device-test'
+    const disposableCI = process.env.CI === 'true' && process.env.TEST_DISPOSABLE_SUPABASE === 'true'
+      && url === 'http://127.0.0.1:54321' && container === 'supabase_db_pos-mexico-pwa'
+    if (!developerStack && !disposableCI) throw new Error('Requires an explicitly isolated local employee test stack')
     ;[owner, employee] = await Promise.all([identity(), identity()])
   })
   afterAll(async () => {
@@ -105,6 +108,47 @@ describe.skipIf(!url)('permanent employee unlink and fresh invitations', () => {
     expect((await deleting).status).toBe(200)
     expect((await retry!).body.error?.code).toBe('EMPLOYEE_INACTIVE')
     expect(sql(`select count(*) from app_private.employees where business_id=${uuid(session.business.id)} and role<>'owner';`)).toBe('0')
+  })
+
+  it('preserves recorded sales and reserved operation IDs while removing the employee actor link', async () => {
+    const session = await business()
+    const prior = await invitePerson(session)
+    const personal = data(await call(employee, accept(prior))) as Session
+    const product = data(await call(owner, { action: 'pos', ...ownerArgs(session), command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Café histórico', category: 'Bebidas', priceCents: 1250 }))
+    const command = { command: 'complete_sale', operationId: randomUUID(), items: [{ productId: product.id, quantity: 2, unitPriceCents: 1250, version: product.version }], totalCents: 2500, paymentMethod: 'cash' }
+    const receipt = data(await call(employee, { action: 'pos', ...ownerArgs(personal), ...command }))
+    const storedResult = sql(`select result::text from app_private.pos_operations where business_id=${uuid(session.business.id)} and operation_id=${uuid(command.operationId)};`)
+    await remove(session, prior.id)
+    expect(sql(`select employee_id is null and total_cents=2500 and item_count=2 from app_private.sales where id=${uuid(receipt.id)};`)).toBe('t')
+    expect(sql(`select actor_id is null from app_private.pos_operations where business_id=${uuid(session.business.id)} and operation_id=${uuid(command.operationId)};`)).toBe('t')
+    expect(sql(`select result::text from app_private.pos_operations where business_id=${uuid(session.business.id)} and operation_id=${uuid(command.operationId)};`)).toBe(storedResult)
+    expect(data(await call(owner, { action: 'pos', ...ownerArgs(session), command: 'sale', saleId: receipt.id }))).toEqual(receipt)
+    expect((await call(employee, { action: 'pos', ...ownerArgs(personal), ...command })).body.error?.code).toBe('BUSINESS_ACCESS_DENIED')
+    const fresh = await invitePerson(session)
+    const newPersonal = data(await call(employee, { ...accept(fresh), pin: '246802' })) as Session
+    expect(data(await call(employee, { action: 'pos', ...ownerArgs(newPersonal), command: 'sales', cursor: null })).sales).toEqual([])
+    expect((await call(employee, { action: 'pos', ...ownerArgs(newPersonal), command: 'sale', saleId: receipt.id })).body.error?.code).toBe('SALE_NOT_FOUND')
+    expect((await call(employee, { action: 'pos', ...ownerArgs(newPersonal), ...command })).body.error?.code).toBe('OPERATION_CONFLICT')
+    expect((await call(owner, { action: 'pos', ...ownerArgs(session), ...command })).body.error?.code).toBe('OPERATION_CONFLICT')
+    expect(sql(`select count(*) from app_private.sales where business_id=${uuid(session.business.id)};`)).toBe('1')
+    expect(sql(`select quantity=2 and unit_price_cents=1250 and total_cents=2500 from app_private.sale_items where sale_id=${uuid(receipt.id)};`)).toBe('t')
+  })
+
+  it('finishes a queued sale before deletion without deadlock or an accessible old actor', async () => {
+    const session = await business(), prior = await invitePerson(session)
+    const personal = data(await call(employee, accept(prior))) as Session
+    const product = data(await call(owner, { action: 'pos', ...ownerArgs(session), command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Venta concurrente', category: '', priceCents: 1500 }))
+    const command = { command: 'complete_sale', operationId: randomUUID(), items: [{ productId: product.id, quantity: 1, unitPriceCents: 1500, version: product.version }], totalCents: 1500, paymentMethod: 'cash' }
+    const lock = await lockEmployee(prior.id)
+    const sale = call(employee, { action: 'pos', ...ownerArgs(personal), ...command })
+    let removal: Promise<Reply> | undefined
+    try { await waitForBlocked(lock.name, 1); removal = call(owner, { action: 'delete_employee', ...ownerArgs(session), employeeId: prior.id, operationId: randomUUID() }); await waitForBlocked(lock.name, 2) }
+    finally { await lock.release() }
+    const receipt = data(await sale)
+    expect((await removal!).status).toBe(200)
+    expect(sql(`select employee_id is null and total_cents=1500 from app_private.sales where id=${uuid(receipt.id)};`)).toBe('t')
+    expect(sql(`select actor_id is null from app_private.pos_operations where business_id=${uuid(session.business.id)} and operation_id=${uuid(command.operationId)};`)).toBe('t')
+    expect((await call(employee, { action: 'pos', ...ownerArgs(personal), ...command })).body.error?.code).toBe('BUSINESS_ACCESS_DENIED')
   })
 })
 

@@ -7,6 +7,6 @@ export const workSections: readonly WorkSection[] = ['Venta', 'Comandas', 'Venta
 export const roleSections: Record<BusinessRole, readonly WorkSection[]> = {
   owner: workSections,
   manager: workSections,
-  cashier: ['Venta', 'Comandas', 'Productos'],
+  cashier: ['Venta', 'Comandas', 'Ventas', 'Productos'],
   kitchen: ['Comandas'],
 }

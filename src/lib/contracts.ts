@@ -1,3 +1,5 @@
+import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts.ts'
+
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
 export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
 export type EmployeeRole = Exclude<BusinessRole, 'owner'>
@@ -122,6 +124,8 @@ export interface OwnerNotification {
 
 type OwnerRequest = { businessId: string; operatorToken: string }
 type AccountRequestBody =
+  | ({ action: 'pos' } & OwnerRequest & PosCommand)
+  | ({ action: 'device_pos'; deviceToken: string; operatorToken: string } & PosCommand)
   | { action: 'status' }
   | { action: 'create_business'; name: string; businessType: BusinessType; timezone: string; operationId: string; pin: string; profile?: BusinessProfile }
   | ({ action: 'update_business'; name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile } & OwnerRequest)
@@ -162,6 +166,8 @@ type AccountRequestBody =
 export type AccountRequest = AccountRequestBody & { deviceProof?: DeviceProof }
 
 export interface AccountResponses {
+  pos: PosResponses[keyof PosResponses]
+  device_pos: PosResponses[keyof PosResponses]
   status: { businesses: BusinessSummary[] }
   create_business: OperatorSession
   update_business: BusinessContext
@@ -200,6 +206,7 @@ export interface AccountResponses {
   device_forget: { revoked: true }
 }
 export type AccountErrorCode =
+  | PosErrorCode
   | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
   | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
   | 'DEVICE_LINK_REQUIRED' | 'DEVICE_APPROVAL_REQUIRED' | 'DEVICE_PROOF_INVALID'
