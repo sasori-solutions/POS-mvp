@@ -50,6 +50,25 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect(data(await pos<Sale>(operator, { command: 'sale', saleId: history.sales[0].id })).items[0].unitPriceCents).toBe(1001)
   })
 
+  it('shows new owner products to an already signed-in employee with a separate owned business', async () => {
+    const own = data(await call<Operator>(employee, { action: 'create_business', name: 'Negocio del empleado',
+      businessType: 'cafe', timezone: 'America/Mexico_City', pin, operationId: randomUUID() }));
+    businesses.push(own.business.id);
+    const ownProduct = data(await pos<Product>(own, { command: 'save_product', operationId: randomUUID(),
+      productId: randomUUID(), expectedVersion: null, name: 'Producto del negocio propio', category: '', priceCents: 2000 }, employee));
+    const operator = await business(); const cashier = await cashierFor(operator);
+    expect(data(await pos<{ products: Product[] }>(cashier, { command: 'catalog' }, employee)).products).toEqual([]);
+    const product = await save(operator);
+    const staffCatalog = data(await pos<{ products: Product[] }>(cashier, { command: 'catalog' }, employee));
+    expect(staffCatalog.products).toEqual([product]);
+    expect(staffCatalog.products.some(item => item.id === ownProduct.id)).toBe(false);
+    const edited = data(await pos<Product>(operator, { command: 'save_product', operationId: randomUUID(),
+      productId: product.id, expectedVersion: product.version, name: 'Café actualizado', category: 'Café', priceCents: 1500 }));
+    expect(data(await pos<{ products: Product[] }>(cashier, { command: 'catalog' }, employee)).products).toEqual([edited]);
+    expect((await pos(cashier, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(),
+      expectedVersion: null, name: 'Sin permiso', category: '', priceCents: 100 }, employee)).body.error?.code).toBe('PERMISSION_DENIED');
+  });
+
   it('serializes simultaneous identical sale submissions into one accepted sale', async () => {
     const operator = await business(); const product = await save(operator); const command = sale(product)
     const replies = await Promise.all(Array.from({ length: 4 }, () => pos<Sale>(operator, command)))

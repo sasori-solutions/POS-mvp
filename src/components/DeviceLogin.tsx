@@ -547,19 +547,33 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000));
   if (operator)
     return (
-      <HomeScreen
-        key={operator.operatorToken}
-        business={operator.business}
-        operatorToken={operator.operatorToken}
-        deviceToken={deviceToken}
-        onSessionError={report}
-        onLock={() => void lock()}
-        onLogout={() => void lock()}
-        onSwitchEmployee={() => void lock()}
-        logoutLabel="Salir de mi turno"
-        busy={busy}
-        error={error}
-      />
+      <div className="app-shell pos-shell flex min-h-dvh flex-col">
+        <a
+          className="sr-only fixed top-3 left-3 z-50 rounded-lg bg-ink px-4 py-3 text-white focus:not-sr-only"
+          href="#main-content"
+        >
+          Ir al contenido
+        </a>
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="pos-home min-w-0 w-full flex-1"
+        >
+          <HomeScreen
+            key={operator.operatorToken}
+            business={operator.business}
+            operatorToken={operator.operatorToken}
+            deviceToken={deviceToken}
+            onSessionError={report}
+            onLock={() => void lock()}
+            onLogout={() => void lock()}
+            onSwitchEmployee={() => void lock()}
+            logoutLabel="Salir de mi turno"
+            busy={busy}
+            error={error}
+          />
+        </main>
+      </div>
     );
   if (recoveringPin && deviceToken && selected)
     return (
@@ -616,7 +630,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
           disabled={busy}
         >
           <ArrowLeft size={18} aria-hidden="true" />
-          Acceso del dueño
+          Cambiar acceso
         </button>
       )}
       {loading ? (

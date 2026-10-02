@@ -34,6 +34,49 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     if (syntheticBusinessIds.length) sql(`delete from app_private.businesses where id in (${syntheticBusinessIds.map(sqlUuid).join(',')});`);
   }, 30_000);
 
+  it('keeps owned and employee businesses across logout and a fresh identity session', async () => {
+    const own = await newBusiness(employee);
+    const team = await newBusiness(owner);
+    const args = { businessId: team.business.id, operatorToken: team.operatorToken };
+    const invitation = (await account<{ invitation: { invitationCode: string } }>(owner, {
+      action: 'create_employee', ...args, name: 'Persona con negocio', role: 'cashier', pin: null,
+      inviteWithGoogle: true, operationId: randomUUID(),
+    })).body.data!.invitation;
+    expect((await account(employee, { action: 'accept_invitation', invitationCode: invitation.invitationCode,
+      pin: '024680', operationId: randomUUID() })).status).toBe(200);
+    const assertMemberships = async () => {
+      const response = await account<{ businesses: { id: string; role: string }[] }>(employee, { action: 'status' });
+      expect(response.status).toBe(200);
+      expect(response.body.data!.businesses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: own.business.id, role: 'owner' }),
+        expect.objectContaining({ id: team.business.id, role: 'cashier' }),
+      ]));
+    };
+    await assertMemberships();
+    const old = { ...employee };
+    const password = `local-only-${randomUUID()}-Aa9!`;
+    const updated = await admin.auth.admin.updateUserById(employee.userId, { password });
+    if (updated.error) throw updated.error;
+    await employee.client.auth.signOut({ scope: 'local' });
+    const again = await employee.client.auth.signInWithPassword({ email: updated.data.user.email!, password });
+    if (again.error) throw again.error;
+    employee.token = again.data.session!.access_token;
+    employee.sessionId = JSON.parse(Buffer.from(employee.token.split('.')[1], 'base64url').toString()).session_id;
+    await assertMemberships();
+    expect((await account(old, { action: 'status' })).body.error?.code).toBe('AUTH_REQUIRED');
+    const unlocked = await account<BusinessSession>(employee, { action: 'unlock', businessId: team.business.id, pin: '024680' });
+    expect(unlocked.status).toBe(200);
+    expect(unlocked.body.data!.business.role).toBe('cashier');
+    expect((await account(employee, { action: 'team', businessId: team.business.id,
+      operatorToken: unlocked.body.data!.operatorToken })).body.error?.code).toBe('PERMISSION_DENIED');
+    const employees = (await account<{ employees: { id: string; role: string }[] }>(owner, { action: 'team', ...args })).body.data!.employees;
+    const staff = employees.find(person => person.role === 'cashier')!;
+    await account(owner, { action: 'update_employee', ...args, employeeId: staff.id,
+      name: 'Persona con negocio', role: 'cashier', active: false, pin: null });
+    expect((await account<{ businesses: { id: string }[] }>(employee, { action: 'status' })).body.data!.businesses.map(b => b.id)).not.toContain(team.business.id);
+    expect((await account(employee, { action: 'unlock', businessId: team.business.id, pin: '024680' })).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
+  }, 30_000);
+
   it('persists progressive configuration and accepts old creation payloads', async () => {
     const profile = { branchName: 'Principal', registerName: 'Caja 1', address: 'Calle sintética 123', city: 'Guadalajara', state: 'Jalisco', contactPhone: '', paymentMethods: ['cash', 'card_external'] };
     const request = createRequest({ profile });

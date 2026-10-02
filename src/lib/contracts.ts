@@ -21,6 +21,7 @@ export interface BusinessSummary {
   id: string
   name: string
   businessType: BusinessType
+  role?: BusinessRole
   canRecoverPin?: boolean
   recoveryReady?: boolean
 }
