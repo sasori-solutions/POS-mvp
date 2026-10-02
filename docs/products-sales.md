@@ -2,6 +2,12 @@
 
 Originally implemented on `feat/products-sales`, 1 October 2026, and now merged into `main` through PR #4. Frontend publication follows the automatic CI process in [DEPLOYMENT.md](../DEPLOYMENT.md). These implementation notes and local results do not establish that the corresponding Supabase migration/function is deployed; verify and record backend release state separately.
 
+## Alcance vigente del MVP — 2 de octubre de 2026
+
+La petición humana posterior acota el catálogo al dueño y operador desde su celular, sin hardware propio ni pantalla para el cliente. El editor conserva foto, nombre, descripción/categoría/alérgenos, precio fijo, tamaños, extras, favoritos y disponibilidad/unidades opcionales. Retira tipos digitales/eventos, nombres alternos, códigos de barras/SKU, costos, datos nutricionales, personalización de fichas y generación de combinaciones. Los datos anteriores se conservan. IVA se clasifica por separado (16 %, tasa 0, exento, estímulo fronterizo 8 %) dentro del precio final, con snapshots inmutables y compatibilidad de registros anteriores. Véase [catalogo-mvp-iva.md](catalogo-mvp-iva.md) para decisiones, fuentes fiscales, migración 0014 y límites.
+
+La expansión descrita a continuación conserva el antecedente técnico; no es la lista vigente de controles del editor.
+
 ## Current catalog and checkout — 2 October 2026
 
 The current human instruction expands product editing, selects Square POS as the visual reference, removes routine refresh controls and requests a local development delivery. Square's public [item editor](https://squareup.com/help/us/en/article/8335-create-and-edit-items), [checkout grid](https://squareup.com/help/us/en/article/8334-set-up-item-grid) and [POS](https://squareup.com/us/en/point-of-sale) informed the library, white/blue workspace, visual tiles and separated account. Drive 02/04, the latest 05 entries and recent employee deployment session were read; their historical feature deferrals do not override this instruction. Drive was not modified.

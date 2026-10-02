@@ -10,6 +10,8 @@ let db: PGlite
 type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string; keyHash: string }
 let legacyActor: Actor
 let legacyPinHash: string
+let legacyTaxSale: Sale
+let legacyTaxCommand: PosCommand
 
 describe('real PostgreSQL migrations and financial transactions (embedded, synthetic Auth rows)', () => {
   beforeAll(async () => {
@@ -24,7 +26,12 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     legacyActor = await newActor()
     const credential = await db.query<{ pin_hash: string }>(`insert into app_private.operator_credentials(business_id,user_id,pin_hash,failed_attempts) values($1,$2,extensions.crypt('024680',extensions.gen_salt('bf',4)),2) returning pin_hash`, [legacyActor.businessId, legacyActor.userId])
     legacyPinHash = credential.rows[0].pin_hash
-    for (const file of migrations.filter(name => name >= posMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    const vatMigration = '20261002001400_mvp_mexican_vat.sql'
+    for (const file of migrations.filter(name => name >= posMigration && name < vatMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    const legacyProduct = await execute<Product>(legacyActor,{...newProduct(),priceCents:11600,details:{...emptyDetails(),taxBps:1600,customerName:'Alias anterior'}})
+    legacyTaxCommand = saleCommand(legacyProduct,1)
+    legacyTaxSale = await execute<Sale>(legacyActor,legacyTaxCommand)
+    for (const file of migrations.filter(name => name >= vatMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
   }, 60_000)
   afterAll(async () => { await db?.close() })
 
@@ -34,6 +41,34 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     const context = await db.query<{ result: { data: { business: { id: string; role: string } } } }>("select public.account_secure($1,$2,'context',$3::jsonb) as result", [legacyActor.userId, legacyActor.sessionId, JSON.stringify({ businessId: legacyActor.businessId, operatorToken: legacyActor.token })])
     expect(context.rows[0].result.data.business).toMatchObject({ id: legacyActor.businessId, role: 'owner' })
     expect(await execute(legacyActor, { command: 'catalog' })).toHaveProperty('products')
+  })
+
+
+  it('upgrades recorded IVA without reconstructing rates from current products or changing accepted replay', async () => {
+    const sale = await execute<Sale>(legacyActor,{command:'sale',saleId:legacyTaxSale.id})
+    expect(sale.totalCents).toBe(11600)
+    expect(sale.items[0]).toMatchObject({name:'Alias anterior',taxCents:1600,taxTreatment:'legacy',taxBps:null})
+    expect(await execute(legacyActor,legacyTaxCommand)).toEqual(legacyTaxSale)
+    const rows=await db.query<{tax_treatment:null;tax_bps:null}>('select tax_treatment,tax_bps from app_private.sale_items where sale_id=$1',[legacyTaxSale.id])
+    expect(rows.rows[0]).toEqual({tax_treatment:null,tax_bps:null})
+  })
+  it('validates explicit Mexican IVA and stores mixed-rate snapshots atomically through later edits/retries', async () => {
+    const actor=await newActor()
+    const settings=[['vat_16',1600,11600,1600],['border_8',800,10800,800],['vat_0',0,2500,0],['exempt',0,3000,0]] as const
+    const products=[] as Product[]
+    for(const [taxTreatment,taxBps,priceCents] of settings) products.push(await execute<Product>(actor,{...newProduct(),priceCents,details:{...emptyDetails(),taxTreatment,taxBps,customerName:'Unused customer display'}}))
+    const command={command:'complete_sale' as const,operationId:randomUUID(),paymentMethod:'cash' as const,totalCents:27900,items:products.map(p=>({productId:p.id,quantity:1,unitPriceCents:p.priceCents,version:p.version}))}
+    const receipt=await execute<Sale>(actor,command)
+    for(const [i,p] of products.entries()) expect(receipt.items.find(item=>item.productId===p.id)).toMatchObject({name:p.name,taxTreatment:settings[i][0],taxBps:settings[i][1],taxCents:settings[i][3]})
+    expect(receipt.items.reduce((sum,item)=>sum+(item.taxCents??0),0)).toBe(2400)
+    const p=products[0]
+    await execute(actor,{...newProduct(),productId:p.id,expectedVersion:p.version,operationId:randomUUID(),details:{...emptyDetails(),taxTreatment:'exempt',taxBps:0}})
+    expect(await execute(actor,command)).toEqual(receipt)
+    expect(await execute(actor,{command:'sale',saleId:receipt.id})).toEqual(receipt)
+    for(const details of [{...emptyDetails(),taxTreatment:'vat_16' as const,taxBps:0},{...emptyDetails(),taxTreatment:'exempt' as const,taxBps:800}])
+      await expect(execute(actor,{...newProduct(),details})).rejects.toThrow('VALIDATION_ERROR')
+    for (const role of ['anon','authenticated']) for (const fn of ['app_private.product_tax_treatment(jsonb)','app_private.included_vat_cents(bigint,integer)'])
+      expect((await db.query<{allowed:boolean}>("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,fn])).rows[0].allowed).toBe(false)
   })
 
   it('applies migrations with RLS and grants only the service entry points', async () => {

@@ -1,4 +1,4 @@
-import type { ItemSelection, ProductDetails } from '../../../src/lib/pos-contracts.ts'
+import type { ItemSelection, ProductDetails, VatTreatment } from '../../../src/lib/pos-contracts.ts'
 import { isUuid, RequestValidationError } from './validation.ts'
 
 function fail(): never { throw new RequestValidationError() }
@@ -28,9 +28,14 @@ export function parseSelection(value: unknown): ItemSelection {
     variablePriceCents: s.variablePriceCents === null ? null : integer(s.variablePriceCents, 99_999_999) }
 }
 export function parseProductDetails(value: unknown): ProductDetails {
+  const explicitTax = Boolean(value && typeof value === 'object' && Object.hasOwn(value, 'taxTreatment'))
   const d = object(value, ['description', 'imageId', 'tileColor', 'tileLabel', 'itemType', 'customerName', 'kitchenName', 'sku', 'barcode',
-    'soldOut', 'favorite', 'variablePrice', 'trackStock', 'stock', 'lowStockAlert', 'costCents', 'taxBps', 'calories', 'dietary', 'allergens', 'variations', 'modifierSets'])
+    'soldOut', 'favorite', 'variablePrice', 'trackStock', 'stock', 'lowStockAlert', 'costCents', 'taxBps', 'calories', 'dietary', 'allergens', 'variations', 'modifierSets', ...(explicitTax ? ['taxTreatment'] : [])])
   if (!['prepared', 'physical', 'service', 'digital', 'event', 'other'].includes(d.itemType as string) || typeof d.tileColor !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(d.tileColor)) fail()
+  if (explicitTax) {
+    const rates: Record<string, number> = { vat_16: 1600, vat_0: 0, exempt: 0, border_8: 800, unconfigured: 0 }
+    if (typeof d.taxTreatment !== 'string' || !Object.hasOwn(rates, d.taxTreatment) || d.taxBps !== rates[d.taxTreatment]) fail()
+  }
   const variations = array(d.variations, 20).map(value => {
     const v = object(value, ['id', 'name', 'priceCents', 'sku', 'barcode', 'soldOut'])
     return { id: uuid(v.id), name: string(v.name, 60, 1), priceCents: integer(v.priceCents, 99_999_999), sku: string(v.sku, 60), barcode: string(v.barcode, 32), soldOut: bool(v.soldOut) }
@@ -51,5 +56,5 @@ export function parseProductDetails(value: unknown): ProductDetails {
     itemType: d.itemType as ProductDetails['itemType'], customerName: string(d.customerName, 100), kitchenName: string(d.kitchenName, 100), sku: string(d.sku, 60), barcode: string(d.barcode, 32),
     soldOut: bool(d.soldOut), favorite: bool(d.favorite), variablePrice: bool(d.variablePrice), trackStock: bool(d.trackStock), stock: integer(d.stock, 999999), lowStockAlert: integer(d.lowStockAlert, 999999),
     costCents: d.costCents === null ? null : integer(d.costCents, 99_999_999), taxBps: integer(d.taxBps, 10000), calories: d.calories === null ? null : integer(d.calories, 100000),
-    dietary: string(d.dietary, 200), allergens: string(d.allergens, 200), variations, modifierSets }
+    dietary: string(d.dietary, 200), allergens: string(d.allergens, 200), variations, modifierSets, ...(explicitTax ? {taxTreatment: d.taxTreatment as VatTreatment} : {}) }
 }

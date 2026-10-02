@@ -6,15 +6,16 @@ import { emptyDetails, productDetails } from "../lib/product-details";
 import { parsePrice, posRequest, priceInput, type PosAccess } from "../lib/pos";
 import { PosDialog } from "./PosShared";
 import MoneyInput from "./MoneyInput";
+import ProductVatFields from "./ProductVatFields";
+import { productVat, vatRates } from "../lib/vat";
 import { accessErrorCodes } from "./useCatalog";
 
 const sections = [
   ["identity", "Información"],
-  ["pricing", "Precio e impuestos"],
-  ["variations", "Opciones y variantes"],
-  ["modifiers", "Modificadores"],
+  ["pricing", "Precio e IVA"],
+  ["variations", "Tamaños"],
+  ["modifiers", "Extras"],
   ["inventory", "Disponibilidad"],
-  ["additional", "Más detalles"],
 ] as const;
 
 export default function ProductEditor({
@@ -37,17 +38,21 @@ export default function ProductEditor({
   const [name, setName] = useState(product?.name ?? "");
   const [category, setCategory] = useState(product?.category ?? "");
   const [price, setPrice] = useState(
-    product ? priceInput(product.priceCents) : "",
+    product && !productDetails(product).variablePrice
+      ? priceInput(product.priceCents)
+      : "",
   );
   const [details, setDetails] = useState<ProductDetails>(
-    product ? productDetails(product) : emptyDetails(),
+    product
+      ? {
+          ...productDetails(product),
+          variablePrice: false,
+          taxTreatment: productVat(productDetails(product)),
+        }
+      : { ...emptyDetails(), taxBps: 1600, taxTreatment: "vat_16" },
   );
   const [image, setImage] = useState(product?.image ?? "");
-  const [options, setOptions] = useState("");
-  const [optionName, setOptionName] = useState("Tamaño");
-  const [additionalOptions, setAdditionalOptions] = useState<
-    { name: string; values: string }[]
-  >([]);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [uncertain, setUncertain] = useState(false);
@@ -130,7 +135,11 @@ export default function ProductEditor({
     event.preventDefault();
     if (submitting.current || conflict) return;
     if (!request.current) {
-      const priceCents = details.variablePrice ? 0 : parsePrice(price);
+      const priceCents = parsePrice(price);
+      if (productVat(details) === "unconfigured") {
+        setError("Selecciona el IVA del producto.");
+        return;
+      }
       if (!name.trim() || priceCents === null) {
         setError("Escribe el nombre y un precio válido.");
         return;
@@ -208,60 +217,6 @@ export default function ProductEditor({
       submitting.current = false;
       if (mounted.current) setBusy(false);
     }
-  }
-  function generateVariants() {
-    const groups = [
-      { name: optionName, values: options },
-      ...additionalOptions,
-    ].map((group) => ({
-      name: group.name.trim(),
-      values: group.values
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    }));
-    if (
-      groups.some(
-        (group) =>
-          !group.name ||
-          !group.values.length ||
-          new Set(group.values).size !== group.values.length,
-      ) ||
-      groups.reduce((count, group) => count * group.values.length, 1) > 20
-    ) {
-      setError(
-        "Escribe opciones distintas separadas por comas. Puedes crear hasta 20 combinaciones.",
-      );
-      return;
-    }
-    const names = groups.reduce<string[]>(
-      (combinations, group) =>
-        combinations.flatMap((prefix) =>
-          group.values.map(
-            (value) => `${prefix}${prefix ? " / " : ""}${group.name}: ${value}`,
-          ),
-        ),
-      [""],
-    );
-    if (names.some((value) => Array.from(value).length > 60)) {
-      setError(
-        "Abrevia los nombres de las opciones: cada variante admite 60 caracteres.",
-      );
-      return;
-    }
-    change(
-      "variations",
-      names.map((value) => ({
-        id: crypto.randomUUID(),
-        name: value,
-        priceCents: parsePrice(price) ?? 0,
-        sku: "",
-        barcode: "",
-        soldOut: false,
-      })),
-    );
-    setOptions("");
-    setError("");
   }
 
   return (
@@ -347,28 +302,7 @@ export default function ProductEditor({
                     placeholder="Ej. Latte"
                   />
                 </div>
-                <div className="field">
-                  <label htmlFor="product-type">Tipo de producto</label>
-                  <select
-                    id="product-type"
-                    value={details.itemType}
-                    onChange={(e) =>
-                      change(
-                        "itemType",
-                        e.target.value as ProductDetails["itemType"],
-                      )
-                    }
-                  >
-                    <option value="prepared">
-                      Alimentos y bebidas preparados
-                    </option>
-                    <option value="physical">Producto físico</option>
-                    <option value="service">Servicio</option>
-                    <option value="digital">Digital (entrega manual)</option>
-                    <option value="event">Evento (entrega manual)</option>
-                    <option value="other">Otro</option>
-                  </select>
-                </div>
+
                 <div className="field">
                   <label htmlFor="product-category">Categoría (opcional)</label>
                   <input
@@ -402,222 +336,71 @@ export default function ProductEditor({
                 placeholder="Ingredientes, preparación y lo que hace especial a este producto"
               />
             </div>
-            <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-              <div className="field">
-                <label htmlFor="product-tile-label">
-                  Etiqueta de la cuadrícula
-                </label>
-                <input
-                  id="product-tile-label"
-                  value={details.tileLabel}
-                  onChange={(e) => change("tileLabel", e.target.value)}
-                  maxLength={8}
-                  placeholder="Ej. LAT"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="product-color">Color de la ficha</label>
-                <div
-                  className="tile-colors flex flex-wrap gap-1 [&_button]:size-12 [&_button]:rounded-lg [&_button]:border-3 [&_button]:border-white [&_button[aria-pressed=true]]:outline-2 [&_button[aria-pressed=true]]:outline-offset-[-2px] [&_button[aria-pressed=true]]:outline-brand"
-                  role="group"
-                  aria-label="Color de la ficha"
-                >
-                  {[
-                    "#E8EEF8",
-                    "#F4E6DC",
-                    "#E4EDE4",
-                    "#EDE5F3",
-                    "#F4EED7",
-                    "#E4E4E4",
-                  ].map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      style={{ backgroundColor: c }}
-                      aria-label={`Color ${c}`}
-                      aria-pressed={details.tileColor === c}
-                      onClick={() => change("tileColor", c)}
-                    />
-                  ))}
-                </div>
-              </div>
+            <div className="field">
+              <label htmlFor="product-allergens">Alérgenos (opcional)</label>
+              <input
+                id="product-allergens"
+                value={details.allergens}
+                maxLength={200}
+                onChange={(e) => change("allergens", e.target.value)}
+                placeholder="Ej. Leche, nueces"
+              />
+              <p className="text-sm text-muted">
+                Se muestran al tomar el pedido.
+              </p>
             </div>
           </section>
           <section
             id="product-pricing"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
-            <h3>Precio e impuestos</h3>
+            <h3>Precio e IVA</h3>
+            {product?.details?.variablePrice && (
+              <p className="text-sm text-muted">
+                Este producto tenía precio abierto. Define un precio final para
+                guardar.
+              </p>
+            )}
             <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
               <div className="field">
-                <label htmlFor="product-price">Precio MXN</label>
+                <label htmlFor="product-price">Precio final MXN</label>
                 <MoneyInput
                   id="product-price"
                   value={price}
                   onValueChange={setPrice}
-                  required={!details.variablePrice}
-                  disabled={details.variablePrice}
+                  required
                   placeholder="$0.00"
                 />
                 <p className="product-help text-sm">
-                  Precio final, con impuestos incluidos.
+                  Es el precio que cobras. El IVA está incluido y no se suma al
+                  pagar.
                 </p>
               </div>
-              <div className="field">
-                <label htmlFor="product-cost">
-                  Costo por unidad (opcional)
-                </label>
-                <MoneyInput
-                  id="product-cost"
-                  value={
-                    details.costCents === null
-                      ? ""
-                      : priceInput(details.costCents)
-                  }
-                  onValueChange={(v) =>
-                    change("costCents", v === "" ? null : parsePrice(v))
-                  }
-                  placeholder="$0.00"
-                />
-              </div>
             </div>
-            <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
-              <input
-                type="checkbox"
-                checked={details.variablePrice}
-                disabled={details.variations.length > 0}
-                onChange={(e) => change("variablePrice", e.target.checked)}
-              />
-              <span>
-                Introducir precio al vender
-                <small>Para productos cuyo precio cambia en cada venta.</small>
-              </span>
-            </label>
-            <div className="field">
-              <label htmlFor="product-tax">Impuesto incluido</label>
-              <select
-                id="product-tax"
-                value={details.taxBps}
-                onChange={(e) => change("taxBps", Number(e.target.value))}
-              >
-                <option value={0}>Sin desglose de impuesto</option>
-                <option value={800}>8 % incluido</option>
-                <option value={1600}>16 % incluido</option>
-                {![0, 800, 1600].includes(details.taxBps) && (
-                  <option value={details.taxBps}>
-                    {details.taxBps / 100} % incluido
-                  </option>
-                )}
-              </select>
-              <p className="product-help text-sm">
-                Se desglosa en la venta y no se suma al precio.
-              </p>
-            </div>
+
+            <ProductVatFields
+              treatment={productVat(details)}
+              priceCents={parsePrice(price)}
+              confirmedBorder={product?.details?.taxTreatment === "border_8"}
+              onChange={(value) =>
+                setDetails((d) => ({
+                  ...d,
+                  taxTreatment: value,
+                  taxBps: vatRates[value],
+                }))
+              }
+            />
           </section>
           <section
             id="product-variations"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
-            <h3>Opciones y variantes</h3>
+            <h3>Tamaños y presentaciones</h3>
             <p className="product-help text-sm">
-              Tamaños, sabores o presentaciones con precio y código propios.
+              Chico, grande o la presentación que vendes, cada una con su precio
+              final.
             </p>
-            {!details.variablePrice && details.variations.length === 0 && (
-              <div className="variant-generator flex flex-col gap-2">
-                <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-                  <div className="field">
-                    <label htmlFor="product-option-name">
-                      Nombre de la opción
-                    </label>
-                    <input
-                      id="product-option-name"
-                      value={optionName}
-                      maxLength={30}
-                      onChange={(e) => setOptionName(e.target.value)}
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="product-option-values">
-                      Valores separados por comas
-                    </label>
-                    <input
-                      id="product-option-values"
-                      value={options}
-                      onChange={(e) => setOptions(e.target.value)}
-                      placeholder="Chico, Mediano, Grande"
-                    />
-                  </div>
-                </div>
-                {additionalOptions.map((group, index) => (
-                  <div
-                    className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1"
-                    key={index}
-                  >
-                    <div className="field">
-                      <label htmlFor={`additional-option-name-${index}`}>
-                        Nombre de la opción {index + 2}
-                      </label>
-                      <input
-                        id={`additional-option-name-${index}`}
-                        value={group.name}
-                        maxLength={30}
-                        onChange={(e) =>
-                          setAdditionalOptions((previous) =>
-                            previous.map((item, i) =>
-                              i === index
-                                ? { ...item, name: e.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="field">
-                      <label htmlFor={`additional-option-values-${index}`}>
-                        Valores de la opción {index + 2}
-                      </label>
-                      <input
-                        id={`additional-option-values-${index}`}
-                        value={group.values}
-                        onChange={(e) =>
-                          setAdditionalOptions((previous) =>
-                            previous.map((item, i) =>
-                              i === index
-                                ? { ...item, values: e.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                        placeholder="Ej. Vainilla, Chocolate"
-                      />
-                    </div>
-                  </div>
-                ))}
-                <div className="editor-row-actions flex items-center justify-between gap-4">
-                  <button
-                    type="button"
-                    className="editor-text-button inline-flex min-h-12 items-center gap-2 border-0 bg-transparent py-2 text-left text-sm font-medium text-brand-hover hover:text-brand"
-                    onClick={() =>
-                      setAdditionalOptions((previous) => [
-                        ...previous,
-                        { name: "", values: "" },
-                      ])
-                    }
-                    disabled={additionalOptions.length >= 2}
-                  >
-                    Añadir otra opción
-                  </button>
-                  <button
-                    type="button"
-                    className="editor-text-button inline-flex min-h-12 items-center gap-2 border-0 bg-transparent py-2 text-left text-sm font-medium text-brand-hover hover:text-brand"
-                    onClick={generateVariants}
-                    disabled={!options.trim()}
-                  >
-                    Crear variantes
-                  </button>
-                </div>
-              </div>
-            )}
+
             {details.variations.map((v, index) => (
               <div
                 className="editor-option-row flex flex-col gap-4 rounded-lg border border-line p-5 max-tablet:p-4"
@@ -666,31 +449,7 @@ export default function ProductEditor({
                     />
                   </div>
                 </div>
-                <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-                  {(["sku", "barcode"] as const).map((k) => (
-                    <div className="field" key={k}>
-                      <label htmlFor={`variant-${k}-${v.id}`}>
-                        {k === "sku" ? "SKU" : "Código de barras"} de variante{" "}
-                        {index + 1}
-                      </label>
-                      <input
-                        id={`variant-${k}-${v.id}`}
-                        value={v[k]}
-                        maxLength={k === "sku" ? 60 : 32}
-                        onChange={(e) =>
-                          change(
-                            "variations",
-                            details.variations.map((item) =>
-                              item.id === v.id
-                                ? { ...item, [k]: e.target.value }
-                                : item,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
+
                 <div className="editor-row-actions flex items-center justify-between gap-4">
                   <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
                     <input
@@ -728,9 +487,7 @@ export default function ProductEditor({
             <button
               type="button"
               className="editor-add inline-flex min-h-12 w-full items-center gap-2 rounded-lg border border-dashed border-brand/40 bg-transparent px-4 py-3 text-left text-sm font-medium text-brand-hover hover:bg-brand-soft"
-              disabled={
-                details.variablePrice || details.variations.length >= 20
-              }
+              disabled={details.variations.length >= 20}
               onClick={() =>
                 change("variations", [
                   ...details.variations,
@@ -755,7 +512,7 @@ export default function ProductEditor({
           >
             <h3>Modificadores</h3>
             <p className="product-help text-sm">
-              Personaliza el pedido con leche, extras o acompañamientos.
+              Leche, acompañamientos o extras que la persona elige al pedir.
             </p>
             {details.modifierSets.map((set, index) => (
               <div
@@ -969,7 +726,7 @@ export default function ProductEditor({
             id="product-inventory"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
-            <h3>Disponibilidad e inventario</h3>
+            <h3>Disponibilidad</h3>
             <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
               <input
                 type="checkbox"
@@ -1034,94 +791,6 @@ export default function ProductEditor({
                   />
                 </div>
               </div>
-            )}
-            <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-              {(["sku", "barcode"] as const).map((k) => (
-                <div className="field" key={k}>
-                  <label htmlFor={`product-${k}`}>
-                    {k === "sku" ? "SKU" : "Código de barras / GTIN"}
-                  </label>
-                  <input
-                    id={`product-${k}`}
-                    value={details[k]}
-                    maxLength={k === "sku" ? 60 : 32}
-                    onChange={(e) => change(k, e.target.value)}
-                  />
-                </div>
-              ))}
-            </div>
-          </section>
-          <section
-            id="product-additional"
-            className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
-          >
-            <h3>Más detalles</h3>
-            <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-              <div className="field">
-                <label htmlFor="product-customer-name">
-                  Nombre para el cliente
-                </label>
-                <input
-                  id="product-customer-name"
-                  value={details.customerName}
-                  maxLength={100}
-                  placeholder="Usar nombre del producto"
-                  onChange={(e) => change("customerName", e.target.value)}
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="product-kitchen-name">Nombre para cocina</label>
-                <input
-                  id="product-kitchen-name"
-                  value={details.kitchenName}
-                  maxLength={100}
-                  onChange={(e) => change("kitchenName", e.target.value)}
-                />
-              </div>
-            </div>
-            {details.itemType === "prepared" && (
-              <>
-                <div className="field">
-                  <label htmlFor="product-calories">Calorías (opcional)</label>
-                  <input
-                    id="product-calories"
-                    type="number"
-                    min={0}
-                    max={100000}
-                    value={details.calories ?? ""}
-                    onChange={(e) =>
-                      change(
-                        "calories",
-                        e.target.value === "" ? null : Number(e.target.value),
-                      )
-                    }
-                  />
-                </div>
-                <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-                  <div className="field">
-                    <label htmlFor="product-dietary">
-                      Preferencias alimentarias
-                    </label>
-                    <input
-                      id="product-dietary"
-                      value={details.dietary}
-                      maxLength={200}
-                      onChange={(e) => change("dietary", e.target.value)}
-                      placeholder="Ej. Vegano, sin gluten"
-                    />
-                  </div>
-                  <div className="field">
-                    <label htmlFor="product-allergens">Alérgenos</label>
-                    <input
-                      id="product-allergens"
-                      value={details.allergens}
-                      maxLength={200}
-                      onChange={(e) => change("allergens", e.target.value)}
-                      placeholder="Ej. Leche, nueces"
-                    />
-                  </div>
-                </div>
-              </>
             )}
           </section>
         </fieldset>

@@ -1,3 +1,5 @@
+import VatSummary from "./VatSummary";
+import { productVat } from "../lib/vat";
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -38,7 +40,6 @@ import {
   lineKey,
   selectedPrice,
   selectionLabel,
-  includedTax,
 } from "../lib/product-details";
 import { number } from "../lib/format";
 import ProductSelection from "./ProductSelection";
@@ -704,6 +705,7 @@ export default function SaleScreen({
                     onClick={() =>
                       d.variations.length ||
                       d.modifierSets.length ||
+                      d.allergens ||
                       d.variablePrice
                         ? setChoosing(product)
                         : add(product)
@@ -924,23 +926,19 @@ export default function SaleScreen({
         </div>
         <div className="cart-checkout mt-4 flex shrink-0 flex-col gap-3 border-t border-line bg-white pt-5 [&_.pos-primary]:min-h-15 [&_.pos-primary]:text-lg max-tablet:mt-6">
           <dl className="sale-totals mb-3 flex flex-col gap-4">
-            {!pending && cart.some((l) => l.product.details?.taxBps) && (
-              <div>
-                <dt>Impuestos incluidos</dt>
-                <dd>
-                  {money(
-                    cart.reduce(
-                      (sum, l) =>
-                        sum +
-                        includedTax(
-                          selectedPrice(l.product, l.selection) * l.quantity,
-                          l.product.details?.taxBps ?? 0,
-                        ),
-                      0,
-                    ),
-                  )}
-                </dd>
-              </div>
+            {!pending && displayCart.length > 0 && (
+              <VatSummary
+                lines={cart.map((line) => {
+                  const d = productDetails(line.product);
+                  return {
+                    totalCents:
+                      selectedPrice(line.product, line.selection) *
+                      line.quantity,
+                    taxBps: d.taxBps,
+                    taxTreatment: productVat(d),
+                  };
+                })}
+              />
             )}
             <div className="sale-total">
               <dt>Total MXN</dt>

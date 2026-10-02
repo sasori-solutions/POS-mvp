@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { productVat, vatSummary } from '../../src/lib/vat'
 import { emptyDetails, includedTax, lineKey, selectedPrice, selectionLabel } from '../../src/lib/product-details'
 import { parseAccountRequest } from '../../supabase/functions/account/validation'
 import { readPendingSale } from '../../src/lib/pending-sale'
@@ -31,5 +32,37 @@ describe('catalog selections and durable recovery', () => {
     const command = { action:'pos',businessId:id,operatorToken:'ab'.repeat(32),command:'upload_product_image',operationId:id,imageId:id,part:0,parts:1,data:'A'.repeat(4096) }
     expect(parseAccountRequest(command)).toHaveProperty('parts',1)
     for (const patch of [{parts:0},{parts:61},{part:1},{part:-1},{data:''},{data:'A'.repeat(4097)},{data:'<svg>'}]) expect(() => parseAccountRequest({...command,...patch})).toThrow()
+  })
+})
+
+
+describe('Mexican IVA in final prices', () => {
+  it('separates 16 percent, zero rate, exempt and border IVA without increasing the announced total', () => {
+    const summary = vatSummary([
+      {totalCents:11600,taxBps:1600,taxTreatment:'vat_16'},
+      {totalCents:10800,taxBps:800,taxTreatment:'border_8'},
+      {totalCents:2500,taxBps:0,taxTreatment:'vat_0'},
+      {totalCents:3000,taxBps:0,taxTreatment:'exempt'},
+    ])
+    expect(summary).toMatchObject({totalCents:27900,baseCents:25500,taxCents:2400,unknown:false})
+    expect(summary.groups.map(g=>[g.treatment,g.cents])).toEqual([['vat_16',1600],['border_8',800],['vat_0',0],['exempt',0]])
+    expect(includedTax(3,1600)).toBe(0)
+    expect(includedTax(6,1600)).toBe(1)
+    expect(includedTax(99_999_999*999,1600)).toBe(13_779_310_207)
+  })
+  it('keeps old unclassified products distinct from zero-rate/exempt and uses saved tax amounts', () => {
+    expect(productVat(emptyDetails())).toBe('unconfigured')
+    expect(productVat({...emptyDetails(),taxBps:1600})).toBe('vat_16')
+    const summary=vatSummary([{totalCents:11600,taxCents:1599,taxBps:null,taxTreatment:'legacy'},{totalCents:1000,taxBps:0,taxTreatment:'unconfigured'}])
+    expect(summary).toMatchObject({totalCents:12600,taxCents:1599,baseCents:11001,unknown:true})
+    expect(summary.groups[0].treatment).toBe('legacy')
+  })
+  it('checks exact optional tax metadata, preserves legacy commands and rejects inconsistent rates', () => {
+    const command={action:'pos',businessId:id,operatorToken:'ab'.repeat(32),command:'save_product',operationId:id,productId:id,expectedVersion:null,name:'Café',category:'',priceCents:11600,details:emptyDetails()}
+    expect(parseAccountRequest(command)).toHaveProperty('details.taxBps',0)
+    for(const [taxTreatment,taxBps] of [['vat_16',1600],['vat_0',0],['exempt',0],['border_8',800],['unconfigured',0]])
+      expect(parseAccountRequest({...command,details:{...emptyDetails(),taxTreatment,taxBps}})).toHaveProperty('details.taxTreatment',taxTreatment)
+    for(const patch of [{taxTreatment:'vat_16',taxBps:0},{taxTreatment:'exempt',taxBps:1600},{taxTreatment:'border_8',taxBps:1600},{taxTreatment:'vat_0',taxBps:100},{taxTreatment:'bogus',taxBps:0},{taxTreatment:null,taxBps:0},{taxTreatment:'vat_16',taxBps:1600,extra:true}])
+      expect(()=>parseAccountRequest({...command,details:{...emptyDetails(),...patch}})).toThrow()
   })
 })

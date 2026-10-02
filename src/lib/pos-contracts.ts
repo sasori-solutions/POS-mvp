@@ -1,3 +1,5 @@
+export type VatTreatment = 'vat_16' | 'vat_0' | 'exempt' | 'border_8' | 'unconfigured'
+
 import type { PaymentMethod } from './contracts.ts'
 
 export interface Variation {
@@ -11,7 +13,7 @@ export interface ProductDetails {
   customerName: string; kitchenName: string; sku: string; barcode: string
   soldOut: boolean; favorite: boolean; variablePrice: boolean
   trackStock: boolean; stock: number; lowStockAlert: number
-  costCents: number | null; taxBps: number
+  costCents: number | null; taxBps: number; taxTreatment?: VatTreatment
   calories: number | null; dietary: string; allergens: string
   variations: Variation[]; modifierSets: ModifierSet[]
 }
@@ -60,6 +62,8 @@ export interface SaleItem {
   totalCents: number
   selectionLabel?: string
   taxCents?: number
+  taxBps?: number | null
+  taxTreatment?: VatTreatment | 'legacy'
 }
 
 export interface SaleSummary {

@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture'
 import { pendingSaleKey } from '../../src/lib/pending-sale'
 import { mockPos } from './pos-fixture'
+import type { Product, Sale } from '../../src/lib/pos-contracts'
 
 async function unlock(page: Page) {
   await page.goto('/')
@@ -94,9 +95,9 @@ test('catalog creates/edits/searches/filters/deactivates and restores a product'
     await page.getByRole('button', { name: 'Ver productos', exact: true }).click()
     await page.getByRole('button', { name: 'Agregar producto' }).click()
     await page.getByLabel('Nombre', { exact: true }).fill('Café frío')
-    await page.getByLabel('Precio MXN', { exact: true }).fill('1234.56')
-    await expect(page.getByLabel('Precio MXN', { exact: true })).toHaveValue('$1,234.56')
-    await page.getByLabel('Precio MXN', { exact: true }).fill('10.01')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('1234.56')
+    await expect(page.getByLabel('Precio final MXN', { exact: true })).toHaveValue('$1,234.56')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('10.01')
     await page.getByLabel('Categoría (opcional)').fill('Fríos')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
@@ -105,7 +106,7 @@ test('catalog creates/edits/searches/filters/deactivates and restores a product'
     await expect(page.getByRole('button', { name: 'Editar Café frío' })).toBeVisible()
     await page.getByRole('button', { name: 'Fríos', exact: true }).click()
     await page.getByRole('button', { name: 'Editar Café frío' }).click()
-    await page.getByLabel('Precio MXN', { exact: true }).fill('12.34')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('12.34')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await expect(page.locator('.product-list')).toContainText('$12.34')
     await page.getByRole('button', { name: 'Desactivar Café frío' }).click()
@@ -287,7 +288,7 @@ test('catalog and product persistence failures show retries without fake empty s
     await page.getByRole('button', { name: 'Ver productos' }).click()
     await page.getByRole('button', { name: 'Agregar producto' }).click()
     await page.getByLabel('Nombre', { exact: true }).fill('Producto sintético')
-    await page.getByLabel('Precio MXN', { exact: true }).fill('0.10')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('0.10')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await page.getByRole('button', { name: 'Reintentar guardado' }).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
@@ -333,12 +334,14 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     await unlock(page); await navigate(page,'Productos')
     await page.getByRole('button',{name:'Agregar producto',exact:true}).click()
     await page.getByLabel('Nombre',{exact:true}).fill('Latte sintético')
-    await page.getByLabel('Precio MXN',{exact:true}).fill('58.01')
+    await page.getByLabel('Precio final MXN',{exact:true}).fill('58.01')
     await page.getByLabel('Descripción',{exact:true}).fill('Café de prueba con leche')
     await page.getByLabel('Imagen del producto',{exact:true}).setInputFiles('public/icons/icon-192.png')
     await expect(page.getByRole('img',{name:'Imagen del producto',exact:true})).toBeVisible()
-    await page.getByLabel('Valores separados por comas').fill('Chico, Grande')
-    await page.getByRole('button',{name:'Crear variantes',exact:true}).click()
+    await page.getByRole('button',{name:'Añadir variante',exact:true}).click()
+    await page.getByLabel('Variante 1',{exact:true}).fill('Chico')
+    await page.getByRole('button',{name:'Añadir variante',exact:true}).click()
+    await page.getByLabel('Variante 2',{exact:true}).fill('Grande')
     await page.getByLabel('Precio de variante 2',{exact:true}).fill('62.02')
     await page.getByRole('button',{name:'Añadir grupo de modificadores',exact:true}).click()
     await page.getByLabel('Grupo 1',{exact:true}).fill('Leche')
@@ -348,7 +351,7 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     await page.getByLabel('Controlar existencias',{exact:false}).check()
     await page.getByLabel('Existencias actuales',{exact:true}).fill('4')
     await page.getByLabel('Mostrar en favoritos',{exact:true}).check()
-    await page.getByLabel('Impuesto incluido',{exact:true}).selectOption('1600')
+    await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
     await page.screenshot({path:`artifacts/qa/${info.project.name}-expanded-editor.png`,fullPage:true})
     await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
@@ -360,7 +363,7 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     await expect(page.getByRole('button',{name:'Actualizar catálogo',exact:true})).toHaveCount(0)
     await page.getByRole('button',{name:'Favoritos',exact:true}).click()
     await add(page,'Latte sintético')
-    await page.getByRole('radio',{name:/Tamaño: Grande/}).check()
+    await page.getByRole('radio',{name:/Grande/}).check()
     await page.getByRole('radio',{name:/Avena/}).check()
     await page.getByRole('button',{name:'Agregar · $62.13',exact:true}).click()
     await openCart(page)
@@ -370,7 +373,7 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button',{name:'Entrar',exact:true}).click()
     await page.getByRole('button',{name:'Reintentar registro',exact:true}).click()
     await expect(page.getByRole('heading',{name:'Venta registrada',exact:true})).toBeVisible()
-    await expect(page.locator('.sale-detail')).toContainText('Tamaño: Grande, Avena')
+    await expect(page.locator('.sale-detail')).toContainText('Grande, Avena')
     expect((await backend.catalog()).products[0].details?.stock).toBe(3)
     expect((await backend.sales()).sales).toHaveLength(1)
     const attempts=backend.calls.filter(c=>c.command==='complete_sale')
@@ -394,26 +397,80 @@ test('sold out is a direct checkout action and persists after catalog reload', a
   } finally {await backend.db.close()}
 })
 
-test('multiple option groups generate combinations that persist as purchasable variants', async ({page}) => {
+test('MVP mobile product fields persist distinct Mexican IVA treatments and keep the advertised total', async ({page},info) => {
   const backend=await mockPos(page,{empty:true})
   try {
     await unlock(page); await navigate(page,'Productos')
-    await page.getByRole('button',{name:'Agregar producto',exact:true}).click()
-    await page.getByLabel('Nombre',{exact:true}).fill('Bebida de prueba')
-    await page.getByLabel('Precio MXN',{exact:true}).fill('40')
-    await page.getByLabel('Valores separados por comas',{exact:true}).fill('Chico, Grande')
-    await page.getByRole('button',{name:'Añadir otra opción',exact:true}).click()
-    await page.getByLabel('Nombre de la opción 2',{exact:true}).fill('Sabor')
-    await page.getByLabel('Valores de la opción 2',{exact:true}).fill('Vainilla, Chocolate')
-    await page.getByRole('button',{name:'Crear variantes',exact:true}).click()
+    const cases=[['Café preparado','vat_16','116',1600],['Producto tasa cero','vat_0','25',0],['Producto exento','exempt','30',0],['Café frontera','border_8','108',800]] as const
+    for(const [name,treatment,price,taxBps] of cases){
+      await page.getByRole('button',{name:'Agregar producto',exact:true}).click()
+      await page.getByLabel('Nombre',{exact:true}).fill(name)
+      await page.getByLabel('Precio final MXN',{exact:true}).fill(price)
+      await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('vat_16')
+      for(const label of ['Tipo de producto','Costo por unidad (opcional)','Nombre para el cliente','Nombre para cocina','Calorías (opcional)','Preferencias alimentarias','SKU','Código de barras / GTIN','Etiqueta de la cuadrícula'])
+        await expect(page.getByLabel(label,{exact:true})).toHaveCount(0)
+      await expect(page.getByRole('button',{name:'Crear variantes',exact:true})).toHaveCount(0)
+      await page.getByLabel('IVA del producto',{exact:true}).selectOption(treatment)
+      if(treatment==='vat_16') await expect(page.getByRole('definition')).toHaveText(['$100.00','$16.00','$116.00'])
+      if(treatment==='border_8'){
+        await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+        await expect(page.getByRole('dialog')).toBeVisible()
+        await page.getByLabel('El negocio aplica el estímulo fronterizo del IVA para esta operación.',{exact:true}).check()
+        await expect(page.getByRole('definition')).toHaveText(['$100.00','$8.00','$108.00'])
+      }
+      if(treatment==='vat_16') {
+        await page.locator('#product-pricing').scrollIntoViewIfNeeded()
+        await page.screenshot({path:`artifacts/qa/${info.project.name}-mvp-iva-editor.png`})
+      }
+      await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+      await expect(page.getByRole('dialog')).not.toBeVisible()
+      const saved=(await backend.catalog()).products.find(product=>product.name===name)!
+      expect(saved.details).toMatchObject({taxTreatment:treatment,taxBps})
+    }
+    await navigate(page,'Venta')
+    for(const [name] of cases) await add(page,name)
+    await openCart(page)
+    const totals=page.locator('.current-sale .sale-totals')
+    await expect(totals).toContainText('Subtotal sin IVA')
+    await expect(totals).toContainText('$255.00')
+    await expect(totals).toContainText('IVA tasa 0 %')
+    await expect(totals).toContainText('Exento de IVA')
+    await expect(totals).toContainText('$279.00')
+    await page.getByRole('button',{name:'Cobrar $279.00',exact:true}).click()
+    await page.getByRole('button',{name:'Confirmar venta',exact:true}).click()
+    await expect(page.getByRole('heading',{name:'Venta registrada',exact:true})).toBeVisible()
+    await expect(page.locator('.sale-detail')).toContainText('Subtotal sin IVA')
+    await page.screenshot({path:`artifacts/qa/${info.project.name}-mvp-iva-sale.png`})
+    const records=(await backend.sales()).sales
+    expect(records).toHaveLength(1)
+    const receipt=await backend.execute<Sale>({command:'sale',saleId:records[0].id})
+    expect(receipt.items.reduce((sum,item)=>sum+(item.taxCents??0),0)).toBe(2400)
+    expect(receipt.totalCents).toBe(27900)
+  } finally {await backend.db.close()}
+})
+
+test('old unclassified IVA and variable-price products need an explicit choice before editing', async ({page}) => {
+  const backend=await mockPos(page,{empty:true})
+  try {
+    const {emptyDetails}=await import('../../src/lib/product-details')
+    const old=await backend.execute<Product>({command:'save_product',operationId:crypto.randomUUID(),productId:crypto.randomUUID(),expectedVersion:null,name:'Anterior',category:'',priceCents:0,details:{...emptyDetails(),variablePrice:true,sku:'KEEP',kitchenName:'Etiqueta anterior'}})
+    await unlock(page); await navigate(page,'Productos')
+    await page.getByRole('button',{name:'Editar Anterior',exact:true}).click()
+    await expect(page.getByLabel('Precio final MXN',{exact:true})).toHaveValue('')
+    await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('')
+    await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByLabel('Precio final MXN',{exact:true}).fill('58')
+    await page.getByLabel('Alérgenos (opcional)',{exact:true}).fill('Leche')
+    await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
     await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
-    expect((await backend.catalog()).products[0].details?.variations.map(v=>v.name)).toEqual(['Tamaño: Chico / Sabor: Vainilla','Tamaño: Chico / Sabor: Chocolate','Tamaño: Grande / Sabor: Vainilla','Tamaño: Grande / Sabor: Chocolate'])
-    await navigate(page,'Venta'); await add(page,'Bebida de prueba')
-    await page.getByRole('radio',{name:/Tamaño: Grande \/ Sabor: Chocolate/}).check()
-    await page.getByRole('button',{name:'Agregar · $40.00',exact:true}).click()
-    await openCart(page)
-    await expect(page.locator('.current-sale')).toContainText('Tamaño: Grande / Sabor: Chocolate')
+    const saved=(await backend.catalog()).products.find(product=>product.id===old.id)!
+    expect(saved.priceCents).toBe(5800)
+    expect(saved.details).toMatchObject({variablePrice:false,taxTreatment:'vat_16',taxBps:1600,sku:'KEEP',kitchenName:'Etiqueta anterior'})
+    await navigate(page,'Venta'); await add(page,'Anterior')
+    await expect(page.getByRole('dialog')).toContainText('Alérgenos: Leche')
+    await page.getByRole('button',{name:'Agregar · $58.00',exact:true}).click()
   } finally {await backend.db.close()}
 })
 

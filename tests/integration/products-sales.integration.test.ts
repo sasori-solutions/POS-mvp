@@ -123,7 +123,7 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
   })
   it('persists expanded details and exact selections through Edge and serializes limited inventory', async () => {
     const operator = await business(), variationId = randomUUID(), modifierId = randomUUID()
-    const details = { ...emptyDetails(), trackStock:true,stock:2,taxBps:1600,description:'Producto sintético',variations:[{id:variationId,name:'Grande',priceCents:5801,sku:'TEST-G',barcode:'',soldOut:false}],modifierSets:[{id:randomUUID(),name:'Leche',min:1,max:1,options:[{id:modifierId,name:'Avena',priceCents:101}]}] }
+    const details = { ...emptyDetails(), trackStock:true,stock:2,taxBps:1600,taxTreatment:'vat_16' as const,description:'Producto sintético',variations:[{id:variationId,name:'Grande',priceCents:5801,sku:'TEST-G',barcode:'',soldOut:false}],modifierSets:[{id:randomUUID(),name:'Leche',min:1,max:1,options:[{id:modifierId,name:'Avena',priceCents:101}]}] }
     const imageId = randomUUID()
     const upload = { command:'upload_product_image' as const, operationId:randomUUID(),imageId,part:0,parts:1,data:'/9j/2f/Z' }
     expect(data(await pos(operator,upload))).toMatchObject({imageId,complete:true})
@@ -136,7 +136,7 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     const replies = await Promise.all([pos<Sale>(operator,command),pos<Sale>(operator,competing)])
     expect(replies.map(r=>r.status).sort()).toEqual([200,409])
     const accepted = replies.find(r=>r.status===200)!
-    expect(accepted.body.data?.items[0]).toMatchObject({selectionLabel:'Grande, Avena',unitPriceCents:5902,taxCents:1628})
+    expect(accepted.body.data?.items[0]).toMatchObject({selectionLabel:'Grande, Avena',unitPriceCents:5902,taxCents:1628,taxTreatment:'vat_16',taxBps:1600})
     expect(count('sales',operator)).toBe(1)
     const stock = data(await pos<{products:Product[]}>(operator,{command:'catalog'})).products.find(p=>p.id===product.id)!
     expect(stock.details?.stock).toBe(0)
@@ -148,6 +148,23 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect(unavailable.details?.soldOut).toBe(true)
     expect(data(await pos(operator,availability))).toEqual(unavailable)
   },30000)
+
+
+  it('validates and retains mixed IVA classifications through real Edge and immutable history', async () => {
+    const operator=await business()
+    const products:Product[]=[]
+    const rates=[['vat_16',1600,11600],['vat_0',0,2500],['exempt',0,3000],['border_8',800,10800]] as const
+    for(const [taxTreatment,taxBps,priceCents] of rates) products.push(data(await pos<Product>(operator,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'IVA sintético',category:'',priceCents,details:{...emptyDetails(),taxTreatment,taxBps}})))
+    const command={command:'complete_sale' as const,operationId:randomUUID(),paymentMethod:'cash' as const,totalCents:27900,items:products.map(p=>({productId:p.id,quantity:1,unitPriceCents:p.priceCents,version:p.version}))}
+    const receipt=data(await pos<Sale>(operator,command))
+    expect(receipt.items.reduce((sum,item)=>sum+(item.taxCents??0),0)).toBe(2400)
+    expect(new Set(receipt.items.map(item=>item.taxTreatment))).toEqual(new Set(rates.map(row=>row[0])))
+    expect((await pos(operator,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Invalid tax',category:'',priceCents:11600,details:{...emptyDetails(),taxTreatment:'exempt',taxBps:1600}})).body.error?.code).toBe('VALIDATION_ERROR')
+    const p=products[0]
+    data(await pos(operator,{command:'save_product',operationId:randomUUID(),productId:p.id,expectedVersion:p.version,name:p.name,category:'',priceCents:p.priceCents,details:{...emptyDetails(),taxTreatment:'exempt',taxBps:0}}))
+    expect(data(await pos<Sale>(operator,command))).toEqual(receipt)
+    expect(data(await pos<Sale>(operator,{command:'sale',saleId:receipt.id}))).toEqual(receipt)
+  })
 
 })
 

@@ -1,3 +1,4 @@
+import VatSummary from "./VatSummary";
 import { useEffect, useRef } from "react";
 import { ArrowLeft, Package, Search, X } from "lucide-react";
 import type { Product, Sale } from "../lib/pos-contracts";
@@ -164,18 +165,7 @@ export function SaleDetail({ sale }: { sale: Sale }) {
         ))}
       </ul>
       <dl className="sale-totals mb-3 flex flex-col gap-4">
-        <div>
-          <dt>Subtotal</dt>
-          <dd>{money(sale.totalCents)}</dd>
-        </div>
-        {sale.items.some((i) => i.taxCents) && (
-          <div>
-            <dt>Impuestos incluidos</dt>
-            <dd>
-              {money(sale.items.reduce((sum, i) => sum + (i.taxCents ?? 0), 0))}
-            </dd>
-          </div>
-        )}
+        <VatSummary lines={sale.items} />
         <div className="sale-total">
           <dt>Total MXN</dt>
           <dd>{money(sale.totalCents)}</dd>
