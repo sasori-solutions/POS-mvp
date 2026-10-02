@@ -19,6 +19,13 @@ test('login offers Google OAuth and starts the Google authorization flow', async
   expect(new URL(request.url()).searchParams.get('redirect_to')).toContain('http://127.0.0.1:5174');
 });
 
+test('development login route stays disabled without the local authentication flag', async ({ page }) => {
+  await page.goto('/dev-login');
+  await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Acceso de desarrollo' })).not.toBeVisible();
+  await expect(page.getByRole('link', { name: 'Entrar en desarrollo' })).not.toBeVisible();
+});
+
 test('business creation, PIN confirmation, lock, unlock and logout', async ({ page }, testInfo) => {
   const { calls } = await mockAccount(page);
   await page.goto('/business/new');
