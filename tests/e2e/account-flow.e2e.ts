@@ -187,6 +187,10 @@ test('private entry URLs keep signed-out users on the keyboard-accessible login 
     await expect(page.getByRole('navigation', { name: 'Navegación principal' })).not.toBeVisible();
   }
   await page.keyboard.press('Tab');
+  await expect(page.getByRole('link', { name: 'Ir al contenido' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('main')).toBeFocused();
+  await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

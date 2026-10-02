@@ -416,3 +416,48 @@ test('multiple option groups generate combinations that persist as purchasable v
     await expect(page.locator('.current-sale')).toContainText('Tamaño: Grande / Sabor: Chocolate')
   } finally {await backend.db.close()}
 })
+
+test('catalog keeps two phone columns, readable selections and touch targets across breakpoints', async ({ page }, info) => {
+  const backend = await mockPos(page)
+  try {
+    await unlock(page)
+    await add(page, 'Latte')
+    for (const width of [320, 390, 600, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 940 })
+      const columns = await page.locator('.touch-catalog').evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)
+      expect(columns).toBe(width < 960 ? 2 : width < 1200 ? 3 : 4)
+      for (const button of await page.locator('.tile-menu, .catalog-category, .pos-nav-item').all()) {
+        const box = await button.boundingBox()
+        expect(box?.height).toBeGreaterThanOrEqual(48)
+        expect(box?.width).toBeGreaterThanOrEqual(48)
+      }
+      const notifications = await page.getByRole('button', { name: /^Notificaciones/ }).boundingBox()
+      const lock = await page.getByRole('button', { name: 'Bloquear', exact: true }).boundingBox()
+      expect(notifications).not.toBeNull()
+      expect(lock).not.toBeNull()
+      expect(lock!.x - (notifications!.x + notifications!.width)).toBeGreaterThanOrEqual(0)
+      expect(lock!.x - (notifications!.x + notifications!.width)).toBeLessThanOrEqual(20)
+      const selected = page.getByRole('navigation').getByRole('button', { name: 'Venta', exact: true })
+      const contrast = await selected.evaluate(element => {
+        const style = getComputedStyle(element)
+        const luminance = (value: string) => {
+          const [r, g, b] = value.match(/\d+/g)!.slice(0, 3).map(v => { const n = Number(v) / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4 })
+          return .2126 * r + .7152 * g + .0722 * b
+        }
+        let surface: Element | null = element
+        let background = 'rgb(255, 255, 255)'
+        while (surface) {
+          const color = getComputedStyle(surface).backgroundColor
+          if (color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') { background = color; break }
+          surface = surface.parentElement
+        }
+        const a = luminance(style.color), b = luminance(background)
+        return (Math.max(a, b) + .05) / (Math.min(a, b) + .05)
+      })
+      expect(contrast).toBeGreaterThanOrEqual(4.5)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.screenshot({ path: `artifacts/qa/${info.project.name}-tailwind-venta-${width}.png` })
+    }
+  } finally { await backend.db.close() }
+})

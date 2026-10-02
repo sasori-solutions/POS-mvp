@@ -1,3 +1,13 @@
+## Interfaz vigente — 2 de octubre de 2026
+
+La corrección humana de esta sesión fija el diseño original como referencia: mantener Tailwind y los iconos originales, recuperar la interfaz blanca y sobria, y mejorar la alineación y el espaciado. Se retiraron la marca nueva, las superficies azuladas, los paneles añadidos y la navegación flotante. IBM Plex Sans local, texto negro, gris secundario y separadores discretos; el azul de Square se reserva para acciones de catálogo y venta. Los iconos Lucide, el favicon y los iconos de instalación conservan sus recursos originales.
+
+Tailwind CSS 4 organiza tokens, estilos base y patrones compartidos en `src/styles.css`; los componentes declaran utilidades estáticas para composición y estados. El catálogo conserva dos columnas en teléfono y la cuenta lateral en escritorio. Los controles mantienen objetivos táctiles de 48 px, foco visible, reduced motion y estados reales de carga/error.
+
+Las notas que siguen conservan el contexto de las fases anteriores; esta corrección humana gobierna la presentación vigente.
+
+---
+
 # Alpha account and home implementation
 
 Products and checkout, 2 October 2026: Square reference selected by the human. White workspace, #F6F6F6 tile/section surfaces, #111111 text, #626262 supporting text, #E4E4E4 dividers, #006AFF operational CTA/selected state. IBM Plex Sans 14/16/20/26px, 8px spacing rhythm, 48px minimum controls. Checkout uses visual square tiles and a 360px account column; phones use two columns and the existing account step. Product editing uses a wide sheet with section navigation, identity/photo, pricing, variations, modifiers, inventory and additional details. No continuous animation; honor reduced motion.
