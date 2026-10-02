@@ -4,6 +4,12 @@ Qué cambia y por qué.
 
 ## Verificación
 
-Resultado de **Basic checks** (pruebas rápidas y build), y cualquier prueba específica necesaria.
+Resultado de `npm run test:smoke`, `npm run build` y las pruebas específicas del cambio. Indicar omisiones; no contar pruebas omitidas como aprobadas.
 
-Si cambia el backend: indicar migración/función y confirmar que está compatible antes de fusionar. Pages se publica automáticamente desde `main`. No incluir secretos, datos personales ni `dist/`.
+## Backend y publicación
+
+Migraciones/funciones necesarias: **ninguna** o lista exacta con evidencia de publicación y compatibilidad con el frontend actual. Deben estar listas **antes de fusionar** este PR.
+
+Revisión: solicitar al otro desarrollador. Un PR abierto no publica. Al fusionar a `main`, CI ejecuta **Basic checks**, publica el mismo build en Cloudflare y verifica sus assets. Confirmar ese resultado antes de anunciar que está en producción. Ver [CONTRIBUTING.md](https://github.com/sasori-solutions/POS-mvp/blob/main/CONTRIBUTING.md) y [DEPLOYMENT.md](https://github.com/sasori-solutions/POS-mvp/blob/main/DEPLOYMENT.md).
+
+No incluir secretos, datos personales ni `dist/`.

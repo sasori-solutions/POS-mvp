@@ -22,9 +22,9 @@ Owner approval and PIN recovery are independent. Recovering a PIN does not autho
 
 ## Release order
 
-1. Review and merge the feature PR. Apply additive migration `20261001000800_employee_device_notifications.sql` after exact migrations 0001–0007, then deploy the updated `account` Edge function (including `device-proof.ts`).
-2. Deploy the frontend from `main` using the serialized **Deploy Cloudflare Pages** workflow. Run the public route/asset checks, now including `/register`.
-3. Verify real Google access and physical camera scanning on an authorized pilot device. An already-open old frontend must reload before employees can sign in, because old clients do not send device proofs.
+1. Inspect the linked migration history; do not reapply 0008 if it is already present. For its authorized rollout, apply `20261001000800_employee_device_notifications.sql` after exact migrations 0001–0007, then deploy and verify the updated `account` Edge function (including `device-proof.ts`) **before merging the dependent frontend PR**. Coordinate the cutover: old clients without device proofs fail closed and must reload.
+2. After review and passing checks, merge to `main`. CI automatically publishes the checked frontend build and verifies public route/assets, including `/register`. **Deploy Cloudflare Pages** is the manual recovery path; do not upload in parallel. Follow [DEPLOYMENT.md](../DEPLOYMENT.md) for the canonical process.
+3. Verify real Google access and physical camera scanning on an authorized pilot device. Record backend and frontend evidence separately; frontend deployment does not apply Supabase changes.
 
 Do not roll back to an old Edge/frontend pair while presenting device enforcement as active. The additive database schema preserves existing employees, memberships, invitation history, PIN hashes and business data. A rollback needs a reviewed compatibility plan; old Google-linked clients fail closed after the security migration.
 

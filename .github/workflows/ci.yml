@@ -36,6 +36,19 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 1
+      - name: Explain PR release status
+        if: always() && github.event_name == 'pull_request'
+        env:
+          CHECK_STATUS: ${{ job.status }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo '## PR checks — not deployed'
+            printf 'PR commit: `%s`\n\n' "$PR_HEAD"
+            printf 'Basic checks: **%s**.\n\n' "$CHECK_STATUS"
+            echo 'This PR does not publish to production. After checks and review by the other developer, merge it into main. CI then publishes the checked build to Cloudflare automatically.'
+            echo 'Required Supabase migrations/functions must be compatible and verified before merging. See CONTRIBUTING.md and DEPLOYMENT.md.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   deploy:
     name: Cloudflare
