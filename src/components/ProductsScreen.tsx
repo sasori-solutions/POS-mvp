@@ -42,13 +42,8 @@ export default function ProductsScreen({
   }
   return (
     <div className="products-screen">
-      <div className="catalog-toolbar my-6 flex items-center justify-between gap-4 [&_p]:text-[15px] max-tablet:flex-wrap">
-        <p>
-          {canManage
-            ? "Tu biblioteca de productos."
-            : "Consulta los productos disponibles."}
-        </p>
-        {canManage && (
+      {canManage && (
+        <div className="catalog-toolbar my-6 flex items-center justify-end gap-4 max-tablet:flex-wrap">
           <button
             className="pos-button pos-primary compact"
             onClick={() => {
@@ -59,8 +54,8 @@ export default function ProductsScreen({
             <Plus size={20} aria-hidden="true" />
             Agregar producto
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {message && (
         <p className="pos-status my-4 text-sm text-muted" role="status">
           {message}

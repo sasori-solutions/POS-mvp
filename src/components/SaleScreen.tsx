@@ -835,10 +835,9 @@ export default function SaleScreen({
             </button>
           )}
           {!displayCart.length && !storageError && (
-            <div className="empty-cart flex min-h-65 flex-col items-center justify-center gap-3 px-4 py-10 text-center [&>svg]:text-muted [&_h3]:mt-2 [&_h3]:text-lg [&_h3]:font-medium [&_p]:text-sm">
+            <div className="empty-cart flex min-h-65 flex-col items-center justify-center gap-3 px-4 py-10 text-center [&>svg]:text-muted [&_h3]:mt-2 [&_h3]:text-lg [&_h3]:font-medium">
               <ShoppingBag size={40} strokeWidth={1.2} aria-hidden="true" />
               <h3>Tu cuenta está vacía</h3>
-              <p>Toca un producto para comenzar.</p>
             </div>
           )}
           <ul className="cart-lines m-0 list-none p-0 [&_li]:border-b [&_li]:border-line [&_li]:py-4 [&_li>p]:mt-2 [&_li>p]:text-sm">
