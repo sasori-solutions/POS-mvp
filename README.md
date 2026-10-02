@@ -1,6 +1,6 @@
 # POS México PWA
 
-Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN and an independent recovery code. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Catalog, orders and sales still show availability messages until those modules are implemented.
+Account and online POS MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN and an independent recovery code. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Products and online sales are implemented on the feature branch; orders remain a subsequent module.
 
 Shared registers use `/employee`: a one-use pairing code connects a restricted device, then each active employee selects their name and enters their PIN. The device never needs to retain the owner's Google session. Invited employees may also join with their own Google account. Roles come from the owner's assignment; the employee cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. Only the device credential is persisted; PINs and operator tokens stay in memory.
 
@@ -13,6 +13,8 @@ Employee management uses one list, one Administrar action per employee and a foc
 The PIN policy/recovery changes were published on 1 October 2026 by Agente de Larios with new migrations `20261001000500_employee_pin_policy.sql` and `20261001000600_owner_pin_recovery.sql`; previously applied migrations remain unchanged. Final validation passed **57/57 real local integration**, **16/16 Deno** and **160/160 desktop/phone-width browser cases**, build/typechecks and the real local browser, compatibility and production-authentication smokes. Compatibility preserved existing people, PIN hashes, lockout counters and invitation codes, with canonical statement history **44/48/27/23/29/21**. Public route/asset checks passed **27/27** and anonymous API probes **20/20**. See [DEPLOYMENT.md](DEPLOYMENT.md) for release artifacts and limits.
 
 The preceding employee lifecycle correction was published on 1 October 2026 by Agente de Larios, including migration `20261001000400_employee_lifecycle.sql`. Its validation passed 126/126 browser cases, 36/36 real integration tests and 13/13 Deno tests; public routes/assets passed 27/27. Successful cloud employee mutations, fresh business creation and physical-phone installation remain manual checks.
+
+The products/sales extension adds searchable categorized products, editing and reversible deactivation, a touch cart, integer MXN totals, cash/external-card/transfer registration and immutable sale history. It extends the existing account API for personal and paired-register operators. Accepted commands replay the original result; uncertain sale registration survives reload/PIN without storing credentials. See [docs/products-sales.md](docs/products-sales.md) for permissions, schema, validation and rollout. This extension has not been deployed to cloud.
 
 ## Cloud app
 
@@ -34,11 +36,13 @@ Set `.env.local` to the intended development backend's public Supabase URL and p
 
 ```sh
 npm run test
+npm run lint
+npm run typecheck
 npm run build
 npm run test:e2e
 ```
 
-Browser tests mock Google/Supabase network responses and test app behavior. They do not prove a real Google authorization or cloud deployment.
+Browser tests mock Google/Supabase network responses and test app behavior. Products/sales fixtures execute the actual migrations and financial RPCs in embedded PostgreSQL (PGlite). They do not prove a real Google authorization, Edge gateway, multi-connection database concurrency or cloud deployment. The separate local Supabase integration suite still needs Docker and skips when its stack is unavailable.
 
 ## Supabase and Google OAuth
 
@@ -67,7 +71,7 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 ## Design source
 
-Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Catalog, sales, payments, inventory and invoicing operations are still pending.
+Alpha v3 supplies the shared phone/tablet structure, local IBM Plex Sans, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. The products/sales request explicitly uses ivory and evergreen in the operational shell, with muted orange warnings and 14px corners. Authentication retains its existing design. Phone separates catalog and account; tablet/desktop show them side by side. Orders, inventory, tax calculation, invoicing and automatic payment processing remain pending.
 
 ## Current hosted release: access UI correction
 
