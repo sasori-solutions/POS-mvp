@@ -1,8 +1,12 @@
 ## Routine CI — small automatic gate
 
-Larios requested fewer simple tests and automatic Cloudflare deployment in session `20261002-larios-ci-simple-auto-deploy`. PRs and `main` run `npm run test:smoke` (the nine existing unit tests in `tests/unit`) and `npm run build` (including TypeScript). These checks cover money/cart invariants, request payload validation and pending-sale retry storage; they require no browser download, Docker or Supabase service. A successful `main` run deploys its own build without repeating these checks.
+Larios requested fewer simple tests and automatic Cloudflare deployment in session `20261002-larios-ci-simple-auto-deploy`. PRs and `main` run `npm run test:smoke` (unit tests in `tests/unit`) and `npm run build` (including TypeScript and the emitted-production-artifact guard). These checks cover money/cart invariants, request payload validation, pending-sale retry storage and isolation of development authentication; they require no browser download, Docker or Supabase service. A successful `main` run deploys its own build without repeating these checks.
 
 Use focused tests for the behavior being changed. `npm run test:e2e`, SQL, Deno and real local Supabase integration remain available; the old full CI is preserved as **Full checks (manual)**. The small default gate does not establish real OAuth, database authorization or complete UI coverage.
+
+## Interactive development without Google
+
+Start `npm run dev` in an isolated checkout, then run `npm run test:dev` in another terminal. This uses real browser/Auth/Edge/Postgres requests, permits only loopback network traffic, and checks local login, business/PIN setup, persisted catalog/sales, logout/relogin, employee invitations/device binding, role restrictions, separate hosted identity storage and non-destructive reseeding. It requires the `new` and `employee` fixture accounts to have no existing memberships. The smoke removes only the business it created, leaving the seeded café intact. See [local development](../docs/local-development.md). Existing mocked browser suites use `dev:frontend` with local-password access explicitly disabled.
 
 ## Permanent employee removal — current source, 2 October 2026
 

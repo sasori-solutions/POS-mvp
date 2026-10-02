@@ -17,6 +17,8 @@ npm ci
 
 Choose a distinct path and branch for your task. Keep each agent in its assigned checkout. Never stage, discard or commit another person's changes. Agree on the scope in the task/PR; if work overlaps, coordinate the shared files and migration order before integrating it.
 
+For daily development, start Docker Desktop and run `npm run dev`. This prepares a persistent local backend and synthetic password accounts without Google or cloud data. Use [the local development guide](docs/local-development.md); `dev:frontend` is reserved for tests or an explicitly selected backend. Keep development access out of production artifacts.
+
 ## Make the change and open a PR
 
 Keep the PR focused and review the diff before committing. Use Node 24 and the checked-in lockfile. Run:

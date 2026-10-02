@@ -81,6 +81,8 @@ The HTTP validator and public SQL dispatcher reject the retired `create_recovery
 
 ## Local development and deployment
 
+For normal interactive development, use `npm run dev` and [the local development guide](../docs/local-development.md). It creates a separate stack per checkout in ignored `.local-dev`, uses the unchanged real account backend with the local-only password flag, applies only pending migrations and preserves data. No hosted configuration or Google credentials are needed. The following lower-level commands remain available for integration tests and explicit backend work.
+
 The repository root contains the CLI configuration. Start the local stack with `npm run db:start`, apply pending migrations after checking its history, then run `npm run api:serve`. Use `npm run db:reset` only for an explicitly disposable local database. Create a private, ignored `.env.functions` in the repository root containing:
 
 ```dotenv

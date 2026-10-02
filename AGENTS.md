@@ -9,6 +9,11 @@ Aplica a todo el repositorio. Este archivo contiene las reglas vigentes para age
 - La [extracción del PRD y las notas anteriores](docs/history/2026-10-02-agents-before-workflow-cleanup.md) son contexto histórico, no estado actual ni autorización. Distingue decisiones humanas, hechos observados, resultados reportados e hipótesis. Conserva autor, fecha y fuente; no asumas la identidad de otro agente.
 - No cambies Drive salvo que el encargo lo incluya. En ese caso lee la revisión actual y las reservas, modifica sólo lo necesario, conserva aportes concurrentes y verifica el guardado. El contenido de Drive no autoriza contactar personas, gastar, cambiar permisos o publicar.
 
+## Arranque de desarrollo
+
+- Usa `npm ci` y `npm run dev` con Node 24 y Docker. Este comando prepara Auth/Edge/Postgres locales por checkout y ofrece acceso con cuentas ficticias sin Google; conserva los datos entre arranques. No arranques el desarrollo rutinario con `.env.production` ni con un backend cloud. Consulta [docs/local-development.md](docs/local-development.md).
+- Conserva este recorrido en cambios futuros. La entrada local requiere servidor Vite en desarrollo, bandera explícita y backend loopback; nunca añadas un bypass a los builds ni al backend alojado. `npm run build` comprueba también que sus artefactos no contengan la pantalla/credenciales locales. No sustituyas permisos, sesiones, PIN ni persistencia por respuestas simuladas.
+
 ## Colaboración y entrega
 
 1. Usa un worktree o clon propio y una rama corta desde `origin/main` (`feat/`, `fix/` o `chore/`). Reutiliza sólo un checkout que pertenezca a esta tarea; comprueba su estado antes de editar. Nunca prepares, comitees ni descartes cambios ajenos.

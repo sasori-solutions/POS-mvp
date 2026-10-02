@@ -18,12 +18,13 @@ export default defineConfig({
     { name: 'mobile', use: { ...devices['Pixel 7'] } },
   ],
   webServer: {
-    command: 'npm run dev -- --port 5174 --strictPort',
+    command: 'npm run dev:frontend -- --port 5174 --strictPort',
     url: 'http://127.0.0.1:5174',
     reuseExistingServer: false,
     env: {
       VITE_SUPABASE_URL: 'http://127.0.0.1:54321',
       VITE_SUPABASE_PUBLISHABLE_KEY: 'local-browser-fixture-publishable-key',
+      VITE_LOCAL_PASSWORD_AUTH: 'false',
     },
   },
 });

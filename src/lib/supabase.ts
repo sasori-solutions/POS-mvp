@@ -1,8 +1,9 @@
 import { createClient, isAuthSessionMissingError, type Session } from '@supabase/supabase-js'
+import { developmentLoginEnabled } from './development'
 
-export const authStorageKey = 'pos-mexico-auth'
 export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? ''
 export const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ?? ''
+export const authStorageKey = developmentLoginEnabled ? `pos-mexico-local-auth-${new URL(supabaseUrl).port}` : 'pos-mexico-auth'
 let acceptIdentityWrites = true
 let acceptVerifierWrites = true
 let identityGeneration = 0

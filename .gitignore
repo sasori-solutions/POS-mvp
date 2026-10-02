@@ -15,5 +15,6 @@ test-results/
 coverage/
 artifacts/
 .local-reference/
+.local-dev/
 *.tsbuildinfo
 .DS_Store

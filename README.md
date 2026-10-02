@@ -21,15 +21,18 @@ Orders/comandas, inventory, shifts and cash close, refunds, invoicing, automatic
 
 ## Local development
 
-Use Node 24, matching CI, and install the lockfile dependencies in your own worktree:
+Use Node 24 and Docker Desktop, and install the lockfile dependencies in your own worktree:
 
 ```sh
 npm ci
-cp .env.example .env.local
 npm run dev
 ```
 
-Before starting the app, set `.env.local` to your development backend's public Supabase URL and publishable key. Vite runs at `http://127.0.0.1:5173`. For isolated Auth/Edge/Postgres tests, use the local Supabase setup in [supabase/README.md](supabase/README.md). Missing configuration shows a setup message; there is no demo-login bypass.
+`npm run dev` starts an isolated local Supabase stack, applies pending migrations without resetting data, serves the current `account` function and starts Vite at `http://127.0.0.1:5173`. No Google account, OAuth setup or manual `.env.local` is required. Choose **Entrar en desarrollo**, sign in as the fixture owner and enter the initial PIN **123456**. A café and three products are created once. Additional fixture accounts let you create a business and accept employee invitations.
+
+Each checkout has its own local stack and persistent Docker volumes. Restarting preserves edits and sales. `npm run dev:stop` stops that checkout's backend while keeping its data. See [development without Google](docs/local-development.md) for accounts, mail capture, ports and troubleshooting.
+
+Use `npm run dev:frontend` only when explicitly testing a separately configured backend; set its public URL/key in `.env.local`. Hosted access continues to require Google. Production builds remove the development login and reject artifacts containing its screen or credentials. For isolated integration tests, see [supabase/README.md](supabase/README.md).
 
 The checked-in `.env.production` contains public browser configuration for the hosted backend. Never put service-role keys, Google secrets, provider keys or database passwords in a `VITE_*` variable, repository file or build output.
 
@@ -47,6 +50,7 @@ Run focused browser, SQL, Deno or local integration tests for the behavior you c
 | Document | Purpose |
 | --- | --- |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Workflow for both developers and their Codex agents |
+| [Local development](docs/local-development.md) | Persistent local Auth/Edge/Postgres and access without Google |
 | [AGENTS.md](AGENTS.md) | Current operating rules and technical invariants |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Canonical production procedure and verification |
 | [supabase/README.md](supabase/README.md) | Backend trust boundary and local setup |
