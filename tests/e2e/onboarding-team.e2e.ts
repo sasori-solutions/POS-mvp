@@ -255,7 +255,7 @@ test('employee forms focus on one person and keep their PIN private', async ({ p
   await expect(page.getByRole('button', { name: 'Crear código para restablecer PIN', exact: true })).toBeVisible();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Caja actualizada');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
-  await expect(page.getByRole('status')).toHaveText('Cambios guardados.');
+  await expect(page.getByRole('status').filter({ hasText: /^Cambios guardados\.$/ })).toBeVisible();
   expect(calls.find((call) => call.action === 'update_employee')).toMatchObject({ name: 'Caja actualizada', pin: null });
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
