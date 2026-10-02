@@ -1,18 +1,9 @@
 ## Cambio
 
-Describe el resultado visible y los archivos o módulos afectados.
+Qué cambia y por qué.
 
 ## Verificación
 
-- [ ] `npm run build`
-- [ ] `npm run test:e2e` si cambia el frontend
-- [ ] Pruebas de backend, migración y compatibilidad si cambian contratos o SQL
-- [ ] Revisé que no hay secretos, datos personales ni archivos `dist/`
+Resultado de **Basic checks** (pruebas rápidas y build), y cualquier prueba específica necesaria.
 
-## Publicación
-
-- [ ] No requiere publicar
-- [ ] Requiere Supabase antes del frontend (detallar orden)
-- [ ] Requiere despliegue de Pages desde `main` y comprobación live
-
-Notas de compatibilidad, rollback y evidencia anonimizada:
+Si cambia el backend: indicar migración/función y confirmar que está compatible antes de fusionar. Pages se publica automáticamente desde `main`. No incluir secretos, datos personales ni `dist/`.

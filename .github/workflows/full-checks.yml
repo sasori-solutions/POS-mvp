@@ -1,0 +1,122 @@
+name: Full checks (manual)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: full-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:domain
+      - run: npm run test:sql
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  edge:
+    name: Edge validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: deno test supabase/functions/account/*.deno.ts
+      - run: deno check supabase/functions/account/index.ts
+      - name: Verify standalone account packaging
+        run: |
+          node scripts/build-account-source.mjs /tmp/pos-account-cloud.ts
+          deno check /tmp/pos-account-cloud.ts
+
+  integration:
+    name: Supabase integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TEST_DISPOSABLE_SUPABASE: 'true'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Start disposable local Supabase
+        run: npm run db:start > /tmp/pos-supabase-start.log 2>&1 || { tail -80 /tmp/pos-supabase-start.log; exit 1; }
+      - name: Configure isolated test services
+        run: |
+          cat > .env.functions <<'ENV'
+          ALLOWED_ORIGINS=http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175
+          ALLOW_TEST_PASSWORD_AUTH=true
+          APP_ORIGIN=http://127.0.0.1:5175
+          PIN_RECOVERY_FROM=access@example.test
+          TEST_MAILPIT_URL=http://supabase_inbucket_pos-mexico-pwa:8025
+          ENV
+          npx supabase status -o json > /tmp/pos-local-status.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const status = JSON.parse(fs.readFileSync('/tmp/pos-local-status.json', 'utf8'));
+          if (!['127.0.0.1', 'localhost'].includes(new URL(status.API_URL).hostname) || !status.ANON_KEY || !status.SERVICE_ROLE_KEY) throw new Error('Local test services unavailable');
+          fs.appendFileSync(process.env.GITHUB_ENV, `TEST_SUPABASE_URL=${status.API_URL}\nTEST_SUPABASE_ANON_KEY=${status.ANON_KEY}\nTEST_SUPABASE_SERVICE_ROLE_KEY=${status.SERVICE_ROLE_KEY}\nTEST_LOCAL_DB_CONTAINER=supabase_db_pos-mexico-pwa\nTEST_MAILPIT_URL=http://127.0.0.1:54324\n`);
+          JS
+      - name: Serve and verify local account API
+        run: |
+          npx supabase functions serve account --env-file .env.functions > /tmp/pos-account-edge.log 2>&1 &
+          node --input-type=module <<'JS'
+          let ready = false;
+          let lastStatus = null;
+          let lastCode = null;
+          for (let attempt = 0; attempt < 60; attempt++) {
+            try {
+              const response = await fetch(`${process.env.TEST_SUPABASE_URL}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: process.env.TEST_SUPABASE_ANON_KEY, origin: 'http://127.0.0.1:5173' }, body: JSON.stringify({ action: 'status' }), signal: AbortSignal.timeout(5000) });
+              const body = await response.json();
+              lastStatus = response.status;
+              lastCode = body.error?.code ?? body.code ?? null;
+              if (response.status === 401 && body.error?.code === 'AUTH_REQUIRED') { ready = true; break; }
+            } catch {}
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+          if (!ready) throw new Error(`Local account API did not become ready (status=${lastStatus}, code=${lastCode})`);
+          JS
+      - name: Diagnose local service failures
+        if: failure()
+        run: |
+          tail -100 /tmp/pos-account-edge.log || true
+          docker logs --tail 100 supabase_edge_runtime_pos-mexico-pwa || true
+      - name: Run real Auth, Edge and PostgreSQL tests without skips
+        run: |
+          npm run test -- --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --hookTimeout=60000 --reporter=default --reporter=json --outputFile=/tmp/pos-integration-report.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync('/tmp/pos-integration-report.json', 'utf8'));
+          if (!report.success || report.numFailedTests !== 0 || report.numPendingTests !== 0) throw new Error('Integration must pass without skipped tests');
+          console.log(`Verified ${report.numPassedTests} tests without skips`);
+          JS
+      - name: Verify inherited employee migration compatibility
+        run: node tests/integration/employee-rejoin-migration-smoke.mjs
+      - name: Stop disposable services
+        if: always()
+        run: npx supabase stop --no-backup

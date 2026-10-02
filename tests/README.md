@@ -1,3 +1,9 @@
+## Routine CI — small automatic gate
+
+Larios requested fewer simple tests and automatic Cloudflare deployment in session `20261002-larios-ci-simple-auto-deploy`. PRs and `main` run `npm run test:smoke` (the nine existing unit tests in `tests/unit`) and `npm run build` (including TypeScript). These checks cover money/cart invariants, request payload validation and pending-sale retry storage; they require no browser download, Docker or Supabase service. A successful `main` run deploys its own build without repeating these checks.
+
+Use focused tests for the behavior being changed. `npm run test:e2e`, SQL, Deno and real local Supabase integration remain available; the old full CI is preserved as **Full checks (manual)**. The small default gate does not establish real OAuth, database authorization or complete UI coverage.
+
 ## Permanent employee removal — current source, 2 October 2026
 
 Agente de Larios. The current policy supersedes the restoration behavior described in the dated releases below. Deleting an employee permanently removes that business's employee identity, membership, PIN, device binding, sessions, invitations and recovery authorizations. A later owner invitation creates a new employee ID: the recipient chooses a new PIN and links the browser used to accept it. The global Google account and access to other businesses remain intact. Active PIN-only employees still prove their existing PIN when linking Google; this is not a deleted-employee return flow.

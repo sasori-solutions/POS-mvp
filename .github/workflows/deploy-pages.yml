@@ -1,14 +1,19 @@
 name: Deploy Cloudflare Pages
 
 on:
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: Checked production build from the calling CI run
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
   deployments: write
 
-# Only one production upload can run at a time. Keep the queued run instead of
-# interrupting a deployment that has already started.
 concurrency:
   group: pos-mexico-pages-production
   cancel-in-progress: false
@@ -18,7 +23,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     name: Publish verified main
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 10
     environment:
       name: production
       url: https://pos-mexico-mvp.pages.dev
@@ -26,21 +31,32 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.12.0'
+          node-version: '24'
           cache: npm
-      - name: Reject an outdated commit
+      - name: Download the checked build
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/
+      - name: Build only for a manual redeployment
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          npm ci
+          npm run test:smoke
+          npm run build
+      - name: Check that this is still the latest main
+        id: latest
         run: |
           git fetch --no-tags origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
-      - run: npm ci
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
-      - name: Recheck main before upload
-        run: |
-          git fetch --no-tags origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "A newer main commit will be deployed; skipping this build."
+          fi
       - name: Require production credentials
+        if: steps.latest.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -48,11 +64,18 @@ jobs:
           test -n "$CLOUDFLARE_ACCOUNT_ID"
           test -n "$CLOUDFLARE_API_TOKEN"
       - name: Upload the checked build
+        if: steps.latest.outputs.current == 'true'
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy dist --project-name=pos-mexico-mvp --branch=main
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify the public assets
-        run: npm run check:live -- https://pos-mexico-mvp.pages.dev
+      - name: Verify the public assets after propagation
+        if: steps.latest.outputs.current == 'true'
+        run: |
+          for attempt in 1 2 3; do
+            npm run check:live -- https://pos-mexico-mvp.pages.dev && exit 0
+            if [ "$attempt" -lt 3 ]; then sleep 10; fi
+          done
+          exit 1
