@@ -1,4 +1,4 @@
-import type { PaymentMethod } from './contracts'
+import type { PaymentMethod } from './contracts.ts'
 
 export interface Product {
   id: string

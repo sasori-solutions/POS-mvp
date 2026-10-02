@@ -126,6 +126,6 @@ The dashboard reconciliation above is complete. CLI linking and these inspection
 
 ## Products and online sales
 
-Products and online sales extend the existing account API with categorized catalog management, reversible deactivation, a touch cart, exact MXN cents, cash/external-card/transfer registration and immutable history. Accepted commands replay their original result and uncertain registration survives reload/PIN without storing credentials. See [docs/products-sales.md](docs/products-sales.md) for permissions, migration 0009, validation and rollout. This extension has not been deployed to Supabase or Cloudflare.
+Products and online sales extend the existing account API with categorized catalog management, reversible deactivation, a touch cart, exact MXN cents, cash/external-card/transfer registration and immutable history. Accepted commands replay their original result and uncertain registration survives reload/PIN without storing credentials. See [docs/products-sales.md](docs/products-sales.md) for permissions, migration 0010, validation and rollout. This extension has not been deployed to Supabase or Cloudflare.
 
 Run `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build` and `npm run test:e2e`. Financial browser fixtures execute the actual migrations/RPCs in embedded PostgreSQL; real Supabase Auth/Edge integration requires the disposable local stack.

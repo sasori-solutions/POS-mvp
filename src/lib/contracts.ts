@@ -1,4 +1,4 @@
-import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts'
+import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts.ts'
 
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
 export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
@@ -35,7 +35,7 @@ export interface EmployeePinSetupDetails {
   employee: EmployeeSummary
   expiresAt?: string
 }
-export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string }
+export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string; returningEmployee?: boolean }
 
 export interface EmployeeSummary {
   id: string
