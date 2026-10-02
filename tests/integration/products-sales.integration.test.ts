@@ -50,6 +50,51 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect(data(await pos<Sale>(operator, { command: 'sale', saleId: history.sales[0].id })).items[0].unitPriceCents).toBe(1001)
   })
 
+  it('deletes products through signed Edge with scoped permissions and preserved sale history', async () => {
+    const operator = await business()
+    const cashier = await cashierFor(operator)
+    const foreignOperator = await business()
+    const product = await save(operator)
+    const saleRequest = sale(product)
+    const receipt = data(await pos<Sale>(cashier, saleRequest, employee))
+    const command = { command: 'delete_product' as const, operationId: randomUUID(), productId: product.id, expectedVersion: product.version }
+    expect((await pos(cashier, command, employee)).body.error?.code).toBe('PERMISSION_DENIED')
+    expect((await pos(foreignOperator, command)).body.error?.code).toBe('PRODUCT_CHANGED')
+    const replies = await Promise.all([pos(operator, command), pos(operator, command)])
+    for (const reply of replies) expect(data(reply)).toEqual({ id: product.id, deleted: true })
+    expect(sql(`select version from app_private.products where id=${uuid(product.id)};`).trim()).toBe('2')
+    for (const [actor, identity] of [[operator, owner], [cashier, employee]] as const)
+      expect(data(await pos<{ products: Product[] }>(actor, { command: 'catalog' }, identity)).products).toEqual([])
+    expect(data(await pos<Sale>(cashier, saleRequest, employee))).toEqual(receipt)
+    expect(data(await pos<Sale>(operator, { command: 'sale', saleId: receipt.id }))).toEqual(receipt)
+    expect((await pos(cashier, sale(product), employee)).body.error?.code).toBe('PRODUCT_UNAVAILABLE')
+    expect((await pos(operator, { command: 'set_product_active', operationId: randomUUID(), productId: product.id, expectedVersion: 2, active: true })).body.error?.code).toBe('PRODUCT_CHANGED')
+    data(await call(owner, { action: 'lock', ...args(operator) }))
+    expect((await pos(operator, command)).body.error?.code).toBe('SESSION_INVALID')
+  }, 30000)
+
+  it('serializes product deletion against concurrent edits and new sales', async () => {
+    const operator = await business()
+    const product = await save(operator)
+    const command = { command: 'delete_product' as const, operationId: randomUUID(), productId: product.id, expectedVersion: product.version }
+    const competing = { command: 'save_product' as const, operationId: randomUUID(), productId: product.id, expectedVersion: product.version, name: 'Edición concurrente', category: product.category, priceCents: product.priceCents }
+    const edits = await Promise.all([pos(operator, command), pos(operator, competing)])
+    expect(edits.map(r => r.status).sort()).toEqual([200, 409])
+    expect(edits.find(r => r.status === 409)?.body.error?.code).toBe('PRODUCT_CHANGED')
+    const next = await save(operator)
+    const saleRequest = sale(next)
+    const replies = await Promise.all([
+      pos(operator, { ...command, operationId: randomUUID(), productId: next.id, expectedVersion: next.version }),
+      pos<Sale>(operator, saleRequest),
+    ])
+    expect(replies[0].status).toBe(200)
+    expect([200, 409]).toContain(replies[1].status)
+    if (replies[1].status === 200) expect(data(await pos<Sale>(operator, saleRequest))).toEqual(replies[1].body.data)
+    else expect(replies[1].body.error?.code).toBe('PRODUCT_UNAVAILABLE')
+    expect(count('sales', operator)).toBe(replies[1].status === 200 ? 1 : 0)
+    expect(data(await pos<{ products: Product[] }>(operator, { command: 'catalog' })).products.some(p => p.id === next.id)).toBe(false)
+  }, 30000)
+
   it('serializes simultaneous identical sale submissions into one accepted sale', async () => {
     const operator = await business(); const product = await save(operator); const command = sale(product)
     const replies = await Promise.all(Array.from({ length: 4 }, () => pos<Sale>(operator, command)))

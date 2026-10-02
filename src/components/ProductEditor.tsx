@@ -248,11 +248,11 @@ export default function ProductEditor({
             id="product-identity"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
-            <h3>Información del producto</h3>
-            <div className="product-identity-layout grid grid-cols-[144px_minmax(0,1fr)] gap-6 max-tablet:grid-cols-1">
+            <h3>Información</h3>
+            <div className="product-identity-layout grid grid-cols-[144px_minmax(0,1fr)] gap-6 max-tablet:grid-cols-[96px_minmax(0,1fr)] max-tablet:gap-4">
               <div className="image-editor flex flex-col items-center gap-2 max-tablet:items-start">
                 <div
-                  className="product-image-preview grid size-36 place-items-center overflow-hidden rounded-lg border border-line text-muted [&_img]:size-full [&_img]:object-cover"
+                  className="product-image-preview grid size-36 place-items-center overflow-hidden rounded-lg border border-line text-muted [&_img]:size-full [&_img]:object-cover max-tablet:size-24"
                   style={{ backgroundColor: details.tileColor }}
                 >
                   {image ? (
@@ -266,7 +266,7 @@ export default function ProductEditor({
                     <ImagePlus size={36} strokeWidth={1.5} aria-hidden="true" />
                   )}
                 </div>
-                <label className="image-upload relative grid min-h-12 w-full cursor-pointer place-items-center font-medium text-brand-hover focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:absolute [&_input]:inset-0 [&_input]:size-full [&_input]:cursor-pointer [&_input]:opacity-0 max-tablet:w-36">
+                <label className="image-upload relative grid min-h-12 w-full cursor-pointer place-items-center font-medium text-brand-hover focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:absolute [&_input]:inset-0 [&_input]:size-full [&_input]:cursor-pointer [&_input]:opacity-0 max-tablet:w-24 max-tablet:text-center">
                   {image ? "Cambiar imagen" : "Añadir imagen"}
                   <input
                     type="file"
@@ -299,6 +299,7 @@ export default function ProductEditor({
                     maxLength={100}
                     required
                     autoFocus
+                    data-dialog-autofocus
                     placeholder="Ej. Latte"
                   />
                 </div>

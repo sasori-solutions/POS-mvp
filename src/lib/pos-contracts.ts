@@ -86,6 +86,7 @@ export type PosCommand =
   | { command: 'catalog' }
   | ({ command: 'save_product'; operationId: string } & ProductInput)
   | { command: 'set_product_active'; operationId: string; productId: string; expectedVersion: number; active: boolean }
+  | { command: 'delete_product'; operationId: string; productId: string; expectedVersion: number }
   | { command: 'set_product_sold_out'; operationId: string; productId: string; expectedVersion: number; soldOut: boolean }
   | { command: 'upload_product_image'; operationId: string; imageId: string; part: number; parts: number; data: string }
   | { command: 'complete_sale'; operationId: string; items: SaleInputLine[]; totalCents: number; paymentMethod: PaymentMethod }
@@ -96,6 +97,7 @@ export interface PosResponses {
   catalog: { products: Product[]; paymentMethods: PaymentMethod[] }
   save_product: Product
   set_product_active: Product
+  delete_product: { id: string; deleted: true }
   set_product_sold_out: Product
   upload_product_image: { imageId: string; complete: boolean }
   complete_sale: Sale

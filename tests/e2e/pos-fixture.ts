@@ -44,12 +44,13 @@ export async function createPosDatabase() {
   return { db, session, execute, seed }
 }
 
-export async function mockPos(page: Page, options: { empty?: boolean; saleResponseLosses?: number; productResponseLosses?: number; delaySaleMs?: number; catalogFailures?: number } = {}) {
+export async function mockPos(page: Page, options: { empty?: boolean; saleResponseLosses?: number; productResponseLosses?: number; deletionResponseLosses?: number; delayDeletionMs?: number; delaySaleMs?: number; catalogFailures?: number } = {}) {
   const backend = await createPosDatabase()
   if (!options.empty) await backend.seed()
   const calls: PosCommand[] = []
   let saleLosses = options.saleResponseLosses ?? 0
   let productLosses = options.productResponseLosses ?? 0
+  let deletionLosses = options.deletionResponseLosses ?? 0
   let catalogFailures = options.catalogFailures ?? 0
   async function attach(page: Page) {
     await page.route('**/*', route => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort('blockedbyclient'))
@@ -64,9 +65,11 @@ export async function mockPos(page: Page, options: { empty?: boolean; saleRespon
         calls.push(parsed)
         if (parsed.command === 'catalog' && catalogFailures-- > 0) return reject(500, 'SERVER_ERROR')
         if (parsed.command === 'complete_sale' && options.delaySaleMs) await new Promise(resolve => setTimeout(resolve, options.delaySaleMs))
+        if (parsed.command === 'delete_product' && options.delayDeletionMs) await new Promise(resolve => setTimeout(resolve, options.delayDeletionMs))
         const data = await backend.execute(parsed)
         if (parsed.command === 'complete_sale' && saleLosses-- > 0) return route.abort('failed')
         if (parsed.command === 'save_product' && productLosses-- > 0) return route.abort('failed')
+        if (parsed.command === 'delete_product' && deletionLosses-- > 0) return route.abort('failed')
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) })
       } catch (caught) {
         const code = caught instanceof Error ? caught.message : 'SERVER_ERROR'

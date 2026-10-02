@@ -28,6 +28,10 @@ export function parsePosCommand(input: Record<string, unknown>, accessKeys: stri
       return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId),
         expectedVersion: input.expectedVersion === null ? null : integer(input.expectedVersion, 1, 2_147_483_647),
         name: text(input.name, 1, 100), category: text(input.category, 0, 60), priceCents: integer(input.priceCents, 0, 99_999_999), ...(Object.hasOwn(input, 'details') ? { details: parseProductDetails(input.details) } : {}) }
+    case 'delete_product':
+      keys(['operationId', 'productId', 'expectedVersion'])
+      return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId),
+        expectedVersion: integer(input.expectedVersion, 1, 2_147_483_647) }
     case 'set_product_active':
       keys(['operationId', 'productId', 'expectedVersion', 'active'])
       if (typeof input.active !== 'boolean') invalid()

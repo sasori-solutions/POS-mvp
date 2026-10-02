@@ -16,6 +16,7 @@ async function openCart(page: Page) {
   if (await button.isVisible()) await button.click()
 }
 async function add(page: Page, name: string) { await page.getByRole('button', { name: new RegExp(`^Agregar ${name},`) }).click() }
+async function actions(page: Page, name: string) { await page.getByLabel(`Acciones de ${name}`, { exact: true }).click() }
 
 test('reopening a product for sale waits for confirmation without flashing a saving dialog', async ({ page }) => {
   const backend = await mockPos(page)
@@ -24,6 +25,7 @@ test('reopening a product for sale waits for confirmation without flashing a sav
     await backend.execute({ command: 'set_product_active', operationId: crypto.randomUUID(), productId: latte.id, expectedVersion: latte.version, active: false })
     await unlock(page); await navigate(page, 'Productos')
     await page.getByLabel('Mostrar').selectOption('inactive')
+    await actions(page, 'Latte')
     await page.getByRole('button', { name: 'Activar Latte' }).click()
     await expect(page.getByRole('dialog', { name: 'Activar producto' })).toBeVisible()
     expect((await backend.catalog()).products.find(product => product.id === latte.id)?.active).toBe(false)
@@ -109,18 +111,109 @@ test('catalog creates/edits/searches/filters/deactivates and restores a product'
     await page.getByLabel('Precio final MXN', { exact: true }).fill('12.34')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await expect(page.locator('.product-list')).toContainText('$12.34')
+    await actions(page, 'Café frío')
     await page.getByRole('button', { name: 'Desactivar Café frío' }).click()
     await expect(page.getByRole('dialog')).toContainText('Las ventas anteriores se conservan')
     await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+    await actions(page, 'Café frío')
     await page.getByRole('button', { name: 'Desactivar Café frío' }).click()
     await page.getByRole('button', { name: 'Desactivar', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Sin productos para esta búsqueda' })).toBeVisible()
     await page.getByLabel('Mostrar').selectOption('inactive')
+    await actions(page, 'Café frío')
     await page.getByRole('button', { name: 'Activar Café frío' }).click()
     await page.getByRole('button', { name: 'Activar', exact: true }).click()
     await expect.poll(async () => (await backend.catalog()).products[0].active).toBe(true)
     await page.getByLabel('Mostrar').selectOption('active')
     await expect(page.getByRole('button', { name: 'Editar Café frío' })).toBeVisible()
+  } finally { await backend.db.close() }
+})
+
+test('product actions cancel and confirm deletion, preserve receipts and remove it from Venta', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    const latte = (await backend.catalog()).products.find(p => p.name === 'Latte')!
+    const receipt = await backend.execute<Sale>({ command: 'complete_sale', operationId: crypto.randomUUID(), paymentMethod: 'cash', totalCents: latte.priceCents, items: [{ productId: latte.id, quantity: 1, unitPriceCents: latte.priceCents, version: latte.version }] })
+    await unlock(page); await navigate(page, 'Productos')
+    await actions(page, 'Latte')
+    await page.getByRole('button', { name: 'Eliminar Latte', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Eliminar producto' })
+    await expect(dialog).toContainText('Las ventas anteriores se conservan')
+    await expect(dialog.getByRole('button', { name: 'Cancelar' })).toBeFocused()
+    expect(backend.calls.filter(c => c.command === 'delete_product')).toHaveLength(0)
+    await dialog.getByRole('button', { name: 'Cancelar' }).click()
+    await expect(page.getByLabel('Acciones de Latte', { exact: true })).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Editar Latte', exact: true })).toBeVisible()
+    await actions(page, 'Latte')
+    await page.getByRole('button', { name: 'Eliminar Latte', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Eliminar producto', exact: true }).click()
+    await expect(dialog).not.toBeVisible()
+    await expect(page.getByRole('status')).toHaveText('Producto eliminado.')
+    await expect(page.getByRole('searchbox')).toBeFocused()
+    expect((await backend.catalog()).products.some(p => p.id === latte.id)).toBe(false)
+    await page.getByLabel('Mostrar').selectOption('all')
+    await expect(page.getByRole('button', { name: 'Editar Latte', exact: true })).toHaveCount(0)
+    await navigate(page, 'Venta')
+    await expect(page.getByRole('button', { name: /^Agregar Latte,/ })).toHaveCount(0)
+    expect(await backend.execute({ command: 'sale', saleId: receipt.id })).toEqual(receipt)
+  } finally { await backend.db.close() }
+})
+
+test('lost deletion response retries the same operation and blocks repeated taps', async ({ page }) => {
+  const backend = await mockPos(page, { deletionResponseLosses: 1, delayDeletionMs: 200 })
+  try {
+    await unlock(page); await navigate(page, 'Productos'); await actions(page, 'Latte')
+    await page.getByRole('button', { name: 'Eliminar Latte', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Eliminar producto' })
+    await dialog.getByRole('button', { name: 'Eliminar producto', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'Eliminando…' })).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: 'Reintentar eliminación' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Editar Latte', exact: true })).toHaveCount(1)
+    await dialog.getByRole('button', { name: 'Reintentar eliminación' }).click()
+    await expect(dialog).not.toBeVisible()
+    const commands = backend.calls.filter(c => c.command === 'delete_product')
+    expect(commands).toHaveLength(2)
+    expect(commands[1]).toEqual(commands[0])
+    await expect(page.getByRole('button', { name: 'Editar Latte', exact: true })).toHaveCount(0)
+  } finally { await backend.db.close() }
+})
+
+test('stale deletion refreshes the product without deleting a newer edit', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    await unlock(page); await navigate(page, 'Productos'); await actions(page, 'Latte')
+    await page.getByRole('button', { name: 'Eliminar Latte', exact: true }).click()
+    const latte = (await backend.catalog()).products.find(p => p.name === 'Latte')!
+    await backend.execute({ command: 'save_product', operationId: crypto.randomUUID(), productId: latte.id, expectedVersion: latte.version, name: 'Latte nuevo', category: latte.category, priceCents: 6000 })
+    const dialog = page.getByRole('dialog', { name: 'Eliminar producto' })
+    await dialog.getByRole('button', { name: 'Eliminar producto', exact: true }).click()
+    await expect(dialog.getByRole('alert')).toContainText('El producto cambió')
+    await dialog.getByRole('button', { name: 'Actualizar productos' }).click()
+    await expect(page.getByRole('button', { name: 'Editar Latte nuevo', exact: true })).toBeVisible()
+    expect((await backend.catalog()).products.some(p => p.id === latte.id)).toBe(true)
+    await actions(page, 'Latte nuevo')
+    await page.getByLabel('Acciones de Latte nuevo', { exact: true }).press('Escape')
+    await expect(page.getByRole('button', { name: 'Eliminar Latte nuevo' })).not.toBeVisible()
+  } finally { await backend.db.close() }
+})
+
+test('product actions stay above navigation on phone and tablet', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    await unlock(page); await navigate(page, 'Productos')
+    for (const width of [320, 390, 768, 1024]) {
+      await page.setViewportSize({ width, height: 844 })
+      await actions(page, 'Latte')
+      const button = page.getByRole('button', { name: 'Eliminar Latte', exact: true })
+      await expect(button).toBeInViewport({ ratio: 1 })
+      const box = await button.boundingBox()
+      const navigation = await page.getByRole('navigation').boundingBox()
+      expect(box!.height).toBeGreaterThanOrEqual(48)
+      expect(box!.y + box!.height).toBeLessThanOrEqual(navigation!.y)
+      await page.getByLabel('Acciones de Latte', { exact: true }).press('Escape')
+      await expect(button).not.toBeVisible()
+    }
   } finally { await backend.db.close() }
 })
 

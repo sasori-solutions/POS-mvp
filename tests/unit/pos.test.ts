@@ -37,6 +37,13 @@ describe('MXN and cart invariants', () => {
 })
 
 describe('shared HTTP command boundary', () => {
+  it('validates product deletion for personal and shared-register access', () => {
+    const command = { command: 'delete_product', operationId: id, productId: id, expectedVersion: 1 }
+    expect(parseAccountRequest({ ...access, ...command })).toMatchObject(command)
+    expect(parseAccountRequest({ action: 'device_pos', deviceToken: 'cd'.repeat(32), operatorToken: access.operatorToken, ...command })).toMatchObject(command)
+    for (const change of [{ productId: 'invalid' }, { expectedVersion: null }, { expectedVersion: 0 }, { expectedVersion: 1.5 }, { active: false }, { businessId: undefined }])
+      expect(() => parseAccountRequest({ ...access, ...command, ...change })).toThrow()
+  })
   it('normalizes products and validates personal and device payloads', () => {
     const input = { ...access, command: 'save_product', operationId: id, productId: id, expectedVersion: null, name: '  Café   frío ', category: ' Café ', priceCents: 1001 }
     expect(parseAccountRequest(input)).toMatchObject({ name: 'Café frío', category: 'Café' })

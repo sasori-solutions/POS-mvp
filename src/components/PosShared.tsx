@@ -16,52 +16,62 @@ export function CatalogFilters({
   category,
   onQuery,
   onCategory,
+  action,
+  trailingFilter,
 }: {
   products: Product[];
   query: string;
   category: string;
   onQuery: (value: string) => void;
   onCategory: (value: string) => void;
+  action?: React.ReactNode;
+  trailingFilter?: React.ReactNode;
 }) {
   const categories = [
     ...new Set(products.map((product) => product.category).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b, "es"));
   return (
     <div className="catalog-filters my-5 flex flex-col gap-4">
-      <div className="catalog-search flex min-h-13.5 items-center gap-3 rounded-lg border border-transparent bg-surface px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:min-h-13 [&_input]:min-w-0 [&_input]:w-full [&_input]:border-0 [&_input]:bg-transparent [&_input]:text-ink [&_input:focus-visible]:outline-none [&_button]:-mr-3 [&_button]:size-12 [&_button]:min-h-12 [&_svg]:shrink-0">
-        <Search size={20} aria-hidden="true" />
-        <input
-          aria-label="Buscar producto"
-          type="search"
-          placeholder="Buscar producto"
-          value={query}
-          onChange={(event) => onQuery(event.target.value)}
-        />
-        {query && (
-          <button
-            className="pos-icon-button"
-            aria-label="Limpiar búsqueda"
-            onClick={() => onQuery("")}
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        )}
+      <div className="flex items-center gap-3 max-tablet:flex-wrap">
+        <div className="catalog-search flex min-h-13.5 min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-surface px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:min-h-13 [&_input]:min-w-0 [&_input]:w-full [&_input]:border-0 [&_input]:bg-transparent [&_input]:text-ink [&_input:focus-visible]:outline-none [&_button]:-mr-3 [&_button]:size-12 [&_button]:min-h-12 [&_svg]:shrink-0 max-tablet:basis-full">
+          <Search size={20} aria-hidden="true" />
+          <input
+            aria-label="Buscar producto"
+            type="search"
+            placeholder="Buscar producto"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+          />
+          {query && (
+            <button
+              className="pos-icon-button"
+              aria-label="Limpiar búsqueda"
+              onClick={() => onQuery("")}
+            >
+              <X size={18} aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        {action}
       </div>
-      <div
-        className="catalog-categories flex max-w-full gap-2 overflow-x-auto px-0.5 pt-0.5 pb-2"
-        role="group"
-        aria-label="Categorías"
-      >
-        {["", ...categories].map((value) => (
-          <button
-            key={value}
-            className="catalog-category min-h-12 max-w-55 shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 [overflow-wrap:anywhere] hover:border-brand aria-pressed:border-brand-soft aria-pressed:bg-brand-soft aria-pressed:text-brand-hover"
-            aria-pressed={category === value}
-            onClick={() => onCategory(value)}
-          >
-            {value || "Todo"}
-          </button>
-        ))}
+      <div className="flex min-w-0 items-start justify-between gap-4 max-tablet:flex-wrap">
+        <div
+          className="catalog-categories flex min-w-0 max-w-full gap-2 overflow-x-auto px-0.5 pt-0.5 pb-2"
+          role="group"
+          aria-label="Categorías"
+        >
+          {["", ...categories].map((value) => (
+            <button
+              key={value}
+              className="catalog-category min-h-12 max-w-55 shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 [overflow-wrap:anywhere] hover:border-brand aria-pressed:border-brand-soft aria-pressed:bg-brand-soft aria-pressed:text-brand-hover"
+              aria-pressed={category === value}
+              onClick={() => onCategory(value)}
+            >
+              {value || "Todo"}
+            </button>
+          ))}
+        </div>
+        {trailingFilter}
       </div>
     </div>
   );
@@ -109,6 +119,7 @@ export function PosDialog({
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
     dialog.showModal();
+    dialog.querySelector<HTMLElement>('[data-dialog-autofocus]')?.focus();
     return () => {
       dialog.close();
       previous?.focus();

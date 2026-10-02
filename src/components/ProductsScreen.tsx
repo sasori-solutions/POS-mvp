@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronRight, Plus, Power } from "lucide-react";
+import { ChevronRight, Ellipsis, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { AccountClientError } from "../lib/account";
 import type { Product } from "../lib/pos-contracts";
 import { filterProducts, money, posRequest, type PosAccess } from "../lib/pos";
@@ -24,7 +24,9 @@ export default function ProductsScreen({
   const [status, setStatus] = useState("active");
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [toggling, setToggling] = useState<Product | null>(null);
+  const [deleting, setDeleting] = useState<Product | null>(null);
   const [message, setMessage] = useState("");
+  const screen = useRef<HTMLDivElement>(null);
   const products = catalog.products.filter(
     (product) => status === "all" || product.active === (status === "active"),
   );
@@ -41,21 +43,7 @@ export default function ProductsScreen({
     setToggling(null);
   }
   return (
-    <div className="products-screen">
-      {canManage && (
-        <div className="catalog-toolbar my-6 flex items-center justify-end gap-4 max-tablet:flex-wrap">
-          <button
-            className="pos-button pos-primary compact"
-            onClick={() => {
-              setMessage("");
-              setEditing("new");
-            }}
-          >
-            <Plus size={20} aria-hidden="true" />
-            Agregar producto
-          </button>
-        </div>
-      )}
+    <div className="products-screen" ref={screen}>
       {message && (
         <p className="pos-status my-4 text-sm text-muted" role="status">
           {message}
@@ -67,10 +55,14 @@ export default function ProductsScreen({
         category={category}
         onQuery={setQuery}
         onCategory={setCategory}
-      />
-      {canManage && (
-        <div className="catalog-status-filter mb-4 flex items-center gap-3 text-sm [&_select]:min-h-12 [&_select]:rounded-lg [&_select]:border [&_select]:border-line [&_select]:bg-white [&_select]:px-4 [&_select]:py-2 [&_select]:text-ink">
-          <label htmlFor="product-status">Mostrar</label>
+        action={canManage && (
+          <button className="pos-button pos-primary compact max-tablet:w-full" onClick={() => { setMessage(""); setEditing("new"); }}>
+            <Plus size={20} aria-hidden="true" /> Agregar producto
+          </button>
+        )}
+        trailingFilter={canManage && (
+        <div className="catalog-status-filter flex shrink-0 items-center gap-3 text-sm [&_select]:min-h-12 [&_select]:rounded-lg [&_select]:border [&_select]:border-line [&_select]:bg-white [&_select]:px-4 [&_select]:py-2 [&_select]:text-ink">
+          <label htmlFor="product-status" className="max-tablet:sr-only">Mostrar</label>
           <select
             id="product-status"
             value={status}
@@ -81,6 +73,10 @@ export default function ProductsScreen({
             <option value="all">Todos</option>
           </select>
         </div>
+        )}
+      />
+      {catalog.loaded && (
+        <p className="mb-3 text-sm text-muted">{filtered.length} {filtered.length === 1 ? "producto" : "productos"}</p>
       )}
       {catalog.error && (
         <div
@@ -125,6 +121,7 @@ export default function ProductsScreen({
           {filtered.map((product) => {
             const d = productDetails(product);
             const prices = d.variations.map((v) => v.priceCents);
+            const priceLabel = d.variablePrice ? "Variable" : `${prices.length ? "Desde " : ""}${money(prices.length ? Math.min(...prices) : product.priceCents)}`;
             const details = (
               <>
                 <span
@@ -142,28 +139,18 @@ export default function ProductsScreen({
                   <strong>{product.name}</strong>
                   <p>
                     {product.category || "Sin categoría"}
-                    {isSoldOut(product) && (
-                      <span className="product-state ml-2 inline-block rounded border border-line px-1.5 py-0.5 text-xs text-muted">
-                        Agotado
-                      </span>
-                    )}
                     {d.variations.length > 0 && (
-                      <span className="product-state ml-2 inline-block rounded border border-line px-1.5 py-0.5 text-xs text-muted">
-                        {d.variations.length} variantes
+                      <span className="product-state">
+                        {" · "}{d.variations.length} {d.variations.length === 1 ? "tamaño" : "tamaños"}
                       </span>
                     )}
-                    {!product.active && (
-                      <span className="product-state ml-2 inline-block rounded border border-line px-1.5 py-0.5 text-xs text-muted">
-                        Inactivo
-                      </span>
-                    )}
+                  {" · "}<span className={product.active && !isSoldOut(product) ? "text-success" : "text-muted"}>
+                    {!product.active ? "Inactivo" : isSoldOut(product) ? "Agotado" : "Activo"}
+                  </span>
                   </p>
+                  <span className="mt-2 block font-medium tabular-nums tablet:hidden">{priceLabel}</span>
                 </div>
-                <span className="product-price font-medium whitespace-nowrap tabular-nums">
-                  {d.variablePrice
-                    ? "Variable"
-                    : `${prices.length ? "Desde " : ""}${money(prices.length ? Math.min(...prices) : product.priceCents)}`}
-                </span>
+                <span className="product-price w-40 shrink-0 text-right font-medium whitespace-nowrap tabular-nums max-tablet:hidden">{priceLabel}</span>
               </>
             );
             return (
@@ -173,7 +160,7 @@ export default function ProductsScreen({
               >
                 {canManage ? (
                   <button
-                    className="product-edit flex min-h-22 min-w-0 flex-1 items-center gap-6 rounded-sm border-0 bg-transparent px-2 py-4 text-left hover:bg-surface [&>svg]:shrink-0 [&>svg]:text-muted max-tablet:gap-3 max-tablet:px-0"
+                    className="product-edit flex min-h-22 min-w-0 flex-1 items-center gap-4 rounded-lg border-0 bg-transparent px-2 py-4 text-left hover:bg-surface [&>svg]:shrink-0 [&>svg]:text-muted max-tablet:gap-3 max-tablet:px-0 max-tablet:[&>svg]:hidden"
                     aria-label={`Editar ${product.name}`}
                     onClick={() => {
                       setMessage("");
@@ -184,26 +171,17 @@ export default function ProductsScreen({
                     <ChevronRight size={18} aria-hidden="true" />
                   </button>
                 ) : (
-                  <div className="product-edit flex min-h-22 min-w-0 flex-1 items-center gap-6 rounded-sm border-0 bg-transparent px-2 py-4 text-left hover:bg-surface [&>svg]:shrink-0 [&>svg]:text-muted max-tablet:gap-3 max-tablet:px-0">
+                  <div className="product-edit flex min-h-22 min-w-0 flex-1 items-center gap-4 px-2 py-4 text-left max-tablet:gap-3 max-tablet:px-0">
                     {details}
                   </div>
                 )}
                 {canManage && (
-                  <button
-                    className="pos-icon-button product-availability size-12 min-h-12"
-                    title={
-                      product.active
-                        ? "Desactivar producto"
-                        : "Activar producto"
-                    }
-                    aria-label={`${product.active ? "Desactivar" : "Activar"} ${product.name}`}
-                    onClick={() => {
-                      setMessage("");
-                      setToggling(product);
-                    }}
-                  >
-                    <Power size={19} aria-hidden="true" />
-                  </button>
+                  <ProductActions
+                    product={product}
+                    onEdit={() => { setMessage(""); setEditing(product); }}
+                    onToggle={() => { setMessage(""); setToggling(product); }}
+                    onDelete={() => { setMessage(""); setDeleting(product); }}
+                  />
                 )}
               </li>
             );
@@ -237,7 +215,136 @@ export default function ProductsScreen({
           onSessionError={onSessionError}
         />
       )}
+      {deleting && (
+        <ProductDeletion
+          product={deleting}
+          access={access}
+          onClose={() => setDeleting(null)}
+          onDeleted={(id) => {
+            catalog.remove(id);
+            setDeleting(null);
+            if (category && !catalog.products.some(product => product.id !== id && product.category === category)) setCategory("");
+            setMessage("Producto eliminado.");
+            requestAnimationFrame(() => screen.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus());
+          }}
+          onRefresh={() => { setDeleting(null); void catalog.refresh(); }}
+          onSessionError={onSessionError}
+        />
+      )}
     </div>
+  );
+}
+
+function ProductActions({ product, onEdit, onToggle, onDelete }: {
+  product: Product; onEdit: () => void; onToggle: () => void; onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
+  const [above, setAbove] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!ref.current?.contains(event.target as Node) && ref.current) ref.current.open = false;
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open]);
+  function choose(action: () => void) {
+    if (ref.current) {
+      ref.current.open = false;
+      ref.current.querySelector("summary")?.focus();
+    }
+    action();
+  }
+  return (
+    <details ref={ref} name="product-actions" className="product-actions relative shrink-0"
+      onToggle={(event) => {
+        const details = event.currentTarget;
+        setOpen(details.open);
+        if (details.open) {
+          const height = details.querySelector<HTMLElement>('[data-product-menu]')?.offsetHeight ?? 164;
+          setAbove(details.getBoundingClientRect().bottom + height + 8 > window.innerHeight - 96);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && ref.current) {
+          event.preventDefault();
+          ref.current.open = false;
+          ref.current.querySelector("summary")?.focus();
+        }
+      }}
+    >
+      <summary className="pos-icon-button list-none [&::-webkit-details-marker]:hidden" aria-label={`Acciones de ${product.name}`} title="Acciones del producto">
+        <Ellipsis size={22} aria-hidden="true" />
+      </summary>
+      <div data-product-menu className={`absolute right-0 z-20 w-56 rounded-lg border border-line bg-white p-1 shadow-lg ${above ? "bottom-full mb-2" : "top-full mt-2"}`}>
+        <button className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-surface" aria-label={`Editar ${product.name} desde acciones`} onClick={() => choose(onEdit)}>
+          <Pencil size={18} aria-hidden="true" /> Editar
+        </button>
+        <button className="flex min-h-12 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-surface" aria-label={`${product.active ? "Desactivar" : "Activar"} ${product.name}`} onClick={() => choose(onToggle)}>
+          <Power size={18} aria-hidden="true" /> {product.active ? "Desactivar" : "Activar"}
+        </button>
+        <button className="flex min-h-12 w-full items-center gap-3 rounded-md border-t border-line px-3 text-left text-sm text-danger hover:bg-danger-soft" aria-label={`Eliminar ${product.name}`} onClick={() => choose(onDelete)}>
+          <Trash2 size={18} aria-hidden="true" /> Eliminar
+        </button>
+      </div>
+    </details>
+  );
+}
+
+function ProductDeletion({ product, access, onClose, onDeleted, onRefresh, onSessionError }: {
+  product: Product; access: PosAccess; onClose: () => void; onDeleted: (id: string) => void;
+  onRefresh: () => void; onSessionError?: (error: AccountClientError) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [uncertain, setUncertain] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const submitting = useRef(false);
+  const operationId = useRef(crypto.randomUUID());
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  function close() {
+    if (uncertain) onRefresh();
+    else onClose();
+  }
+  async function remove() {
+    if (submitting.current || conflict) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await posRequest(access, { command: "delete_product", productId: product.id, expectedVersion: product.version, operationId: operationId.current });
+      if (mounted.current) onDeleted(result.id);
+    } catch (caught) {
+      if (!mounted.current) return;
+      const changed = caught instanceof AccountClientError && caught.code === "PRODUCT_CHANGED";
+      setConflict(changed);
+      setUncertain(!(caught instanceof AccountClientError) || ["NETWORK_ERROR", "SERVER_ERROR"].includes(caught.code));
+      setError(changed ? "El producto cambió. Actualiza la lista y vuelve a intentarlo." : caught instanceof Error ? caught.message : "No pudimos eliminar el producto.");
+      if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) onSessionError?.(caught);
+    } finally {
+      submitting.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
+  return (
+    <PosDialog title="Eliminar producto" onClose={close} busy={busy}>
+      <p className="text-ink">¿Eliminar <strong className="font-medium [overflow-wrap:anywhere]">{product.name}</strong>?</p>
+      <p className="mt-3 text-sm">Se quitará del catálogo y no podrás recuperarlo. Las ventas anteriores se conservan.</p>
+      {error && <p className="mt-4 text-sm text-danger" role="alert">{error}</p>}
+      {uncertain && <p className="mt-3 text-sm">Reintenta para confirmar la eliminación.</p>}
+      <div className="mt-6 flex gap-3 max-tablet:flex-col">
+        <button className="pos-button pos-secondary" disabled={busy} onClick={close} data-dialog-autofocus>Cancelar</button>
+        {conflict ? (
+          <button className="pos-button pos-primary" onClick={onRefresh}>Actualizar productos</button>
+        ) : (
+          <button className="pos-button border-danger bg-danger text-white enabled:hover:brightness-90" disabled={busy} onClick={() => void remove()}>
+            {busy ? "Eliminando…" : uncertain ? "Reintentar eliminación" : "Eliminar producto"}
+          </button>
+        )}
+      </div>
+    </PosDialog>
   );
 }
 
