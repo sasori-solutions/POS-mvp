@@ -1,3 +1,9 @@
+## Routine CI — small automatic gate
+
+Larios requested fewer simple tests and automatic Cloudflare deployment in session `20261002-larios-ci-simple-auto-deploy`. PRs and `main` run `npm run test:smoke` (the nine existing unit tests in `tests/unit`) and `npm run build` (including TypeScript). These checks cover money/cart invariants, request payload validation and pending-sale retry storage; they require no browser download, Docker or Supabase service. A successful `main` run deploys its own build without repeating these checks.
+
+Use focused tests for the behavior being changed. `npm run test:e2e`, SQL, Deno and real local Supabase integration remain available; the old full CI is preserved as **Full checks (manual)**. The small default gate does not establish real OAuth, database authorization or complete UI coverage.
+
 ## Email recovery — local and production verification
 
 Agente de Larios, 1 October 2026. Final results: 54/54 real integration, 170/170 desktop/mobile browser cases, 18/18 Deno, build/typechecks, full browser/Auth/Edge/Postgres/Mailpit smoke and real 0006→0007 compatibility (44/48/27/23/29/21/16 statements). Final email UI text also passed 16/16 focused browser cases. Obsolete code-flow assertions were replaced; one run during Edge reload had three HTTP 502s, followed by the successful stable full suite. Production: 52 SQL source hashes match, 19 private tables/RPC grants pass, deployed Edge bytes match, 26/26 anonymous API probes and 28/28 public route/asset checks passed. Deployment: 9cbb112c-668d-4274-b411-3e592720e695. Real inbox delivery and authenticated cloud PIN reset remain unverified. Details: docs/pin-email-recovery.md.

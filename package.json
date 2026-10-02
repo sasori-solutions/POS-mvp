@@ -17,7 +17,8 @@
     "lint": "oxlint src supabase/functions tests --deny-warnings",
     "typecheck": "tsc --noEmit",
     "test:sql": "vitest run tests/sql",
-    "test:domain": "vitest run tests/unit"
+    "test:domain": "vitest run tests/unit",
+    "test:smoke": "vitest run tests/unit"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",
