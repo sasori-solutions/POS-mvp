@@ -1,0 +1,58 @@
+name: Deploy Cloudflare Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+# Only one production upload can run at a time. Keep the queued run instead of
+# interrupting a deployment that has already started.
+concurrency:
+  group: pos-mexico-pages-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    name: Publish verified main
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: production
+      url: https://pos-mexico-mvp.pages.dev
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+      - name: Reject an outdated commit
+        run: |
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Recheck main before upload
+        run: |
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+      - name: Require production credentials
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+      - name: Upload the checked build
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=pos-mexico-mvp --branch=main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify the public assets
+        run: npm run check:live -- https://pos-mexico-mvp.pages.dev
