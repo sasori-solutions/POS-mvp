@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeftRight, ChevronRight, ClipboardList, KeyRound, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText, ShieldCheck, Store, Tablet, Users, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, ChevronRight, ClipboardList, KeyRound, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText, Store, Tablet, Users, type LucideIcon } from 'lucide-react'
 import type { BusinessContext } from '../lib/contracts'
 import { roleSections } from '../lib/navigation'
 import './home-screen.css'
@@ -19,7 +19,6 @@ interface HomeScreenProps {
   onDevices?: () => void
   onSwitchBusiness?: () => void
   onChangePin?: () => void
-  onRecoveryCode?: () => void
   onSwitchEmployee?: () => void
   logoutLabel?: string
 }
@@ -41,7 +40,7 @@ const upcoming = {
   Productos: { title: 'Tu catálogo, próximamente', description: 'Aquí podrás agregar y organizar los productos de tu negocio.', icon: Package },
 } as const
 
-export default function HomeScreen({ business, onLock, onLogout, busy, error, notice, destination: selectedDestination, onDestinationChange, focusOnReturn, onSettings, onTeam, onDevices, onSwitchBusiness, onChangePin, onRecoveryCode, onSwitchEmployee, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
+export default function HomeScreen({ business, onLock, onLogout, busy, error, notice, destination: selectedDestination, onDestinationChange, focusOnReturn, onSettings, onTeam, onDevices, onSwitchBusiness, onChangePin, onSwitchEmployee, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
   const [localDestination, setLocalDestination] = useState<Destination>(business.role === 'kitchen' ? 'Comandas' : 'Venta')
   const destination = selectedDestination ?? localDestination
   const more = useRef<HTMLDivElement>(null)
@@ -97,10 +96,9 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, no
           {onTeam && row('employees', 'Empleados', Users, onTeam, 'Agregar personas y administrar su acceso')}
           {onDevices && row('devices', 'Dispositivos de caja', Tablet, onDevices, 'Tablets y computadoras donde trabaja tu equipo')}
         </section>}
-        {(onChangePin || (business.role === 'owner' && onRecoveryCode)) && <section className="pos-menu-group" aria-labelledby="more-access-title">
+        {onChangePin && <section className="pos-menu-group" aria-labelledby="more-access-title">
           <h2 id="more-access-title">Mi acceso</h2>
           {onChangePin && row('pin', 'Cambiar mi PIN', KeyRound, onChangePin)}
-          {business.role === 'owner' && onRecoveryCode && row('recovery', 'Código de recuperación', ShieldCheck, onRecoveryCode, 'Guarda un código por si olvidas tu PIN')}
         </section>}
         <section className="pos-menu-group" aria-labelledby="more-session-title">
           <h2 id="more-session-title">Sesión</h2>

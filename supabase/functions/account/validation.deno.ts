@@ -108,9 +108,11 @@ Deno.test('PIN setup, recovery enrollment and change require explicit scoped aut
     { action: 'set_employee_pin', setupCode: 'b'.repeat(64), pin: '024680', operationId },
     { action: 'device_pin_setup_details', deviceToken: 'a'.repeat(64), setupCode: 'b'.repeat(64) },
     { action: 'device_set_employee_pin', deviceToken: 'a'.repeat(64), setupCode: 'b'.repeat(64), pin: '024680', operationId },
-    { action: 'create_recovery_code', ...owner, currentPin: '015827', operationId },
+    { action: 'request_pin_email', businessId: validCreate.operationId },
+    { action: 'device_request_pin_email', deviceToken: 'a'.repeat(64), employeeId: validCreate.operationId },
+    { action: 'pin_email_details', recoveryToken: 'b'.repeat(64) },
     { action: 'change_pin', ...owner, currentPin: '015827', pin: '024680', operationId },
-    { action: 'reset_pin', businessId: validCreate.operationId, recoveryCode: 'b'.repeat(64), pin: '024680', operationId },
+    { action: 'confirm_pin_email', recoveryToken: 'b'.repeat(64), pin: '024680', operationId },
   ]
   for (const request of requests) {
     assert.deepEqual(parseAccountRequest(request), request)
@@ -118,6 +120,6 @@ Deno.test('PIN setup, recovery enrollment and change require explicit scoped aut
     if ('operationId' in request) assert.throws(() => parseAccountRequest({ ...request, operationId: 'invalid' }))
     if ('currentPin' in request) assert.throws(() => parseAccountRequest({ ...request, currentPin: '12345' }))
     if ('setupCode' in request) assert.throws(() => parseAccountRequest({ ...request, setupCode: 'b'.repeat(63) }))
-    if ('recoveryCode' in request) assert.throws(() => parseAccountRequest({ ...request, recoveryCode: 'b'.repeat(63) }))
+    if ('recoveryToken' in request) assert.throws(() => parseAccountRequest({ ...request, recoveryToken: 'b'.repeat(63) }))
   }
 })

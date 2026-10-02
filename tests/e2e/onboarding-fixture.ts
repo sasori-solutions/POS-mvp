@@ -4,7 +4,6 @@ import { fixtureBusiness, fixtureOperatorToken, fixturePin, mockAccount } from '
 
 export const fixtureInvitation = 'c1'.repeat(32);
 export const fixturePinSetup = 'e4'.repeat(32);
-export const fixtureRecoveryCode = 'f5'.repeat(32);
 export const fixturePairingCode = 'b2'.repeat(32);
 export const fixtureDeviceToken = 'd3'.repeat(32);
 export const fixtureKitchen = { id: '84c75082-4633-4f53-8f34-a2ed0c7b2e66', name: 'Cocina de prueba', role: 'kitchen' as const, active: true, googleLinked: false, pinReady: true };
@@ -17,7 +16,6 @@ export async function mockOnboarding(page: Page, options: {
   existingBusiness?: boolean;
   authenticated?: boolean;
   role?: BusinessRole;
-  requirePinReauth?: boolean;
   createEmployeeResponseLosses?: number;
   invitations?: InvitationSummary[];
   employees?: EmployeeSummary[];
@@ -115,15 +113,13 @@ export async function mockOnboarding(page: Page, options: {
         currentDeviceOperator = '';
         return reply({ ...unlocked(), business: { ...projection(employee.role, employee), employee: { id: employee.id, name: employee.name, role: employee.role } } });
       }
-      case 'reset_pin':
-        if (options.requirePinReauth && calls.filter((call) => call.action === 'status').length < 2) return reject(401, 'REAUTH_REQUIRED', 'Vuelve a verificar tu cuenta de Google.');
-        if (body.recoveryCode !== fixtureRecoveryCode) return reject(401, 'RECOVERY_INVALID', 'Revisa el código de recuperación.');
-        currentPin = body.pin;
-        locked = false;
-        return reply({ ...unlocked(), recoveryCode: 'f6'.repeat(32) });
-      case 'create_recovery_code':
-        if (locked || body.currentPin !== currentPin) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
-        return reply({ recoveryCode: fixtureRecoveryCode });
+      case 'request_pin_email': case 'device_request_pin_email':
+        return reply({ sent: true, retryAfterSeconds: 60 });
+      case 'pin_email_details':
+        return reply({ businessName: business.name, expiresAt: new Date(Date.now() + 900_000).toISOString() });
+      case 'confirm_pin_email':
+        currentPin = body.pin; locked = true;
+        return reply({ updated: true });
       case 'change_pin':
         if (locked || body.currentPin !== currentPin) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
         currentPin = body.pin;

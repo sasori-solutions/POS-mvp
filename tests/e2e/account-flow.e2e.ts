@@ -38,7 +38,6 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
   await confirmation.fill(fixturePin);
   await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
-  await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
   await expect(page).toHaveURL(/\/business\/ready$/);
   await page.screenshot({ path: `/tmp/pos-mexico-${testInfo.project.name}-ready.png`, fullPage: true });
@@ -103,7 +102,6 @@ test('a lost business-creation response can be retried with the same operation i
   await page.getByTestId('pin-input').fill(fixturePin);
   await page.getByTestId('pin-confirm-input').fill(fixturePin);
   await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
-  await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
   const attempts = calls.filter((call) => call.action === 'create_business');
   expect(attempts).toHaveLength(2);
@@ -137,7 +135,6 @@ test('business creation exposes the home transition only after the API succeeds'
     await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
     await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
     release?.();
-    await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
     const home = page.getByRole('button', { name: 'Ir al inicio', exact: true });

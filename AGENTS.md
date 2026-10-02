@@ -1,3 +1,7 @@
+## Recuperación por correo — implementación local
+
+Agente de Larios, 1 de octubre de 2026. Larios pidió eliminar códigos de recuperación y reautenticación Google. El código usa un enlace de 15 minutos y un solo uso enviado al correo confirmado, limitado al PIN, que cierra operadores anteriores. Se retiraron el enrolamiento y la pantalla de guardar código. Resend y el dominio aportado larioscow.dev están pendientes de activar. No se afirma envío cloud. Pasaron 54/54 integración, 170/170 navegador, 18/18 Deno, build/typechecks y smoke real con Mailpit. Ver docs/pin-email-recovery.md. Las descripciones de recuperación por código siguientes son historial.
+
 # AGENTS.md — POS México: instrucciones y PRD
 
 Fecha de extracción: **1 de octubre de 2026**, America/Mexico_City. Repositorio: [sasori-solutions/POS-mvp](https://github.com/sasori-solutions/POS-mvp). Base de código revisada: `9f60e0fd692b54610e6be409bb37b496fc7e65d7`.

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture';
-import { fixtureCashier, fixtureCashierPin, fixtureDeviceToken, fixtureInvitation, fixtureKitchen, fixturePairingCode, fixtureRecoveryCode, mockOnboarding } from './onboarding-fixture';
+import { fixtureCashier, fixtureCashierPin, fixtureDeviceToken, fixtureInvitation, fixtureKitchen, fixturePairingCode, mockOnboarding } from './onboarding-fixture';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', (route) => {
@@ -36,7 +36,6 @@ test('creation saves branch, register and progressive profile for later editing'
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await fillAccountPin(page);
   await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
-  await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
   const create = calls.find((call) => call.action === 'create_business');
   expect(create).toMatchObject({ profile: {
@@ -173,68 +172,9 @@ test('a cashier cannot open business settings or employee administration', async
   expect(calls.filter((call) => ['team', 'update_business'].includes(call.action))).toHaveLength(0);
 });
 
-test('forgotten PIN recovery requires a fresh Google identity and saves the confirmed replacement', async ({ page }) => {
-  const { calls, authorizations } = await mockOnboarding(page, { existingBusiness: true, requirePinReauth: true });
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Olvidé mi PIN', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Recupera tu PIN' })).toBeVisible();
-  expect(calls.filter((call) => call.action === 'reset_pin')).toHaveLength(0);
-  const freshSession = fixtureAuthSession({}, 'ee3124de-c35c-464b-b77a-19bd3f18fc89');
-  await page.route('http://127.0.0.1:54321/auth/v1/authorize**', (route) => route.fulfill({ contentType: 'text/plain', body: 'Fresh OAuth captured' }));
-  await page.route('http://127.0.0.1:54321/auth/v1/token?grant_type=pkce', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(freshSession) }));
-  const authorization = page.waitForRequest((request) => request.url().includes('/auth/v1/authorize'));
-  await page.getByRole('button', { name: 'Volver a verificar con Google', exact: true }).click();
-  await authorization;
-  await page.goto('/auth/callback?code=fresh-fixture-code');
-  await expect(page.getByRole('heading', { name: 'Crea un nuevo PIN' })).toBeVisible();
-  await page.getByLabel('Código de recuperación', { exact: true }).fill(fixtureRecoveryCode);
-  const replacementPin = '068214';
-  await page.getByTestId('pin-input').fill(replacementPin);
-  await page.getByTestId('pin-confirm-input').fill('999999');
-  await page.getByRole('button', { name: 'Guardar nuevo PIN', exact: true }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
-  expect(calls.filter((call) => call.action === 'reset_pin')).toHaveLength(0);
-  await page.getByTestId('pin-confirm-input').fill(replacementPin);
-  await page.getByRole('button', { name: 'Guardar nuevo PIN', exact: true }).click();
-  await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
-  expect(authorizations.find((call) => call.action === 'reset_pin')?.authorization).toBe(`Bearer ${freshSession.access_token}`);
-  expect(calls.find((call) => call.action === 'reset_pin')).toMatchObject({ businessId: fixtureBusiness.id, pin: replacementPin });
-  await page.reload();
-  await unlockOwner(page, replacementPin);
-  expect(await page.evaluate(() => JSON.stringify(Object.entries(localStorage)))).not.toContain(replacementPin);
-  expect(await page.evaluate(() => JSON.stringify(Object.entries(sessionStorage)))).not.toContain(replacementPin);
-});
 
-test('logout cancels Google reverification while old identity revocation is pending', async ({ page }) => {
-  await mockOnboarding(page, { existingBusiness: true });
-  const googleAuthorizations: string[] = [];
-  await page.route('http://127.0.0.1:54321/auth/v1/authorize**', async (route) => {
-    googleAuthorizations.push(route.request().url());
-    await route.fulfill({ contentType: 'text/plain', body: 'Unexpected Google redirect after logout' });
-  });
-  let release: (() => void) | undefined;
-  await page.route('http://127.0.0.1:54321/auth/v1/logout**', async (route) => {
-    await new Promise<void>((resolve) => { release = resolve; });
-    await route.fallback();
-  });
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Olvidé mi PIN', exact: true }).click();
-  await page.getByRole('button', { name: 'Volver a verificar con Google', exact: true }).click();
-  try {
-    await expect.poll(() => typeof release).toBe('function');
-    await broadcastLogout(page);
-    await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeVisible();
-    const revoked = page.waitForResponse((response) => response.url().includes('/auth/v1/logout'));
-    release?.();
-    await revoked;
-    await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeEnabled();
-    await nextPaint(page);
-    expect(googleAuthorizations).toEqual([]);
-    await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Crea un nuevo PIN', exact: true })).not.toBeVisible();
-  } finally { release?.(); }
-});
+
+
 
 test('a context role change removes the previously active money destination', async ({ page }) => {
   const fixture = await mockOnboarding(page, { existingBusiness: true });
@@ -462,7 +402,7 @@ test('Más entries work by keyboard and return focus to the previous task', asyn
   await page.goto('/');
   await unlockOwner(page);
   await openMore(page);
-  for (const name of ['Empleados', 'Dispositivos de caja', 'Datos del negocio', 'Cambiar mi PIN', 'Código de recuperación']) {
+  for (const name of ['Empleados', 'Dispositivos de caja', 'Datos del negocio', 'Cambiar mi PIN']) {
     const entry = page.getByRole('button', { name, exact: true });
     await entry.focus();
     await entry.press('Enter');

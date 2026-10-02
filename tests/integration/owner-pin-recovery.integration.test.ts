@@ -17,7 +17,7 @@ let owner: Identity;
 let employee: Identity;
 let otherOwner: Identity;
 
-describe.skipIf(!config)('owner PIN security against real local Auth/Edge/Postgres', () => {
+describe.skipIf(!config)('email recovery and PIN security against real local Auth/Edge/Postgres/Mailpit', () => {
   beforeAll(async () => {
     admin = createClient(config!.url, config!.serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
     [owner, employee, otherOwner] = await Promise.all([newIdentity(), newIdentity(), newIdentity()]);
@@ -29,143 +29,92 @@ describe.skipIf(!config)('owner PIN security against real local Auth/Edge/Postgr
     if (businessIds.length) sql(`delete from app_private.businesses where id in (${businessIds.map(uuid).join(',')});`);
   }, 30_000);
 
-  it('offers recovery only to the owner and never enrolls legacy businesses using Google alone', async () => {
+  it('sends a scoped email to the confirmed identity and never exposes the link in the API response', async () => {
     const business = await newBusiness();
-    const status = await account<{ businesses: { id: string; canRecoverPin: boolean; recoveryReady: boolean }[] }>(owner, { action: 'status' });
-    expect(status.body.data!.businesses.find(b => b.id === business.business.id)).toMatchObject({ canRecoverPin: true, recoveryReady: false });
-    const reset = await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode: 'a'.repeat(64), operationId: randomUUID() });
-    expect(reset.body.error?.code).toBe('RECOVERY_UNAVAILABLE');
-    expect((await account(owner, { action: 'context', ...args(business) })).status).toBe(200);
+    const result = await requestMail(business);
+    expect(result.response.body.data).toEqual({ sent: true, retryAfterSeconds: 60 });
+    expect(result.mail.To.map((to: { Address: string }) => to.Address)).toEqual([owner.email]);
+    expect(result.mail.Text).toContain('El enlace vence en 15 minutos');
+    expect(result.mail.Text).not.toContain('Google');
+    expect(sql(`select token_hash=extensions.digest('${result.token}','sha256') and delivered_at is not null from app_private.pin_email_recoveries where business_id=${uuid(business.business.id)};`).trim()).toBe('t');
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: result.token })).status).toBe(200);
+    expect((await account(null, { action: 'request_pin_email', businessId: business.business.id })).body.error?.code).toBe('AUTH_REQUIRED');
+    expect((await account(otherOwner, { action: 'request_pin_email', businessId: business.business.id })).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
+    for (const action of ['reset_pin', 'create_recovery_code']) expect((await account(owner, { action, ...args(business), pin, recoveryCode: 'a'.repeat(64), operationId: randomUUID() })).body.error?.code).toBe('VALIDATION_ERROR');
+    expect(() => sql(`select public.account_manage(${uuid(owner.userId)},${uuid(owner.sessionId)},'reset_pin','{}');`)).toThrow();
   });
 
-  it('requires owner operator plus current PIN to enroll, scopes the code to its owner/business and redacts employee recovery', async () => {
-    const business = await newBusiness(); const other = await newBusiness(otherOwner);
-    const request = { action: 'create_recovery_code', ...args(business), currentPin: pin, operationId: randomUUID() };
-    expect((await account(owner, { ...request, operatorToken: '0'.repeat(64) })).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(owner, { ...request, currentPin: '111111' })).body.error?.code).toBe('PIN_INVALID');
-    expect((await account(otherOwner, request)).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
-    const enrolled = await account<{ recoveryCode: string }>(owner, request); expect(enrolled.status).toBe(200);
-    const recoveryCode = enrolled.body.data!.recoveryCode; expect(recoveryCode).toMatch(/^[a-f0-9]{64}$/);
-    expect(sql(`select octet_length(code_hash)=32 and code_hash=extensions.digest('${recoveryCode}','sha256') from app_private.owner_pin_recovery_credentials where business_id=${uuid(business.business.id)};`).trim()).toBe('t');
-    expect((await account<{ businesses: unknown[] }>(owner, { action: 'status' })).body.data!.businesses).toContainEqual(expect.objectContaining({ id: business.business.id, canRecoverPin: true, recoveryReady: true }));
-    const member = await invitedEmployee(business);
-    const memberStatus = await account<{ businesses: { id: string; canRecoverPin: boolean; recoveryReady: boolean }[] }>(employee, { action: 'status' });
-    expect(memberStatus.body.data!.businesses.find(b => b.id === business.business.id)).toMatchObject({ canRecoverPin: false, recoveryReady: false });
-    expect((await account(employee, { action: 'create_recovery_code', ...args(member), currentPin: '024681', operationId: randomUUID() })).body.error?.code).toBe('PERMISSION_DENIED');
-    expect((await account(employee, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() })).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
-    const otherCode = await enroll(other, otherOwner);
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode: otherCode, operationId: randomUUID() })).body.error?.code).toBe('RECOVERY_INVALID');
-    expect((await account(otherOwner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() })).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
+  it('enforces per-account send cooldown and only the latest delivered link works', async () => {
+    const business = await newBusiness(); const first = await requestMail(business);
+    const rate = await account(owner, { action: 'request_pin_email', businessId: business.business.id });
+    expect(rate.body.error?.code).toBe('RECOVERY_LOCKED'); expect(rate.body.error?.retryAfterSeconds).toBeGreaterThan(0);
+    const next = await requestMail(business);
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: first.token })).body.error?.code).toBe('RECOVERY_INVALID');
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: next.token })).status).toBe(200);
   });
 
-  it('cannot bypass the shared PIN lockout while enrolling an independent recovery factor', async () => {
-    const business = await newBusiness();
-    const wrong = await Promise.all(Array.from({ length: 5 }, () => account(owner, { action: 'create_recovery_code', ...args(business), currentPin: '111111', operationId: randomUUID() })));
-    expect(wrong.filter(r => r.body.error?.code === 'PIN_INVALID')).toHaveLength(4);
-    expect(wrong.filter(r => r.body.error?.code === 'PIN_LOCKED')).toHaveLength(1);
-    expect((await account(owner, { action: 'create_recovery_code', ...args(business), currentPin: pin, operationId: randomUUID() })).body.error?.code).toBe('PIN_LOCKED');
-    expect(sql(`select count(*) from app_private.owner_pin_recovery_credentials where business_id=${uuid(business.business.id)};`).trim()).toBe('0');
-  });
-
-  it('requires original fresh owner authentication even with the independent code', async () => {
-    const business = await newBusiness(); const recoveryCode = await enroll(business);
-    const request = { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() };
-    sql(`update auth.sessions set created_at=now()-interval '6 minutes' where id=${uuid(owner.sessionId)};`);
-    expect((await account(owner, request)).body.error?.code).toBe('REAUTH_REQUIRED');
-    expect((await account(owner, { action: 'context', ...args(business) })).status).toBe(200);
-    sql(`update auth.sessions set created_at=now() where id=${uuid(owner.sessionId)};`);
-    expect((await account(owner, request)).status).toBe(200);
-    sql(`delete from auth.sessions where id=${uuid(otherOwner.sessionId)};`);
-    expect((await account(otherOwner, { action: 'status' })).body.error?.code).toBe('AUTH_REQUIRED');
-    otherOwner = await newIdentity();
-  });
-
-  it('consumes recovery atomically, replaces its code, clears PIN cooldown and closes every personal/shared operator for that owner', async () => {
-    const business = await newBusiness(); const recoveryCode = await enroll(business);
-    const anotherSession = await login(owner); const second = await account<Session>(anotherSession, { action: 'unlock', businessId: business.business.id, pin }); expect(second.status).toBe(200);
-    const device = await pairedOwner(business);
-    sql(`update app_private.operator_credentials set failed_attempts=5,locked_until=now()+interval '15 minutes' where business_id=${uuid(business.business.id)} and user_id=${uuid(owner.userId)};`);
-    const result = await account<Session & { recoveryCode: string }>(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() });
-    expect(result.status).toBe(200); const recovered = result.body.data!; expect(recovered.recoveryCode).toMatch(/^[a-f0-9]{64}$/); expect(recovered.recoveryCode).not.toBe(recoveryCode);
-    for (const [identity, token] of [[owner, business.operatorToken], [anotherSession, second.body.data!.operatorToken]] as const) expect((await account(identity, { action: 'context', businessId: business.business.id, operatorToken: token })).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(null, { action: 'device_context', deviceToken: device.deviceToken, operatorToken: device.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(owner, { action: 'context', ...args(recovered) })).status).toBe(200);
-    expect(sql(`select failed_attempts=0 and locked_until is null from app_private.operator_credentials where business_id=${uuid(business.business.id)} and user_id=${uuid(owner.userId)};`).trim()).toBe('t');
+  it('recovers without Google, clears PIN lockout, revokes personal/register operators and makes the link one-use', async () => {
+    const business = await newBusiness(); const device = await pairedOwner(business); const mail = await requestMail(business);
+    sql(`update app_private.operator_credentials set failed_attempts=5,locked_until=now()+interval '15 minutes' where business_id=${uuid(business.business.id)};`);
+    const payload = { action: 'confirm_pin_email', recoveryToken: mail.token, pin: '135790', operationId: randomUUID() };
+    const result = await account(null, payload); expect(result.status).toBe(200); expect(result.body.data).toEqual({ updated: true });
+    expect((await account(owner, { action: 'context', ...args(business) })).body.error?.code).toBe('SESSION_INVALID');
+    expect((await account(null, { action: 'device_context', ...device })).body.error?.code).toBe('SESSION_INVALID');
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: mail.token })).body.error?.code).toBe('RECOVERY_INVALID');
+    expect((await account(null, { ...payload, operationId: randomUUID() })).body.error?.code).toBe('RECOVERY_INVALID');
+    expect((await account(null, payload)).status).toBe(200);
     expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin })).body.error?.code).toBe('PIN_INVALID');
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '246802', recoveryCode, operationId: randomUUID() })).body.error?.code).toBe('RECOVERY_INVALID');
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '246802', recoveryCode: recovered.recoveryCode, operationId: randomUUID() })).status).toBe(200);
+    const current = await account<Session>(owner, { action: 'unlock', businessId: business.business.id, pin: '135790' }); expect(current.status).toBe(200);
+    const changed = await account(owner, { action: 'change_pin', ...args(current.body.data!), currentPin: '135790', pin: '246802', operationId: randomUUID() }); expect(changed.status).toBe(200);
+    expect((await account(null, payload)).body.error?.code).toBe('RECOVERY_INVALID');
   });
 
-  it('commits concurrent failed recovery attempts and prevents valid recovery during its bounded cooldown', async () => {
-    const business = await newBusiness(); const recoveryCode = await enroll(business);
-    const wrong = await Promise.all(Array.from({ length: 5 }, () => account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode: '0'.repeat(64), operationId: randomUUID() })));
-    expect(wrong.filter(r => r.body.error?.code === 'RECOVERY_INVALID')).toHaveLength(4); expect(wrong.filter(r => r.body.error?.code === 'RECOVERY_LOCKED')).toHaveLength(1);
-    const blocked = await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() });
-    expect(blocked.body.error?.code).toBe('RECOVERY_LOCKED'); expect(blocked.body.error?.retryAfterSeconds).toBeGreaterThan(0); expect(blocked.body.error?.retryAfterSeconds).toBeLessThanOrEqual(900);
-    expect(sql(`select failed_attempts=5 and locked_until>now() from app_private.owner_pin_recovery_credentials where business_id=${uuid(business.business.id)};`).trim()).toBe('t');
-    sql(`update app_private.owner_pin_recovery_credentials set locked_until=now()-interval '1 second' where business_id=${uuid(business.business.id)};`);
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() })).status).toBe(200);
+  it('does not consume the link when read, rejects expiry and binds it to the unchanged account email and PIN', async () => {
+    const business = await newBusiness(); const mail = await requestMail(business);
+    for (let i=0;i<2;i++) expect((await account(null, { action: 'pin_email_details', recoveryToken: mail.token })).status).toBe(200);
+    sql(`update app_private.pin_email_recoveries set expires_at=now()-interval '1 second' where business_id=${uuid(business.business.id)};`);
+    expect((await account(null, { action: 'confirm_pin_email', recoveryToken: mail.token, pin: '135790', operationId: randomUUID() })).body.error?.code).toBe('RECOVERY_INVALID');
+    const second = await requestMail(business);
+    const changed = await account(owner, { action: 'change_pin', ...args(business), currentPin: pin, pin: '246802', operationId: randomUUID() }); expect(changed.status).toBe(200);
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: second.token })).body.error?.code).toBe('RECOVERY_INVALID');
+    const third = await requestMail(business);
+    sql(`update app_private.pin_email_recoveries set email='changed@example.test' where business_id=${uuid(business.business.id)};`);
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: third.token })).body.error?.code).toBe('RECOVERY_INVALID');
   });
 
-  it('recovers lost responses without storing raw codes and rejects stale generation/credential replays', async () => {
-    const business = await newBusiness();
-    const enrollment = { action: 'create_recovery_code', ...args(business), currentPin: pin, operationId: randomUUID() };
-    const first = await account<{ recoveryCode: string }>(owner, enrollment); const replay = await account<{ recoveryCode: string }>(owner, enrollment);
-    expect(first.status).toBe(200); expect(replay.status).toBe(200); expect(first.body.data!.recoveryCode).not.toBe(replay.body.data!.recoveryCode);
-    const recovery = { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode: replay.body.data!.recoveryCode, operationId: randomUUID() };
-    const reset = await account<Session & { recoveryCode: string }>(owner, recovery); const retry = await account<Session & { recoveryCode: string }>(owner, recovery);
-    expect(reset.status).toBe(200); expect(retry.status).toBe(200); expect(retry.body.data!.recoveryCode).not.toBe(reset.body.data!.recoveryCode);
-    expect((await account(owner, { action: 'context', ...args(reset.body.data!) })).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '246802', recoveryCode: reset.body.data!.recoveryCode, operationId: randomUUID() })).body.error?.code).toBe('RECOVERY_INVALID');
-    const changed = await account<Session>(owner, { action: 'change_pin', ...args(retry.body.data!), currentPin: '135790', pin: '246802', operationId: randomUUID() }); expect(changed.status).toBe(200);
-    expect((await account(owner, recovery)).body.error?.code).toBe('OPERATION_CONFLICT');
-    expect((await account(owner, { ...enrollment, ...args(changed.body.data!), currentPin: '246802' })).body.error?.code).toBe('OPERATION_CONFLICT');
-    expect((await account(owner, { action: 'context', ...args(changed.body.data!) })).status).toBe(200);
+  it('allows a linked employee to request their own recovery from a paired register, without disclosing their email', async () => {
+    const business = await newBusiness(); const member = await invitedEmployee(business); const device = await pairedOwner(business);
+    const mail = await requestMail(business, employee, { action: 'device_request_pin_email', deviceToken: device.deviceToken, employeeId: member.business.employee.id });
+    expect(mail.mail.To.map((to: { Address: string }) => to.Address)).toEqual([employee.email]);
+    expect((await account(null, { action: 'confirm_pin_email', recoveryToken: mail.token, pin: '135790', operationId: randomUUID() })).status).toBe(200);
+    expect((await account(employee, { action: 'unlock', businessId: business.business.id, pin: '135790' })).status).toBe(200);
+    expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin })).status).toBe(200);
+    expect((await account(null, { action: 'device_request_pin_email', deviceToken: '0'.repeat(64), employeeId: member.business.employee.id })).body.error?.code).toBe('DEVICE_REVOKED');
   });
 
-  it('allows only one competing recovery operation to consume a code', async () => {
-    const business = await newBusiness(); const recoveryCode = await enroll(business);
-    const results = await Promise.all(['135790', '246802'].map(nextPin => account<Session & { recoveryCode: string }>(owner, { action: 'reset_pin', businessId: business.business.id, pin: nextPin, recoveryCode, operationId: randomUUID() })));
-    expect(results.filter(r => r.status === 200)).toHaveLength(1); expect(results.filter(r => r.body.error?.code === 'RECOVERY_INVALID')).toHaveLength(1);
-    const success = results.find(r => r.status === 200)!.body.data!;
-    expect((await account(owner, { action: 'context', ...args(success) })).status).toBe(200);
-    expect(sql(`select count(*) from app_private.pin_security_operations where business_id=${uuid(business.business.id)} and action='reset_pin';`).trim()).toBe('1');
+  it('cannot revive a recovery after employee removal and restoration, or use one after a ban', async () => {
+    const business = await newBusiness(); const member = await invitedEmployee(business); const mail = await requestMail(business, employee);
+    expect((await account(owner, { action: 'delete_employee', ...args(business), employeeId: member.business.employee.id, operationId: randomUUID() })).status).toBe(200);
+    expect((await account(owner, { action: 'restore_employee', ...args(business), employeeId: member.business.employee.id, operationId: randomUUID() })).status).toBe(200);
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: mail.token })).body.error?.code).toBe('RECOVERY_INVALID');
+    const fresh = await requestMail(business, employee);
+    sql(`update auth.users set banned_until=now()+interval '1 hour' where id=${uuid(employee.userId)};`);
+    expect((await account(null, { action: 'pin_email_details', recoveryToken: fresh.token })).body.error?.code).toBe('RECOVERY_INVALID');
+    sql(`update auth.users set banned_until=null where id=${uuid(employee.userId)};`);
   });
 
-  it('serializes recovery against personal/device unlock and original creation replay so no old-PIN token survives', async () => {
-    const creation = createRequest(); const first = await account<Session>(owner, creation); expect(first.status).toBe(200);
-    const business = first.body.data!; businessIds.push(business.business.id); const recoveryCode = await enroll(business); const device = await pairedOwner(business);
-    const [recovered, personal, shared, replay] = await Promise.all([
-      account<Session & { recoveryCode: string }>(owner, { action: 'reset_pin', businessId: business.business.id, pin: '135790', recoveryCode, operationId: randomUUID() }),
-      account<Session>(owner, { action: 'unlock', businessId: business.business.id, pin }),
-      account<Session>(null, { action: 'device_unlock', deviceToken: device.deviceToken, employeeId: business.business.employee.id, pin }),
-      account<Session>(owner, creation),
-    ]);
-    expect(recovered.status).toBe(200);
-    for (const reply of [personal, replay]) {
-      expect([200, 401, 409]).toContain(reply.status);
-      if (reply.status === 200) expect((await account(owner, { action: 'context', ...args(reply.body.data!) })).body.error?.code).toBe('SESSION_INVALID');
-    }
-    expect([200, 401]).toContain(shared.status);
-    if (shared.status === 200) expect((await account(null, { action: 'device_context', deviceToken: device.deviceToken, operatorToken: shared.body.data!.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(owner, { action: 'context', ...args(recovered.body.data!) })).status).toBe(200);
-    expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin })).body.error?.code).toBe('PIN_INVALID');
+  it('serializes competing confirmations and old-PIN unlocks without leaving an old operator active', async () => {
+    const business = await newBusiness(); const mail = await requestMail(business);
+    const results = await Promise.all(['135790','246802'].map(nextPin => account(null, { action: 'confirm_pin_email', recoveryToken: mail.token, pin: nextPin, operationId: randomUUID() })));
+    expect(results.filter(r => r.status===200)).toHaveLength(1); expect(results.filter(r => r.body.error?.code==='RECOVERY_INVALID')).toHaveLength(1);
+    expect((await account(owner, { action: 'context', ...args(business) })).body.error?.code).toBe('SESSION_INVALID');
+    expect(sql(`select count(*) from app_private.pin_security_audit_events where business_id=${uuid(business.business.id)} and event='pin_recovered';`).trim()).toBe('1');
   });
 
-  it('changes only the signed-in person’s PIN with its current PIN, preserves recovery and invalidates stale change/creation retries', async () => {
-    const creation = createRequest(); const first = await account<Session>(owner, creation); expect(first.status).toBe(200); const business = first.body.data!; businessIds.push(business.business.id);
-    const recoveryCode = await enroll(business); const device = await pairedOwner(business);
-    const request = { action: 'change_pin', ...args(business), currentPin: pin, pin: '135790', operationId: randomUUID() };
-    expect((await account(owner, { ...request, currentPin: '111111' })).body.error?.code).toBe('PIN_INVALID');
-    expect((await account(owner, { ...request, operatorToken: '0'.repeat(64) })).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(otherOwner, request)).body.error?.code).toBe('BUSINESS_ACCESS_DENIED');
-    const changed = await account<Session>(owner, request); expect(changed.status).toBe(200);
-    expect((await account(null, { action: 'device_context', deviceToken: device.deviceToken, operatorToken: device.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
-    const replay = await account<Session>(owner, request); expect(replay.status).toBe(200); expect(replay.body.data!.operatorToken).not.toBe(changed.body.data!.operatorToken);
-    expect((await account(owner, creation)).body.error?.code).toBe('OPERATION_CONFLICT');
-    const later = await account<Session>(owner, { action: 'change_pin', ...args(replay.body.data!), currentPin: '135790', pin: '246802', operationId: randomUUID() }); expect(later.status).toBe(200);
-    expect((await account(owner, request)).body.error?.code).toBe('OPERATION_CONFLICT');
-    expect((await account(owner, { action: 'reset_pin', businessId: business.business.id, pin: '357913', recoveryCode, operationId: randomUUID() })).status).toBe(200);
+  it('keeps recovery storage and RPCs inaccessible to browser roles', async () => {
+    expect(sql("select relrowsecurity from pg_class where oid='app_private.pin_email_recoveries'::regclass;").trim()).toBe('t');
+    expect(sql("select has_table_privilege('anon','app_private.pin_email_recoveries','select') or has_table_privilege('authenticated','app_private.pin_email_recoveries','select');").trim()).toBe('f');
+    for (const fn of ['account_request_pin_email(uuid,uuid,uuid)','account_device_request_pin_email(text,uuid)','account_confirm_pin_email(text,jsonb)','account_pin_email_delivery(uuid,boolean)']) expect(sql(`select has_function_privilege('anon','public.${fn}','execute') or has_function_privilege('authenticated','public.${fn}','execute');`).trim()).toBe('f');
   });
 
   it('uses the existing bounded PIN counter for normal changes and exact lost-response change retries', async () => {
@@ -194,15 +143,6 @@ describe.skipIf(!config)('owner PIN security against real local Auth/Edge/Postgr
     expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin })).status).toBe(200);
   });
 
-  it('keeps new security tables and private wrappers inaccessible to browser roles and exposes no raw code in storage/audit', async () => {
-    for (const table of ['owner_pin_recovery_credentials', 'pin_security_operations', 'pin_security_audit_events']) {
-      expect(sql(`select relrowsecurity from pg_class where oid='app_private.${table}'::regclass;`).trim()).toBe('t');
-      const direct = await fetch(`${config!.url}/rest/v1/${table}?select=*`, { headers: { apikey: config!.anonKey, authorization: `Bearer ${owner.token}`, 'accept-profile': 'app_private' } }); expect(direct.status).toBeGreaterThanOrEqual(400); expect(direct.status).toBeLessThan(500);
-      expect(sql(`select has_table_privilege('anon','app_private.${table}','select') or has_table_privilege('authenticated','app_private.${table}','select');`).trim()).toBe('f');
-    }
-    expect(sql("select count(*) from information_schema.columns where table_schema='app_private' and table_name in ('owner_pin_recovery_credentials','pin_security_operations','pin_security_audit_events') and column_name in ('pin','recovery_code','code','operator_token');").trim()).toBe('0');
-    expect(sql("select has_function_privilege('anon','public.account_manage(uuid,uuid,text,jsonb)','execute') or has_function_privilege('authenticated','app_private.recover_owner_pin(uuid,uuid,jsonb)','execute');").trim()).toBe('f');
-  });
 });
 
 function localConfig(): Config | null {
@@ -232,7 +172,6 @@ async function newBusiness(identity = owner): Promise<Session> {
   const response = await account<Session>(identity, createRequest()); expect(response.status).toBe(200); const result = response.body.data!; businessIds.push(result.business.id); return result;
 }
 function args(session: Session) { return { businessId: session.business.id, operatorToken: session.operatorToken }; }
-async function enroll(session: Session, identity = owner) { const response = await account<{ recoveryCode: string }>(identity, { action: 'create_recovery_code', ...args(session), currentPin: pin, operationId: randomUUID() }); expect(response.status).toBe(200); return response.body.data!.recoveryCode; }
 async function invite(session: Session) { const result = await account<{ invitationCode: string }>(owner, { action: 'create_invitation', ...args(session), name: 'Persona sintética', role: 'cashier', operationId: randomUUID() }); expect(result.status).toBe(200); return result.body.data!.invitationCode; }
 async function invitedEmployee(session: Session) { const response = await account<Session>(employee, { action: 'accept_invitation', invitationCode: await invite(session), pin: '024681', operationId: randomUUID() }); expect(response.status).toBe(200); return response.body.data!; }
 async function pairedOwner(session: Session) {
@@ -247,3 +186,16 @@ async function account<T = unknown>(identity: Identity | null, request: Record<s
 }
 function sql(statement: string) { return execFileSync('docker', ['exec', '-i', config!.dbContainer, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At', '-q', '-c', statement], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
 function uuid(value: string) { if (!/^[a-f0-9-]{36}$/i.test(value)) throw new Error('Expected synthetic UUID.'); return `'${value}'::uuid`; }
+
+async function requestMail(business: Session, identity = owner, request?: Record<string, unknown>) {
+  // Each test isolates the rate window for this synthetic account; the cooldown test checks the real rejection.
+  sql(`update app_private.pin_email_recoveries set created_at=now()-interval '2 hours' where user_id=${uuid(identity.userId)};`);
+  const response = await account(request ? null : identity, request ?? { action: 'request_pin_email', businessId: business.business.id });
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
+  const inbox = await (await fetch('http://127.0.0.1:54324/api/v1/messages')).json();
+  const found = inbox.messages.find((message: { To: { Address: string }[] }) => message.To.some(to => to.Address===identity.email));
+  expect(found).toBeTruthy();
+  const mail = await (await fetch(`http://127.0.0.1:54324/api/v1/message/${found.ID}`)).json();
+  const token = mail.Text.match(/#recovery=([a-f0-9]{64})/)?.[1]; expect(token).toBeTruthy();
+  return { response, mail, token: token as string };
+}
