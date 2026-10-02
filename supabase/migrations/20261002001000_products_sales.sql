@@ -41,7 +41,9 @@ create table app_private.sale_items (
   total_cents bigint not null check (total_cents = quantity::bigint * unit_price_cents),
   primary key (sale_id,product_id),
   foreign key (business_id,sale_id) references app_private.sales(business_id,id) on delete cascade,
-  foreign key (business_id,product_id) references app_private.products(business_id,id)
+  -- Validate at commit so a whole-business cascade can remove sales and products in either order.
+  -- Deleting a sold product alone still fails and preserves its historical references.
+  foreign key (business_id,product_id) references app_private.products(business_id,id) deferrable initially deferred
 );
 
 create table app_private.pos_operations (

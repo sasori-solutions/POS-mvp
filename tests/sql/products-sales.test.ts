@@ -171,6 +171,16 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     await expect(device({ command: 'catalog' })).rejects.toThrow('DEVICE_REVOKED')
   })
 
+  it('protects sold products and allows an atomic whole-business cascade without orphaned records', async () => {
+    const actor = await newActor(); const product = await execute<Product>(actor, newProduct())
+    await execute(actor, saleCommand(product))
+    await expect(db.query('delete from app_private.products where id=$1', [product.id])).rejects.toThrow(/foreign key/)
+    expect(await count('sales', actor.businessId)).toBe(1)
+    await db.query('delete from app_private.businesses where id=$1', [actor.businessId])
+    for (const table of ['products', 'sales', 'sale_items'] as const) expect(await count(table, actor.businessId)).toBe(0)
+    expect(Number((await db.query<{ count: string | number }>('select count(*) from app_private.pos_operations where business_id=$1', [actor.businessId])).rows[0].count)).toBe(0)
+  })
+
   it('keeps personal POS commands inside the verified device and one-use nonce boundary', async () => {
     const owner = await newActor(); const cashier = await newActor('cashier', owner.businessId)
     const payload = { action: 'pos', businessId: cashier.businessId, operatorToken: cashier.token, command: 'catalog' }

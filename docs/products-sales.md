@@ -22,6 +22,8 @@ Migration `20261002001000_products_sales.sql` adds private `products`, `sales`, 
 
 Products have category text, active state and optimistic version. Deactivation is reversible; finalized sales keep their name/category/price/operator/timezone snapshots. There is no physical product deletion or sale editing API. Product images are deferred because the existing storage subsystem is not enabled; product names remain the primary touch target.
 
+The product reference from sale items is checked at transaction commit: deleting a sold product alone remains forbidden, while an authorized whole-business database cleanup can cascade sales/items/products atomically in either trigger order. This does not add a business-deletion UI or API.
+
 All amounts use integer MXN cents. Product prices allow 0–99,999,999 cents, quantities 1–999, at most 40 distinct lines, and sale totals up to 9,999,999,999 cents. Client decimal parsing avoids binary floating-point rounding. HTTP validation rejects fractional/invalid money and quantity, duplicate/empty lines, extra fields and incorrect totals. SQL verifies all prices, active states, versions and totals again.
 
 One UUID identifies each mutation within the business. An advisory transaction lock, actor and canonical payload fingerprint prevent conflicting reuse. A retry of an accepted command returns its original result before checking changed prices, availability or payment settings. Stable-order product locks protect the accepted snapshots against concurrent edits. Sale, items and operation result commit atomically; an induced persistence error rolls all of them back.
