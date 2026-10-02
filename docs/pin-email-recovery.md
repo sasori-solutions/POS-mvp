@@ -1,8 +1,16 @@
 # PIN recovery by email
 
-Agente de Larios · 1 October 2026. Implemented and verified locally; production activation pending sender configuration.
+Agente de Larios · 1 October 2026. Deployed to production; real inbox delivery remains a manual check.
 
-The user chose email confirmation instead of recovery codes and Google reverification. Resend is the selected delivery service; the user supplied `larioscow.dev`. Intended sender: `POS México <acceso@larioscow.dev>`. No real PIN, key or recovery link belongs in repository/Drive evidence.
+The user chose email confirmation instead of recovery codes and Google reverification. Resend verified the user-supplied `larioscow.dev`. The human saved the key in Supabase; its existing permissions were reduced to Sending access for this domain. Configured sender: `POS México <acceso@larioscow.dev>`. No real PIN, key or recovery link belongs in repository/Drive evidence.
+
+## Production evidence
+
+Cloudflare production **9cbb112c-668d-4274-b411-3e592720e695** publishes 20 files including `index-CEC8y_T0.js`; **28/28** anonymous route/asset hashes match the release build. ZIP SHA-256: `826cdaaab3e3a36c75543d05ff79d90be60e25c44af125d2f3caacea0cbfc812`.
+
+Migration 0007 passed the exact six-migration history guard. All **52 SQL function bodies** match the checked local sources; **19 private tables** and private/public RPC permissions have zero verification failures. Canonical statement counts: **44/48/27/23/29/21/16**. The downloaded deployed `account` source is byte-identical to the 36,017-byte standalone artifact, SHA-256 `f5f464fddf5b1f285840194d9ba2f94d4b01de6bd892a7119ef1a3c581709ef8`. All **26 anonymous cloud API probes** passed, covering rejected legacy resets, invalid identities/devices/links, caller-selected recipients/redirects, CORS and no-store responses.
+
+The new deployment renders the incomplete-link state. An existing canonical-host browser still loaded the previous service worker bundle; close all app windows and reopen to adopt the update. No real recovery email was sent and no human PIN was changed during verification. Domain/secrets configuration and anonymous probes do not establish successful provider acceptance or inbox delivery.
 
 ## User flow
 
@@ -37,6 +45,6 @@ Mailpit captures local mail without real recipients. See .env.functions.example;
 - Real browser/Auth/Edge/Postgres/Mailpit smoke: email opens in a signed-out browser, PIN updates, original account unlocks; invitation/staff/register compatibility passes. Synthetic fixtures cleaned.
 - Real 0006→0007 compatibility: identities, PIN hashes/counters, invitations and previous operators preserved; retired reset rejected, private grants verified. Canonical counts 44/48/27/23/29/21/16.
 
-Obsolete code-flow expectations were replaced by email/permission checks. One run during Edge reload had three HTTP 502s; the stable final suite passed in full. Hosted delivery and physical-phone testing remain unverified until activation.
+Obsolete code-flow expectations were replaced by email/permission checks. One run during Edge reload had three HTTP 502s; the stable final suite passed in full. Real inbox delivery, authenticated cloud PIN reset and physical-phone testing remain unverified.
 
 Primary references: [Resend API](https://resend.com/docs/api-reference/emails/send-email), [verified domains](https://resend.com/docs/dashboard/domains/introduction), [Mailpit API](https://mailpit.axllent.org/docs/api-v1/).
