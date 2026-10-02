@@ -320,7 +320,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
   }, [operator?.operatorToken])
 
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000))
-  if (operator) return <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} timezoneLabel={operator.business.timezone} />
+  if (operator) return <HomeScreen key={operator.operatorToken} business={operator.business} operatorToken={operator.operatorToken} deviceToken={deviceToken} onSessionError={report} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} timezoneLabel={operator.business.timezone} />
   if (settingPin && deviceToken) return <div className="employee-shell"><EmployeePinSetup deviceToken={deviceToken} onBack={() => { generation.current += 1; setSettingPin(false) }} onBeforeConsume={() => broadcast('lock')} onDone={(result) => { operatorRef.current = result; setOperator(result); setSettingPin(false); setError(''); setRetryAt(0); if (result.business.employee) employeeRetryAt.current.delete(result.business.employee.id); broadcast('lock') }} /></div>
 
   return <div className="employee-shell">

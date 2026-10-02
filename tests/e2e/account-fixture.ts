@@ -148,6 +148,10 @@ export async function mockAccount(page: Page, options: {
       expiresAt: new Date(Date.now() + 8 * 3_600_000).toISOString(),
     };
     switch (body.action) {
+      case 'pos':
+        if (body.command === 'catalog') return reply({ products: [], paymentMethods: ['cash', 'card_external', 'transfer'] });
+        if (body.command === 'sales') return reply({ sales: [], nextCursor: null });
+        return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');
       case 'status':
         return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType }] : [] });
       case 'create_business':

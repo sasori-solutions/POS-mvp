@@ -1,10 +1,19 @@
 import { useState } from 'react'
 import { ClipboardList, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText } from 'lucide-react'
 import type { BusinessContext } from '../lib/contracts'
+import type { AccountClientError } from '../lib/account'
+import ProductsScreen from './ProductsScreen'
+import SaleScreen from './SaleScreen'
+import SalesScreen from './SalesScreen'
+import { useCatalog } from './useCatalog'
 import './home-screen.css'
+import './products-sales.css'
 
 interface HomeScreenProps {
   business: BusinessContext
+  operatorToken: string
+  deviceToken?: string
+  onSessionError?: (error: AccountClientError) => void
   onLock: () => void
   onLogout: () => void
   busy: boolean
@@ -33,15 +42,15 @@ const businessTypes = { cafe: 'Cafetería', restaurant: 'Restaurante', other: 'O
 
 const upcoming = {
   Comandas: { title: 'Comandas, próximamente', description: 'Aquí podrás consultar las cuentas abiertas de tu negocio.', icon: ClipboardList },
-  Ventas: { title: 'Ventas, próximamente', description: 'Aquí podrás consultar tus ventas registradas.', icon: ReceiptText },
-  Productos: { title: 'Tu catálogo, próximamente', description: 'Aquí podrás agregar y organizar los productos de tu negocio.', icon: Package },
 } as const
 
-export default function HomeScreen({ business, onLock, onLogout, busy, error, timezoneLabel, onSettings, onTeam, onSwitchBusiness, onChangePin, onRecoveryCode, onSwitchEmployee, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
+export default function HomeScreen({ business, operatorToken, deviceToken, onSessionError, onLock, onLogout, busy, error, timezoneLabel, onSettings, onTeam, onSwitchBusiness, onChangePin, onRecoveryCode, onSwitchEmployee, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
   const [destination, setActive] = useState<Destination>(business.role === 'kitchen' ? 'Comandas' : 'Venta')
-  const allowedDestinations = destinations.filter(({ name }) => business.role === 'kitchen' ? name === 'Comandas' || name === 'Más' : business.role === 'cashier' ? name !== 'Ventas' : true)
+  const access = { businessId: business.id, operatorToken, deviceToken }
+  const catalog = useCatalog(access, business.role !== 'kitchen', onSessionError)
+  const allowedDestinations = destinations.filter(({ name }) => business.role === 'kitchen' ? name === 'Comandas' || name === 'Más' : true)
   const active = allowedDestinations.some(({ name }) => name === destination) ? destination : business.role === 'kitchen' ? 'Comandas' : 'Venta'
-  const upcomingSection = active === 'Comandas' || active === 'Ventas' || active === 'Productos' ? upcoming[active] : null
+  const upcomingSection = active === 'Comandas' ? upcoming.Comandas : null
   const SectionIcon = upcomingSection?.icon
 
   return <div className="pos-home-shell">
@@ -57,19 +66,10 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, ti
       <h1 id="pos-section-title" className="pos-section-title">{active}</h1>
       {error && <p className="pos-error" role="alert">{error}</p>}
 
-      {active === 'Venta' ? <>
-        <div className="pos-categories" aria-label="Categorías">
-          <span className="pos-category">Todo</span>
-        </div>
-        <div className="pos-empty">
-          <Package className="pos-empty-icon" size={32} strokeWidth={1.4} aria-hidden="true" />
-          <h2>Aún no hay productos</h2>
-          <p>La venta estará disponible próximamente.</p>
-        </div>
-        <div className="pos-sale-action">
-          <button className="pos-button pos-primary" type="button" onClick={() => setActive('Productos')}>Ver productos</button>
-        </div>
-      </> : active === 'Más' ? <div className="pos-more">
+      {business.role !== 'kitchen' && <div hidden={active !== 'Venta'}><SaleScreen access={access} employeeId={business.employee?.id ?? 'owner'} catalog={catalog} onProducts={() => setActive('Productos')} onHistory={() => setActive('Ventas')} onSessionError={onSessionError} /></div>}
+      {active === 'Productos' ? <ProductsScreen access={access} catalog={catalog} canManage={business.role === 'owner' || business.role === 'manager'} onSessionError={onSessionError} />
+        : active === 'Ventas' ? <SalesScreen key={`${business.employee?.id}:${business.role}`} access={access} ownOnly={business.role === 'cashier'} onSessionError={onSessionError} />
+        : active === 'Más' ? <div className="pos-more">
         <dl className="pos-business-details">
           <div><dt>Tipo de negocio</dt><dd>{businessTypes[business.businessType]}</dd></div>
           <div><dt>Zona horaria</dt><dd>{timezoneLabel}</dd></div>
