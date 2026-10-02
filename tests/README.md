@@ -85,3 +85,11 @@ New browser tests decode locally rendered QR pixels, check link-based employee e
 ## Employee device access verification — 1 October 2026
 
 Agente de Larios: final feature-branch checks pass **202/202 browser**, **65/65 real local integration**, **22/22 Deno**, production build, and source/standalone Edge typechecks. The **0007→0008** upgrade and real two-browser device smoke also pass with synthetic fixtures on the isolated stack. See `docs/employee-device-access.md` for behavior, commands, limitations and release order. This is local verification, not production deployment evidence.
+
+## Deleted-employee reinvitation — 2 October 2026
+
+Agente de Larios: migration 0009 permits a fresh owner invitation to restore the same deleted Google employee after the existing PIN is verified. `employee-reinvitation.integration.test.ts` covers identity/PIN/device preservation, lockout before restoration, old-link rejection, concurrency, owner-restoration races, placeholder restrictions and Auth deletion cleanup. The full isolated integration suite passes **75/75 without skips**; browser regressions pass **216/216**, including switching Google accounts and consumed-invitation recovery after a device-approval response. Production build/typecheck passes.
+
+`node tests/integration/employee-rejoin-migration-smoke.mjs` verifies 0008→0009 compatibility in disposable databases. `node scripts/prepare-employee-rejoin-release.mjs` produces the source-hash-guarded cloud migration and read-only verification from that evidence. See `docs/employee-reinvitation-fix.md` for release order and limits.
+
+The extended `employee-device-browser-smoke.mjs` passes against real isolated Auth/Edge/Postgres without API mocks: owner UI deletion, fresh QR decoding, same-browser rejoining, another-device approval denial, cleared invitation after reload, owner notification approval and successful PIN entry retain the original employee ID. The harness waits for the initial login screen before following a new link; synthetic accounts/businesses are removed afterward.

@@ -33,7 +33,7 @@ export interface EmployeePinSetupDetails {
   employee: EmployeeSummary
   expiresAt?: string
 }
-export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string }
+export interface InvitationDetails extends EmployeePinSetupDetails { expiresAt: string; returningEmployee?: boolean }
 
 export interface EmployeeSummary {
   id: string
