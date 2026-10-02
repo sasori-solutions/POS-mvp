@@ -7,6 +7,8 @@ import type { PosCommand, Product, Sale, SaleSummary } from '../../src/lib/pos-c
 
 let db: PGlite
 type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string; keyHash: string }
+let legacyActor: Actor
+let legacyPinHash: string
 
 describe('real PostgreSQL migrations and financial transactions (embedded, synthetic Auth rows)', () => {
   beforeAll(async () => {
@@ -15,9 +17,23 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
       create role anon; create role authenticated; create role service_role;
       create table auth.users(id uuid primary key);
       create table auth.sessions(id uuid primary key,user_id uuid references auth.users(id) on delete cascade,created_at timestamptz default now(),not_after timestamptz);`)
-    for (const file of readdirSync('supabase/migrations').filter(name => name.endsWith('.sql')).sort()) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    const migrations = readdirSync('supabase/migrations').filter(name => name.endsWith('.sql')).sort()
+    const posMigration = '20261002001000_products_sales.sql'
+    for (const file of migrations.filter(name => name < posMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    legacyActor = await newActor()
+    const credential = await db.query<{ pin_hash: string }>(`insert into app_private.operator_credentials(business_id,user_id,pin_hash,failed_attempts) values($1,$2,extensions.crypt('024680',extensions.gen_salt('bf',4)),2) returning pin_hash`, [legacyActor.businessId, legacyActor.userId])
+    legacyPinHash = credential.rows[0].pin_hash
+    for (const file of migrations.filter(name => name >= posMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
   }, 60_000)
   afterAll(async () => { await db?.close() })
+
+  it('upgrades existing account data and preserves PIN hashes, counters and operator access', async () => {
+    const credential = await db.query<{ pin_hash: string; failed_attempts: number }>('select pin_hash,failed_attempts from app_private.operator_credentials where business_id=$1 and user_id=$2', [legacyActor.businessId, legacyActor.userId])
+    expect(credential.rows[0]).toEqual({ pin_hash: legacyPinHash, failed_attempts: 2 })
+    const context = await db.query<{ result: { data: { business: { id: string; role: string } } } }>("select public.account_secure($1,$2,'context',$3::jsonb) as result", [legacyActor.userId, legacyActor.sessionId, JSON.stringify({ businessId: legacyActor.businessId, operatorToken: legacyActor.token })])
+    expect(context.rows[0].result.data.business).toMatchObject({ id: legacyActor.businessId, role: 'owner' })
+    expect(await execute(legacyActor, { command: 'catalog' })).toHaveProperty('products')
+  })
 
   it('applies migrations with RLS and grants only the service entry points', async () => {
     const rows = await db.query<{ relname: string; relrowsecurity: boolean }>(`select relname,relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='app_private' and relname in ('products','sales','sale_items','pos_operations')`)

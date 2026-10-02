@@ -45,11 +45,17 @@ jobs:
       - run: npm ci
       - run: deno test supabase/functions/account/*.deno.ts
       - run: deno check supabase/functions/account/index.ts
+      - name: Verify standalone account packaging
+        run: |
+          node scripts/build-account-source.mjs /tmp/pos-account-cloud.ts
+          deno check /tmp/pos-account-cloud.ts
 
   integration:
     name: Supabase integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      TEST_DISPOSABLE_SUPABASE: 'true'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
@@ -108,6 +114,8 @@ jobs:
           if (!report.success || report.numFailedTests !== 0 || report.numPendingTests !== 0) throw new Error('Integration must pass without skipped tests');
           console.log(`Verified ${report.numPassedTests} tests without skips`);
           JS
+      - name: Verify inherited employee migration compatibility
+        run: node tests/integration/employee-rejoin-migration-smoke.mjs
       - name: Stop disposable services
         if: always()
         run: npx supabase stop --no-backup

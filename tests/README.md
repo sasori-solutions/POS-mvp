@@ -108,3 +108,9 @@ Agente de Larios: migration 0009 permits a fresh owner invitation to restore the
 `node tests/integration/employee-rejoin-migration-smoke.mjs` verifies 0008→0009 compatibility in disposable databases. `node scripts/prepare-employee-rejoin-release.mjs` produces the source-hash-guarded cloud migration and read-only verification from that evidence. See `docs/employee-reinvitation-fix.md` for release order and limits.
 
 The extended `employee-device-browser-smoke.mjs` passes against real isolated Auth/Edge/Postgres without API mocks: owner UI deletion, fresh QR decoding, same-browser rejoining, another-device approval denial, cleared invitation after reload, owner notification approval and successful PIN entry retain the original employee ID. The harness waits for the initial login screen before following a new link; synthetic accounts/businesses are removed afterward.
+
+## Final POS candidate against main b4d3d16
+
+The updated stable local browser suite passed **240/240** cases after retaining employee reinvitation behavior. Lint, frontend/backend typechecks, production build, **22/22 Deno**, **22/22 domain/embedded SQL**, and standalone Edge packaging/typecheck passed. The SQL upgrade case preserves an existing PIN hash, failed-attempt counter and active operator through 0009→0010. Migration 0010 follows the nine inherited migrations without changing them.
+
+CI runs **104 Vitest cases** with the disposable Supabase stack and rejects any omissions; **82 integration cases are omitted on this Windows host without a Docker daemon**. The first real-stack run exposed an Edge import extension issue and strict test-profile/isolated-stack fixture assumptions; these were corrected before merge. Final GitHub check results belong to the exact reviewed PR head, linked in PR #4. Production deployment, hosted financial flows and physical-device installation are not claimed by merging this PR.

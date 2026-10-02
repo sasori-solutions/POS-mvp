@@ -142,7 +142,7 @@ async function identity(): Promise<Identity> {
   return { userId: created.data.user.id, token: login.data.session!.access_token }
 }
 async function business() {
-  const operator = data(await call<Operator>(owner, { action: 'create_business', name: 'POS sintético', businessType: 'cafe', timezone: 'America/Mexico_City', pin, operationId: randomUUID(), profile: { branchName: 'Principal', registerName: 'Caja 1', paymentMethods: ['cash', 'card_external', 'transfer'] } }))
+  const operator = data(await call<Operator>(owner, { action: 'create_business', name: 'POS sintético', businessType: 'cafe', timezone: 'America/Mexico_City', pin, operationId: randomUUID(), profile: { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external', 'transfer'] } }))
   businesses.push(operator.business.id); return operator
 }
 function args(operator: Operator) { return { businessId: operator.business.id, operatorToken: operator.operatorToken } }

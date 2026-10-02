@@ -19,7 +19,7 @@ const container = `supabase_db_${project}`
 const database = `pos_rejoin_compat_${randomUUID().replaceAll('-', '')}`
 const releaseDatabase = `pos_rejoin_release_${randomUUID().replaceAll('-', '')}`
 const workspace = mkdtempSync(`${tmpdir()}/pos-rejoin-compat-`)
-const migrations = readdirSync('supabase/migrations').filter(file => /^\d{14}_.+\.sql$/.test(file)).sort()
+const migrations = readdirSync('supabase/migrations').filter(file => /^\d{14}_.+\.sql$/.test(file) && file <= '20261002000900_employee_reinvitation.sql').sort()
 assert.equal(migrations.length, 9)
 assert.equal(migrations.at(-1), '20261002000900_employee_reinvitation.sql')
 const hash = value => createHash('sha256').update(value).digest('hex')
