@@ -215,6 +215,11 @@ try {
   await ownerPage.setViewportSize({ width: 393, height: 851 })
   await ownerPage.screenshot({ path: '/tmp/pos-mexico-lifecycle-delete-confirmation.png', fullPage: true })
   const deleteResponse = accountResponse(ownerPage, 'delete_employee')
+  // Either the periodic context refresh or the visible catalog can discover the
+  // revoked session first; observe before deletion so neither response is missed.
+  const closedPersonal = personalPage.waitForResponse(response =>
+    response.url().endsWith('/functions/v1/account') && [401, 403].includes(response.status())
+    && ['context', 'pos'].includes(JSON.parse(response.request().postData() ?? '{}').action))
   await ownerPage.getByRole('button', { name: 'Confirmar eliminación', exact: true }).click()
   const deletion = await deleteResponse
   assert.equal(deletion.status(), 200)
@@ -224,9 +229,8 @@ try {
   await devicePage.evaluate(() => window.dispatchEvent(new Event('focus')))
   await devicePage.getByRole('heading', { name: 'Elige tu nombre', exact: true }).waitFor({ timeout: 15_000 })
   assert.equal(await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).count(), 0)
-  const closedPersonal = accountResponse(personalPage, 'context')
   await personalPage.evaluate(() => window.dispatchEvent(new Event('focus')))
-  assert.equal((await closedPersonal).status(), 403, 'Deletion closes the existing personal session')
+  assert([401, 403].includes((await closedPersonal).status()), 'Deletion closes the existing personal session')
   await expect(personalPage.getByRole('button', { name: 'Más', exact: true })).toHaveCount(0)
   assert.equal(staffSnapshot().length, 1, 'Deletion removes the employee row')
   assert(!staffSnapshot().some(row => row.id === employee.id))
