@@ -1,3 +1,5 @@
+import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts'
+
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
 export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
 export type EmployeeRole = Exclude<BusinessRole, 'owner'>
@@ -107,6 +109,8 @@ export interface PairedDevice {
 
 type OwnerRequest = { businessId: string; operatorToken: string }
 export type AccountRequest =
+  | ({ action: 'pos' } & OwnerRequest & PosCommand)
+  | ({ action: 'device_pos'; deviceToken: string; operatorToken: string } & PosCommand)
   | { action: 'status' }
   | { action: 'create_business'; name: string; businessType: BusinessType; timezone: string; operationId: string; pin: string; profile?: BusinessProfile }
   | ({ action: 'update_business'; name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile } & OwnerRequest)
@@ -140,6 +144,8 @@ export type AccountRequest =
   | { action: 'device_lock'; deviceToken: string; operatorToken: string }
 
 export interface AccountResponses {
+  pos: PosResponses[keyof PosResponses]
+  device_pos: PosResponses[keyof PosResponses]
   status: { businesses: BusinessSummary[] }
   create_business: OperatorSession
   update_business: BusinessContext
@@ -174,6 +180,7 @@ export interface AccountResponses {
   device_forget: { revoked: true }
 }
 export type AccountErrorCode =
+  | PosErrorCode
   | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
   | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
   | 'REAUTH_REQUIRED' | 'EMPLOYEE_INACTIVE' | 'PIN_INVALID' | 'PIN_LOCKED'

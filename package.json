@@ -13,7 +13,11 @@
     "db:reset": "supabase db reset",
     "api:serve": "supabase functions serve account --env-file .env.functions",
     "check": "npm run test && npm run build",
-    "check:live": "node scripts/check-live.mjs"
+    "check:live": "node scripts/check-live.mjs",
+    "lint": "oxlint src supabase/functions tests --deny-warnings",
+    "typecheck": "tsc --noEmit",
+    "test:sql": "vitest run tests/sql",
+    "test:domain": "vitest run tests/unit"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",
@@ -23,6 +27,7 @@
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.63.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
@@ -31,6 +36,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.1",
     "jsdom": "^30.1.1",
+    "oxlint": "^1.86.0",
     "supabase": "^2.119.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",

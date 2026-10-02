@@ -44,6 +44,10 @@ function entryIntent() {
   return { device: url.pathname === '/employee', create: url.pathname === '/business/new', join: url.pathname === '/join' || Boolean(invitation) }
 }
 const accountMessages: Record<AccountErrorCode | 'NETWORK_ERROR', string> = {
+  PRODUCT_CHANGED: 'El producto cambió. Actualiza el catálogo y revisa la venta.',
+  PRODUCT_UNAVAILABLE: 'El producto ya no está disponible.',
+  SALE_NOT_FOUND: 'No encontramos esta venta.',
+  PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado.',
   AUTH_REQUIRED: 'Tu sesión venció. Vuelve a entrar con Google.',
   GOOGLE_REQUIRED: 'Entra con tu cuenta de Google para continuar.',
   VALIDATION_ERROR: 'Revisa los datos e intenta de nuevo.',
