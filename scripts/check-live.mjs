@@ -81,7 +81,7 @@ try {
   // The backend URL lives in the shared entry bundle; lazy UI chunks need not repeat it.
   const bundles = await Promise.all(files.filter((file) => file.startsWith('assets/') && file.endsWith('.js')).map((file) => readFile(join(dist, file), 'utf8')))
   if (!bundles.some((bundle) => bundle.includes('https://sdisalomdxgejyhpxtri.supabase.co'))) throw new Error('expected cloud backend URL is missing from the production build')
-  const routes = ['/', '/login', '/business/new', '/business/ready', '/unlock', '/join', '/employee', '/auth/callback?error=access_denied']
+  const routes = ['/', '/login', '/business/new', '/business/ready', '/unlock', '/join', '/employee', '/register', '/recover-pin', '/auth/callback?error=access_denied']
   const checks = routes.map((path) => ({ path, file: 'index.html' }))
   for (const file of files) {
     if (file === 'index.html' || file === '_redirects' || file === '_headers') continue

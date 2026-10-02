@@ -5,6 +5,7 @@ import { closeIdentity, supabase } from '../lib/supabase'
 import type { DeviceStatus, EmployeeSummary, OperatorSession } from '../lib/contracts'
 import HomeScreen from './HomeScreen'
 import EmployeePinSetup from './EmployeePinSetup'
+import RequestPinRecovery from './RequestPinRecovery'
 import './account-management.css'
 
 interface DeviceLoginProps { onExit?: () => void }
@@ -35,6 +36,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
   const [now, setNow] = useState(Date.now())
   const [confirmForget, setConfirmForget] = useState(false)
   const [settingPin, setSettingPin] = useState(false)
+  const [recoveringPin, setRecoveringPin] = useState(false)
   const generation = useRef(0)
   const mounted = useRef(true)
   const tokenRef = useRef('')
@@ -65,6 +67,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
     setOperator(null)
     setSelected(null)
     setPin('')
+    setRecoveringPin(false)
     setSettingPin(false)
     setRetryAt(0)
   }
@@ -123,6 +126,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
     if (hash.has('pair')) {
       hash.delete('pair')
       url.hash = hash.toString()
+      if (url.pathname === '/employee') url.pathname = '/register'
       window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
     }
     const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(channelName) : null
@@ -320,16 +324,17 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
   }, [operator?.operatorToken])
 
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000))
-  if (operator) return <HomeScreen key={operator.operatorToken} business={operator.business} operatorToken={operator.operatorToken} deviceToken={deviceToken} onSessionError={report} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} timezoneLabel={operator.business.timezone} />
+  if (operator) return <HomeScreen key={operator.operatorToken} business={operator.business} operatorToken={operator.operatorToken} deviceToken={deviceToken} onSessionError={report} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} />
+  if (recoveringPin && deviceToken && selected) return <div className="employee-shell"><RequestPinRecovery businessName={status?.business.name ?? 'este negocio'} request={() => deviceRequest({ action: 'device_request_pin_email', deviceToken, employeeId: selected.id })} onBack={() => { setRecoveringPin(false); setRetryAt(0); employeeRetryAt.current.delete(selected.id) }} onSessionError={report} /></div>
   if (settingPin && deviceToken) return <div className="employee-shell"><EmployeePinSetup deviceToken={deviceToken} onBack={() => { generation.current += 1; setSettingPin(false) }} onBeforeConsume={() => broadcast('lock')} onDone={(result) => { operatorRef.current = result; setOperator(result); setSettingPin(false); setError(''); setRetryAt(0); if (result.business.employee) employeeRetryAt.current.delete(result.business.employee.id); broadcast('lock') }} /></div>
 
   return <div className="employee-shell">
     {onExit && <button type="button" className="back-button" onClick={onExit} disabled={busy}><ArrowLeft size={18} aria-hidden="true" />Acceso del dueño</button>}
     {loading ? <div className="employee-loading" role="status"><span className="loader" aria-hidden="true" /><p>Cargando caja…</p></div>
       : !deviceToken ? <section className="employee-screen">
-        <h1>Entrar como empleado</h1><p>Pide al dueño un código para vincular esta caja.</p>
+        <h1>Vincular caja compartida</h1><p>Abre el enlace o escanea el QR del dueño para vincular esta caja. También puedes ingresar su código.</p>
         <form onSubmit={pair}>
-          <div className="field"><label htmlFor="device-pairing">Código de emparejamiento</label><input id="device-pairing" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.trim())} maxLength={128} required disabled={busy} autoComplete="off" autoCapitalize="none" spellCheck={false} /></div>
+          <div className="field"><label htmlFor="device-pairing">Código para vincular dispositivo</label><input id="device-pairing" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.trim())} maxLength={128} required disabled={busy} autoComplete="off" autoCapitalize="none" spellCheck={false} /></div>
           <div className="field"><label htmlFor="device-name">Nombre del dispositivo</label><input id="device-name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} placeholder="Tablet de mostrador" minLength={2} maxLength={100} required disabled={busy} /></div>
           {error && <p className="error-message" role="alert">{error}</p>}
           <div className="screen-actions"><button className="button primary" disabled={busy || !identityClosed.current} aria-busy={busy}>{busy ? 'Vinculando…' : 'Vincular dispositivo'}</button></div>
@@ -342,7 +347,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
           {error && <p className="error-message" role="alert">{error}</p>}
           {remaining > 0 && <p className="employee-countdown" role="status">Vuelve a intentar en {Math.ceil(remaining / 60)} min.</p>}
           <div className="screen-actions"><button className="button primary" disabled={busy || remaining > 0} aria-busy={busy}>{busy ? 'Entrando…' : 'Entrar'}</button></div>
-          {selected.role === 'owner' ? <p className="field-help">Para recuperar el PIN del dueño, abre Acceso del dueño y usa Google con tu código de recuperación.</p> : <button type="button" className="button secondary" disabled={busy} onClick={() => { if (busyRef.current) return; generation.current += 1; setPin(''); setSettingPin(true) }}>Crear o restablecer mi PIN</button>}
+          <button type="button" className="button secondary" disabled={busy} onClick={() => { setPin(''); setRecoveringPin(true) }}>Olvidé mi PIN</button>
         </form>
       </section> : <section className="employee-screen employee-roster">
         {status && <p className="employee-summary">{status.business.name} / {status.registerName}</p>}

@@ -1,3 +1,4 @@
+import { signedRequest } from './device-proof-fixture'
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -45,11 +46,11 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
     expect(accepted.status).toBe(200);expect(accepted.body.data?.business.employee).toMatchObject({id:person.id,name:'Persona única'});
     expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role<>'owner';`).trim()).toBe('1');
     expect(sql(`select count(*) from app_private.shared_employee_credentials where employee_id=${sqlUuid(person.id)};`).trim()).toBe('0');
-    expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:old.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'086420'})).body.error?.code).toBe('PIN_INVALID');
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
+    expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:old.operatorToken})).body.error?.code).toBe('DEVICE_LINK_REQUIRED');
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'086420'})).body.error?.code).toBe('DEVICE_LINK_REQUIRED');
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).body.error?.code).toBe('DEVICE_LINK_REQUIRED');
     const replay=await account<{id:string;googleLinked:boolean}>(owner,request);expect(replay.status).toBe(200);expect(replay.body.data).toMatchObject({id:person.id,googleLinked:true});
-    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).status).toBe(200);
+    expect((await account(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:person.id,pin:'024680'})).body.error?.code).toBe('DEVICE_LINK_REQUIRED');
   },30_000);
 
   it('creates Google access atomically without a temporary PIN or duplicate on concurrent retries',async()=>{
@@ -66,7 +67,7 @@ describe.skipIf(!config)('one employee with optional Google access', () => {
     const accepted=await account<BusinessSession & {business:{employee:{id:string;name:string}}}>(employee,{action:'accept_invitation',invitationCode:final.invitation.invitationCode,name:'Nombre arbitrario',pin:'012468',operationId:randomUUID()});
     expect(accepted.status).toBe(200);expect(accepted.body.data?.business).toMatchObject({role:'manager',employee:{id:final.id,name:'Nombre vigente'}});
     const updated=await account<{id:string;pinReady:boolean;googleLinked:boolean;invitation?:unknown}>(owner,request);expect(updated.status).toBe(200);expect(updated.body.data).toMatchObject({id:final.id,pinReady:true,googleLinked:true});expect(updated.body.data?.invitation).toBeUndefined();
-    expect((await account(null,{action:'device_status',deviceToken:device.deviceToken})).body.data).toMatchObject({employees:expect.arrayContaining([expect.objectContaining({id:final.id})])});
+    expect((await account(null,{action:'device_status',deviceToken:device.deviceToken})).body.data).not.toMatchObject({employees:expect.arrayContaining([expect.objectContaining({id:final.id})])});
   },30_000);
 
   it('does not merge names and blocks the ambiguous legacy duplicate path',async()=>{
@@ -242,7 +243,7 @@ async function account<T = unknown>(identity: TestAccount | null, request: Recor
       apikey: config!.anonKey,
       ...(identity ? { authorization: `Bearer ${identity.token}` } : {}),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify(await signedRequest(identity?.userId, request)),
   });
   return { status: response.status, body: await response.json() };
 }

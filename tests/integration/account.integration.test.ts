@@ -1,3 +1,4 @@
+import { signedRequest } from './device-proof-fixture'
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -332,7 +333,7 @@ async function account<T = unknown>(identity: TestAccount | null, request: Recor
       apikey: config!.anonKey,
       ...(identity ? { authorization: `Bearer ${identity.token}` } : {}),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify(await signedRequest(identity?.userId, request)),
   });
   return { status: response.status, body: await response.json() };
 }

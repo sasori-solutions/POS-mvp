@@ -242,6 +242,7 @@ declare v_context jsonb;
 begin
   -- Reuses the existing device lock, expiry, revocation and employee membership checks.
   v_context:=public.account_device('device_context',jsonb_build_object('deviceToken',p_device_token,'operatorToken',p_operator_token));
+  if v_context ? 'error' then return v_context; end if;
   return app_private.pos_command((v_context#>>'{data,business,id}')::uuid,(v_context#>>'{data,business,employee,id}')::uuid,p_payload);
 end;
 $$;
@@ -253,3 +254,47 @@ revoke all on function public.pos_execute(uuid,uuid,uuid,text,jsonb) from public
 revoke all on function public.pos_device(text,text,jsonb) from public,anon,authenticated;
 grant execute on function public.pos_execute(uuid,uuid,uuid,text,jsonb) to service_role;
 grant execute on function public.pos_device(text,text,jsonb) to service_role;
+
+-- Extend the existing signed-device dispatcher without bypassing nonce/binding checks.
+create or replace function public.account_secure(p_user_id uuid,p_auth_session_id uuid,p_action text,p_payload jsonb,p_device_key_hash text default null,p_proof_nonce uuid default null)
+returns jsonb language plpgsql security definer set search_path='' as $$
+declare v_inserted uuid; v_name text:=coalesce(p_payload->>'deviceName','Navegador del empleado'); v_result jsonb;
+begin
+  perform app_private.assert_live_auth(p_user_id,p_auth_session_id);
+  if (p_device_key_hash is null)<>(p_proof_nonce is null) or p_device_key_hash is not null and p_device_key_hash !~ '^[0-9a-f]{64}$'
+    or char_length(v_name) not between 2 and 100 then raise exception 'VALIDATION_ERROR' using errcode='P0001'; end if;
+  if p_device_key_hash is not null then
+    delete from app_private.employee_device_proofs where created_at<clock_timestamp()-interval '5 minutes';
+    insert into app_private.employee_device_proofs(key_hash,nonce,user_id) values(decode(p_device_key_hash,'hex'),p_proof_nonce,p_user_id)
+      on conflict do nothing returning nonce into v_inserted;
+    if v_inserted is null then return jsonb_build_object('error',jsonb_build_object('code','DEVICE_PROOF_INVALID')); end if;
+  end if;
+  perform set_config('app.employee_device_key',coalesce(p_device_key_hash,''),true);
+  perform set_config('app.employee_device_name',v_name,true);
+  if p_action in ('accept_invitation','set_employee_pin') and p_device_key_hash is null then
+    return jsonb_build_object('error',jsonb_build_object('code','DEVICE_LINK_REQUIRED'));
+  end if;
+  -- A recovery/setup authorization does not authorize moving an existing device binding.
+  if p_action='set_employee_pin' then
+    select app_private.check_employee_device(p_user_id,s.business_id,false) into v_result
+      from app_private.employee_pin_setup_codes s where s.token_hash=extensions.digest(p_payload->>'setupCode','sha256')
+        and exists(select 1 from app_private.employees e join app_private.employee_personal_devices d on d.business_id=e.business_id and d.employee_id=e.id
+          where e.id=s.employee_id and e.user_id=p_user_id);
+    if v_result is not null then return v_result; end if;
+  end if;
+  case p_action
+    when 'pos' then return public.pos_execute(p_user_id,p_auth_session_id,(p_payload->>'businessId')::uuid,p_payload->>'operatorToken',p_payload);
+    when 'status' then return public.account_status(p_user_id,p_auth_session_id);
+    when 'create_business' then return public.account_create_business(p_user_id,p_auth_session_id,p_payload->>'name',p_payload->>'businessType',p_payload->>'timezone',(p_payload->>'operationId')::uuid,p_payload->>'pin',p_payload->'profile');
+    when 'unlock' then return public.account_unlock(p_user_id,p_auth_session_id,(p_payload->>'businessId')::uuid,p_payload->>'pin');
+    when 'context' then return public.account_context(p_user_id,p_auth_session_id,(p_payload->>'businessId')::uuid,p_payload->>'operatorToken');
+    when 'lock' then return public.account_lock(p_user_id,p_auth_session_id,(p_payload->>'businessId')::uuid,p_payload->>'operatorToken');
+    when 'revoke_sessions' then return public.account_revoke_sessions(p_user_id,p_auth_session_id);
+    when 'request_pin_email' then return public.account_request_pin_email(p_user_id,p_auth_session_id,(p_payload->>'businessId')::uuid);
+    when 'notifications','mark_notification_read','review_employee_device' then return app_private.employee_notifications(p_user_id,p_auth_session_id,p_action,p_payload);
+    else return public.account_manage(p_user_id,p_auth_session_id,p_action,p_payload);
+  end case;
+end;
+$$;
+revoke all on function public.account_secure(uuid,uuid,text,jsonb,text,uuid) from public,anon,authenticated;
+grant execute on function public.account_secure(uuid,uuid,text,jsonb,text,uuid) to service_role;

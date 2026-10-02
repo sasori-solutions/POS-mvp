@@ -18,7 +18,7 @@ const timezones = [
   ['America/Hermosillo', 'Hermosillo'], ['America/Tijuana', 'Tijuana'],
 ]
 const paymentOptions: { value: PaymentMethod; label: string }[] = [
-  { value: 'cash', label: 'Efectivo' }, { value: 'card_external', label: 'Tarjeta externa' }, { value: 'transfer', label: 'Transferencia' },
+  { value: 'cash', label: 'Efectivo' }, { value: 'card_external', label: 'Tarjeta en terminal' }, { value: 'transfer', label: 'Transferencia' },
 ]
 const emptyProfile: BusinessProfile = { branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash'] }
 
@@ -74,21 +74,27 @@ export default function BusinessSettings({ business, operatorToken, onSaved, onB
     } finally { saving.current = false; if (mounted.current) setBusy(false) }
   }
 
+  const dirty = name !== business.name || businessType !== business.businessType || timezone !== business.timezone
+    || JSON.stringify(profile) !== JSON.stringify({ ...emptyProfile, ...business.profile })
+
   return <div className="management-shell">
-    <button type="button" className="back-button" onClick={onBack}><ArrowLeft size={18} aria-hidden="true" />Volver</button>
-    <div className="management-heading"><h1>Datos del negocio</h1><p>Configura tu primera sucursal y caja.</p></div>
+    <button type="button" className="back-button" disabled={busy} onClick={onBack}><ArrowLeft size={18} aria-hidden="true" />Volver a Más</button>
+    <div className="management-heading"><h1>Datos del negocio</h1></div>
     {error && <p className="error-message" role="alert">{error}</p>}
     {saved && <p className="management-success" role="status">Cambios guardados.</p>}
     {denied ? <p className="management-warning">Sólo el dueño puede editar los datos del negocio.</p> : <form className="management-form" onSubmit={save}>
-      <div className="field"><label htmlFor="settings-name">Nombre del negocio</label><input id="settings-name" value={name} onChange={(event) => { setName(event.target.value); setSaved(false) }} minLength={2} maxLength={100} required disabled={busy} /></div>
+      <fieldset className="settings-group"><legend>Información general</legend><div className="field"><label htmlFor="settings-name">Nombre del negocio</label><input id="settings-name" value={name} onChange={(event) => { setName(event.target.value); setSaved(false) }} minLength={2} maxLength={100} required disabled={busy} /></div>
       <div className="field"><label htmlFor="settings-type">Tipo de negocio</label><select id="settings-type" value={businessType} onChange={(event) => { setBusinessType(event.target.value as BusinessType); setSaved(false) }} disabled={busy}><option value="cafe">Cafetería</option><option value="restaurant">Restaurante</option><option value="other">Otro</option></select></div>
       <div className="field"><label htmlFor="settings-timezone">Zona horaria</label><select id="settings-timezone" value={timezone} onChange={(event) => { setTimezone(event.target.value); setSaved(false) }} disabled={busy}>{!timezones.some(([value]) => value === timezone) && <option value={timezone}>{timezone}</option>}{timezones.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
-      <div className="management-fields-row"><div className="field"><label htmlFor="settings-branch">Sucursal</label><input id="settings-branch" value={profile.branchName} onChange={(event) => changeProfile('branchName', event.target.value)} maxLength={100} required disabled={busy} /></div><div className="field"><label htmlFor="settings-register">Caja</label><input id="settings-register" value={profile.registerName} onChange={(event) => changeProfile('registerName', event.target.value)} maxLength={100} required disabled={busy} /></div></div>
-      <div className="field"><label htmlFor="settings-address">Dirección <span>(opcional)</span></label><input id="settings-address" autoComplete="street-address" value={profile.address} onChange={(event) => changeProfile('address', event.target.value)} maxLength={200} disabled={busy} /></div>
+      <p className="field-help">Moneda: peso mexicano (MXN).</p></fieldset>
+      <fieldset className="settings-group"><legend>Sucursal y caja</legend><p className="field-help">Usa nombres que reconozcas, como Centro y Mostrador.</p><div className="management-fields-row"><div className="field"><label htmlFor="settings-branch">Sucursal</label><input id="settings-branch" value={profile.branchName} onChange={(event) => changeProfile('branchName', event.target.value)} maxLength={100} required disabled={busy} /></div><div className="field"><label htmlFor="settings-register">Caja</label><input id="settings-register" value={profile.registerName} onChange={(event) => changeProfile('registerName', event.target.value)} maxLength={100} required disabled={busy} /></div></div>
+      </fieldset>
+      <fieldset className="settings-group"><legend>Dirección y contacto</legend><div className="field"><label htmlFor="settings-address">Dirección <span>(opcional)</span></label><input id="settings-address" autoComplete="street-address" value={profile.address} onChange={(event) => changeProfile('address', event.target.value)} maxLength={200} disabled={busy} /></div>
       <div className="management-fields-row"><div className="field"><label htmlFor="settings-city">Ciudad <span>(opcional)</span></label><input id="settings-city" autoComplete="address-level2" value={profile.city} onChange={(event) => changeProfile('city', event.target.value)} maxLength={100} disabled={busy} /></div><div className="field"><label htmlFor="settings-state">Estado <span>(opcional)</span></label><input id="settings-state" autoComplete="address-level1" value={profile.state} onChange={(event) => changeProfile('state', event.target.value)} maxLength={100} disabled={busy} /></div></div>
       <div className="field"><label htmlFor="settings-phone">Teléfono del negocio <span>(opcional)</span></label><input id="settings-phone" type="tel" autoComplete="tel" value={profile.contactPhone} onChange={(event) => changeProfile('contactPhone', event.target.value)} maxLength={30} disabled={busy} /></div>
-      <fieldset><legend>Métodos de pago</legend>{paymentOptions.map(({ value, label }) => <label className="management-checkbox" key={value}><input type="checkbox" checked={profile.paymentMethods.includes(value)} disabled={busy} onChange={(event) => changeProfile('paymentMethods', event.target.checked ? [...profile.paymentMethods, value] : profile.paymentMethods.filter((method) => method !== value))} />{label}</label>)}<p className="field-help">La tarjeta se cobra en tu terminal externa. Las ventas estarán disponibles próximamente.</p></fieldset>
-      <div className="management-actions"><button className="button primary" disabled={busy} aria-busy={busy}>{busy ? 'Guardando…' : 'Guardar cambios'}</button></div>
+      </fieldset>
+      <fieldset className="settings-group"><legend>Formas de pago</legend>{paymentOptions.map(({ value, label }) => <label className="management-checkbox" key={value}><input type="checkbox" checked={profile.paymentMethods.includes(value)} disabled={busy} onChange={(event) => changeProfile('paymentMethods', event.target.checked ? [...profile.paymentMethods, value] : profile.paymentMethods.filter((method) => method !== value))} />{label}</label>)}<p className="field-help">Selecciona las formas de pago que aceptas. La tarjeta se cobra en tu terminal. Esta selección no conecta la terminal a la app.</p></fieldset>
+      <div className="management-actions"><button className="button primary" disabled={busy || !dirty} aria-busy={busy}>{busy ? 'Guardando…' : 'Guardar cambios'}</button></div>
     </form>}
   </div>
 }

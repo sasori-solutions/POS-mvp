@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { PosCommand, Product, Sale, SaleSummary } from '../../src/lib/pos-contracts'
 
 let db: PGlite
-type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string }
+type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string; keyHash: string }
 
 describe('real PostgreSQL migrations and financial transactions (embedded, synthetic Auth rows)', () => {
   beforeAll(async () => {
@@ -139,16 +139,33 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
   it('authorizes a shared register only with its current operator and active employee', async () => {
     const owner = await newActor(); const cashier = await newActor('cashier', owner.businessId); const kitchen = await newActor('kitchen', owner.businessId)
     const product = await execute<Product>(owner, newProduct()); const deviceId = randomUUID(); const deviceToken = 'bc'.repeat(32); const token = 'de'.repeat(32)
+    await db.query('update app_private.employees set user_id=null where id in ($1,$2)', [cashier.employeeId, kitchen.employeeId])
     await db.query(`insert into app_private.devices(id,business_id,name,register_name,token_hash) values($1,$2,'Synthetic device','Caja 1',extensions.digest($3,'sha256'))`, [deviceId, owner.businessId, deviceToken])
     await db.query(`insert into app_private.device_operator_sessions(business_id,device_id,employee_id,token_hash) values($1,$2,$3,extensions.digest($4,'sha256'))`, [owner.businessId, deviceId, cashier.employeeId, token])
     const device = async <T>(command: PosCommand) => (await db.query<{ result: { data: T } }>('select public.pos_device($1,$2,$3::jsonb) as result', [deviceToken, token, JSON.stringify(command)])).rows[0].result.data
     expect((await device<{ products: Product[] }>({ command: 'catalog' })).products).toHaveLength(1)
     expect((await device<Sale>(saleCommand(product))).totalCents).toBe(1001)
     await expect(device(newProduct())).rejects.toThrow('PERMISSION_DENIED')
+    await db.query('update app_private.employees set user_id=$1 where id=$2', [cashier.userId, cashier.employeeId])
+    const denied = await db.query<{ result: { error: { code: string } } }>('select public.pos_device($1,$2,$3::jsonb) as result', [deviceToken, token, JSON.stringify({ command: 'catalog' })])
+    expect(denied.rows[0].result.error.code).toBe('DEVICE_LINK_REQUIRED')
     await db.query('update app_private.device_operator_sessions set employee_id=$1 where device_id=$2', [kitchen.employeeId, deviceId])
     await expect(device({ command: 'catalog' })).rejects.toThrow('PERMISSION_DENIED')
     await db.query('update app_private.devices set revoked_at=now() where id=$1', [deviceId])
     await expect(device({ command: 'catalog' })).rejects.toThrow('DEVICE_REVOKED')
+  })
+
+  it('keeps personal POS commands inside the verified device and one-use nonce boundary', async () => {
+    const owner = await newActor(); const cashier = await newActor('cashier', owner.businessId)
+    const payload = { action: 'pos', businessId: cashier.businessId, operatorToken: cashier.token, command: 'catalog' }
+    await expect(db.query("select public.account_secure($1,$2,'pos',$3::jsonb)", [cashier.userId, cashier.sessionId, JSON.stringify(payload)])).rejects.toThrow('DEVICE_LINK_REQUIRED')
+    await expect(execute({ ...cashier, keyHash: 'ff'.repeat(32) }, { command: 'catalog' })).rejects.toThrow('DEVICE_APPROVAL_REQUIRED')
+    const nonce = randomUUID()
+    const invoke = () => db.query<{ result: { data?: unknown; error?: { code: string } } }>("select public.account_secure($1,$2,'pos',$3::jsonb,$4,$5) as result", [cashier.userId, cashier.sessionId, JSON.stringify(payload), cashier.keyHash, nonce])
+    expect((await invoke()).rows[0].result.data).toHaveProperty('products')
+    expect((await invoke()).rows[0].result.error?.code).toBe('DEVICE_PROOF_INVALID')
+    await db.query('update app_private.employee_personal_devices set key_hash=decode($1,\'hex\') where employee_id=$2', ['ef'.repeat(32), cashier.employeeId])
+    await expect(execute(cashier, { command: 'catalog' })).rejects.toThrow('DEVICE_APPROVAL_REQUIRED')
   })
 
   it('paginates by stable server time and ID without duplicates', async () => {
@@ -163,13 +180,17 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
 })
 
 async function newActor(role = 'owner', existingBusiness?: string): Promise<Actor> {
-  const actor = { userId: randomUUID(), sessionId: randomUUID(), businessId: existingBusiness ?? randomUUID(), employeeId: randomUUID(), token: randomUUID().replaceAll('-', '').repeat(2) }
+  const actor = { userId: randomUUID(), sessionId: randomUUID(), businessId: existingBusiness ?? randomUUID(), employeeId: randomUUID(), token: randomUUID().replaceAll('-', '').repeat(2), keyHash: randomUUID().replaceAll('-', '').repeat(2) }
   await db.query('insert into auth.users(id) values($1)', [actor.userId])
   await db.query('insert into auth.sessions(id,user_id) values($1,$2)', [actor.sessionId, actor.userId])
   if (!existingBusiness) await db.query(`insert into app_private.businesses(id,name,business_type,timezone,profile) values($1,'Negocio sintético','cafe','America/Mexico_City','{"branchName":"Principal","registerName":"Caja 1","paymentMethods":["cash","card_external","transfer"]}')`, [actor.businessId])
   await db.query('insert into app_private.business_memberships(business_id,user_id,role) values($1,$2,$3)', [actor.businessId, actor.userId, role])
   await db.query(`insert into app_private.employees(id,business_id,user_id,name,role) values($1,$2,$3,'Persona sintética',$4)`, [actor.employeeId, actor.businessId, actor.userId, role])
   await db.query(`insert into app_private.operator_sessions(business_id,user_id,auth_session_id,token_hash) values($1,$2,$3,extensions.digest($4,'sha256'))`, [actor.businessId, actor.userId, actor.sessionId, actor.token])
+  if (role !== 'owner') {
+    await db.query(`insert into app_private.employee_personal_devices(business_id,employee_id,key_hash,name) values($1,$2,decode($3,'hex'),'Navegador sintético')`, [actor.businessId, actor.employeeId, actor.keyHash])
+    await db.query(`update app_private.operator_sessions set employee_device_key_hash=decode($1,'hex') where business_id=$2 and user_id=$3`, [actor.keyHash, actor.businessId, actor.userId])
+  }
   return actor
 }
 
@@ -180,7 +201,9 @@ function saleCommand(product: Product, quantity = 1, paymentMethod: Sale['paymen
   return { command: 'complete_sale', operationId: randomUUID(), items: [{ productId: product.id, quantity, unitPriceCents: product.priceCents, version: product.version }], totalCents: product.priceCents * quantity, paymentMethod }
 }
 async function execute<T = unknown>(actor: Actor, command: PosCommand): Promise<T> {
-  return (await db.query<{ result: { data: T } }>('select public.pos_execute($1,$2,$3,$4,$5::jsonb) as result', [actor.userId, actor.sessionId, actor.businessId, actor.token, JSON.stringify(command)])).rows[0].result.data
+  const result = (await db.query<{ result: { data: T; error?: { code: string } } }>("select public.account_secure($1,$2,'pos',$3::jsonb,$4,$5) as result", [actor.userId, actor.sessionId, JSON.stringify({ action: 'pos', businessId: actor.businessId, operatorToken: actor.token, ...command }), actor.keyHash, randomUUID()])).rows[0].result
+  if (result.error) throw new Error(result.error.code)
+  return result.data
 }
 async function count(table: string, businessId: string): Promise<number> {
   if (!['products', 'sales', 'sale_items'].includes(table)) throw new Error('Unknown fixture table')

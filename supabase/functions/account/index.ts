@@ -1,6 +1,8 @@
+import { DeviceProofError, verifiedDeviceRequest } from './device-proof.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2'
 import type { AccountError, AccountErrorCode, AccountRequest } from '../../../src/lib/contracts.ts'
 import { isUuid, parseAccountRequest, RequestValidationError } from './validation.ts'
+import { mailConfiguration, sendPinRecovery } from './email.ts'
 import { claimsFromVerifiedJwt, verifiedGoogleAuthentication } from './authentication.ts'
 
 const maxBodyBytes = 8192
@@ -24,14 +26,18 @@ const errorDefinitions: Record<AccountErrorCode, { status: number; message: stri
   PERMISSION_DENIED: { status: 403, message: 'Only the owner can manage this business.' },
   INVITATION_INVALID: { status: 400, message: 'The invitation is unavailable or expired.' },
   PAIRING_INVALID: { status: 400, message: 'The pairing code is unavailable or expired.' },
+  DEVICE_LINK_REQUIRED: { status: 403, message: 'Use the employee personal login and link this browser.' },
+  DEVICE_APPROVAL_REQUIRED: { status: 403, message: 'This device is not authorized. Ask the owner to review device notifications. Rejected requests can be retried after ten minutes.' },
+  DEVICE_PROOF_INVALID: { status: 403, message: 'The device verification expired or is invalid. Try again.' },
   DEVICE_REVOKED: { status: 403, message: 'This device is no longer authorized.' },
   REAUTH_REQUIRED: { status: 401, message: 'Sign in again with Google before changing the PIN.' },
   EMPLOYEE_INACTIVE: { status: 403, message: 'This employee is unavailable.' },
   PIN_SETUP_INVALID: { status: 400, message: 'The PIN setup code is unavailable or expired.' },
   PIN_SETUP_ACCOUNT_MISMATCH: { status: 403, message: 'Sign in as the employee assigned to this PIN setup code.' },
-  RECOVERY_INVALID: { status: 401, message: 'The recovery code is invalid or unavailable.' },
+  RECOVERY_INVALID: { status: 401, message: 'The recovery link is invalid or unavailable.' },
   RECOVERY_LOCKED: { status: 429, message: 'Too many recovery attempts. Try again later.' },
-  RECOVERY_UNAVAILABLE: { status: 409, message: 'An owner recovery code has not been prepared.' },
+  RECOVERY_UNAVAILABLE: { status: 409, message: 'Email recovery is not available for this account.' },
+  EMAIL_UNAVAILABLE: { status: 503, message: 'The recovery email could not be sent.' },
   SERVER_ERROR: { status: 500, message: 'The request could not be completed. Try again.' },
 }
 
@@ -135,6 +141,12 @@ function rpcFor(request: AccountRequest): { name: string; args: Record<string, u
       return { name: 'pos_execute', args: { p_business_id: request.businessId, p_operator_token: request.operatorToken, p_payload: request } }
     case 'device_pos':
       return { name: 'pos_device', args: { p_device_token: request.deviceToken, p_operator_token: request.operatorToken, p_payload: request } }
+    case 'device_request_pin_email':
+      return { name: 'account_device_request_pin_email', args: { p_device_token: request.deviceToken, p_employee_id: request.employeeId } }
+    case 'request_pin_email':
+      return { name: 'account_request_pin_email', args: { p_business_id: request.businessId } }
+    case 'pin_email_details': case 'confirm_pin_email':
+      return { name: 'account_confirm_pin_email', args: { p_action: request.action, p_payload: request } }
     case 'status':
       return { name: 'account_status', args: {} }
     case 'create_business':
@@ -167,20 +179,25 @@ Deno.serve(async (request: Request) => {
     if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', headers)
 
     // Restricted device commands validate their own credential in SQL; the public API key grants no tenant access.
-    const action = parseAccountRequest(await boundedJson(request))
+    const verifiedDevice = await verifiedDeviceRequest(await boundedJson(request))
+    const action = parseAccountRequest(verifiedDevice.request)
     const deviceAction = action.action.startsWith('device_')
+    const emailConfirmation = action.action === 'pin_email_details' || action.action === 'confirm_pin_email'
+    const publicCredentialAction = deviceAction || emailConfirmation
     const authorization = request.headers.get('authorization')
     const jwt = authorization?.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i)?.[1]
-    if (!deviceAction && (!jwt || jwt.length > 16384)) return errorResponse('AUTH_REQUIRED', headers)
+    if (!publicCredentialAction && (!jwt || jwt.length > 16384)) return errorResponse('AUTH_REQUIRED', headers)
     const url = Deno.env.get('SUPABASE_URL')
     const key = serverKey()
     if (!url || !key) return errorResponse('SERVER_ERROR', headers)
     const admin = createClient(url, key, { auth: {
       persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
     } })
-    const rpc = rpcFor(action)
+    const rpc = publicCredentialAction ? rpcFor(action) : { name: 'account_secure', args: {
+      p_action: action.action, p_payload: action, p_device_key_hash: verifiedDevice.keyHash, p_proof_nonce: verifiedDevice.nonce,
+    } }
     let identityArgs: Record<string, string> = {}
-    if (!deviceAction) {
+    if (!publicCredentialAction) {
       // An API key or caller-supplied user ID never establishes identity.
       const { data: authData, error: authError } = await admin.auth.getUser(jwt!)
       if (authError || !authData.user || authData.user.is_anonymous) return errorResponse('AUTH_REQUIRED', headers)
@@ -189,11 +206,12 @@ Deno.serve(async (request: Request) => {
       const authSessionId = claims.session_id
       const testOnlyPassword = localPasswordTesting(url)
       if (!testOnlyPassword && !verifiedGoogleAuthentication(authData.user, claims)) return errorResponse('GOOGLE_REQUIRED', headers)
-      if (action.action === 'reset_pin' && !testOnlyPassword
-        && !verifiedGoogleAuthentication(authData.user, claims, Date.now() / 1000)) return errorResponse('REAUTH_REQUIRED', headers)
 
       identityArgs = { p_user_id: authData.user.id, p_auth_session_id: authSessionId }
     }
+    const requestingEmail = action.action === 'request_pin_email' || action.action === 'device_request_pin_email'
+    const emailConfig = requestingEmail ? mailConfiguration(name => Deno.env.get(name)) : null
+    if (requestingEmail && !emailConfig) return errorResponse('EMAIL_UNAVAILABLE', headers)
     const { data, error } = await admin.rpc(rpc.name, {
       ...rpc.args, ...identityArgs,
     })
@@ -209,8 +227,15 @@ Deno.serve(async (request: Request) => {
       return errorResponse(code, headers, data.error.retryAfterSeconds)
     }
     if (!Object.hasOwn(data, 'data')) return errorResponse('SERVER_ERROR', headers)
+    if (requestingEmail) {
+      const sent = await sendPinRecovery(data.data, emailConfig!)
+      const delivery = await admin.rpc('account_pin_email_delivery', { p_id: data.data.id, p_delivered: sent })
+      if (!sent || delivery.error) return errorResponse('EMAIL_UNAVAILABLE', headers)
+      return new Response(JSON.stringify({ data: { sent: true, retryAfterSeconds: 60 } }), { status: 200, headers })
+    }
     return new Response(JSON.stringify(data), { status: 200, headers })
   } catch (error) {
+    if (error instanceof DeviceProofError) return errorResponse('DEVICE_PROOF_INVALID', headers)
     if (error instanceof RequestValidationError) return errorResponse('VALIDATION_ERROR', headers)
     if (error instanceof BodyTooLargeError) return errorResponse('PAYLOAD_TOO_LARGE', headers)
     console.error(JSON.stringify({ event: 'account_request_failed', code: 'SERVER_ERROR' }))

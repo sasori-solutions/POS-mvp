@@ -148,10 +148,11 @@ export async function mockAccount(page: Page, options: {
       expiresAt: new Date(Date.now() + 8 * 3_600_000).toISOString(),
     };
     switch (body.action) {
-      case 'pos':
+    case 'pos':
         if (body.command === 'catalog') return reply({ products: [], paymentMethods: ['cash', 'card_external', 'transfer'] });
         if (body.command === 'sales') return reply({ sales: [], nextCursor: null });
         return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');
+      case 'notifications': return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { notifications: [], unreadCount: 0 } }) });
       case 'status':
         return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType }] : [] });
       case 'create_business':
@@ -162,9 +163,6 @@ export async function mockAccount(page: Page, options: {
           return route.abort('failed');
         }
         return reply(unlocked);
-      case 'create_recovery_code':
-        if (body.currentPin !== fixturePin) return reject(401, 'PIN_INVALID', 'PIN incorrecto.');
-        return reply({ recoveryCode: 'f5'.repeat(32) });
       case 'unlock':
         if (body.pin !== fixturePin) {
           wrongAttempts += 1;

@@ -5,6 +5,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 import type { Page } from '@playwright/test'
 import { fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, mockAccount } from './account-fixture'
 import { parseAccountRequest } from '../../supabase/functions/account/validation'
+import { verifiedDeviceRequest } from '../../supabase/functions/account/device-proof'
 import type { PosCommand, Product, Sale } from '../../src/lib/pos-contracts'
 
 export const seedProducts = [
@@ -35,7 +36,7 @@ export async function createPosDatabase() {
   await db.query(`insert into app_private.employees(id,business_id,user_id,name,role) values($1,$2,$3,'Dueño sintético','owner')`, [employeeId, fixtureBusiness.id, session.user.id])
   await db.query(`insert into app_private.operator_sessions(business_id,user_id,auth_session_id,token_hash) values($1,$2,$3,extensions.digest($4,'sha256'))`, [fixtureBusiness.id, session.user.id, claims.session_id, fixtureOperatorToken])
   async function execute<T>(command: PosCommand): Promise<T> {
-    return (await db.query<{ result: { data: T } }>('select public.pos_execute($1,$2,$3,$4,$5::jsonb) as result', [session.user.id, claims.session_id, fixtureBusiness.id, fixtureOperatorToken, JSON.stringify(command)])).rows[0].result.data
+    return (await db.query<{ result: { data: T } }>("select public.account_secure($1,$2,'pos',$3::jsonb) as result", [session.user.id, claims.session_id, JSON.stringify({ action: 'pos', businessId: fixtureBusiness.id, operatorToken: fixtureOperatorToken, ...command })])).rows[0].result.data
   }
   async function seed() {
     for (const product of seedProducts) await execute({ command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, ...product })
@@ -58,7 +59,7 @@ export async function mockPos(page: Page, options: { empty?: boolean; saleRespon
       if (body?.action !== 'pos') return route.fallback()
       const reject = (status: number, code: string) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ error: { code, message: 'Synthetic API response' } }) })
       try {
-        const parsed = parseAccountRequest(body)
+        const parsed = parseAccountRequest((await verifiedDeviceRequest(body)).request)
         if (parsed.action !== 'pos') return reject(400, 'VALIDATION_ERROR')
         calls.push(parsed)
         if (parsed.command === 'catalog' && catalogFailures-- > 0) return reject(500, 'SERVER_ERROR')

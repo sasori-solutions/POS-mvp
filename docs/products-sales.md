@@ -6,7 +6,7 @@ Implementation on `feat/products-sales`, 1 October 2026. This branch has not bee
 
 React/TypeScript/Vite PWA, local IBM Plex Sans and Lucide icons, the existing Home navigation and account client. The frontend has no new runtime dependency. `pos-contracts.ts` defines product/cart/sale commands; `pos.ts` handles exact money and the existing personal/device transport; `pending-sale.ts` retains uncertain registration commands. Screen state remains in React. Catalog refreshes on focus, reconnection, every minute and operator request.
 
-The `account` Edge Function retains Google/live-session verification, exact JSON keys, the 8 KiB limit, allowed-origin CORS and `no-store`. New actions `pos` and `device_pos` dispatch to credential-checked RPCs; no browser table access is added. SQL is authoritative for permissions, catalog versions, totals and atomic persistence.
+The `account` Edge Function retains Google/live-session verification, exact JSON keys, the 8 KiB limit, allowed-origin CORS and `no-store`. Personal `pos` commands extend `account_secure`, preserving signed browser proofs, one-use nonces and employee device binding. `device_pos` uses the existing restricted register context and preserves linked-employee denials. No browser table access is added. SQL is authoritative for permissions, catalog versions, totals and atomic persistence.
 
 | Role | Catalog | Product mutations | Register sale | History/detail |
 | --- | --- | --- | --- | --- |
@@ -18,7 +18,7 @@ Paired-register requests derive business and employee from the restricted device
 
 ## Model and financial consistency
 
-Migration `20261001000700_products_sales.sql` adds private `products`, `sales`, `sale_items` and `pos_operations`, with RLS and composite tenant foreign keys. `pos_execute` and `pos_device` are executable only by `service_role`; private helpers are revoked from browser roles.
+Migration `20261001000900_products_sales.sql` adds private `products`, `sales`, `sale_items` and `pos_operations`, with RLS and composite tenant foreign keys. `pos_execute` and `pos_device` are executable only by `service_role`; private helpers are revoked from browser roles.
 
 Products have category text, active state and optimistic version. Deactivation is reversible; finalized sales keep their name/category/price/operator/timezone snapshots. There is no physical product deletion or sale editing API. Product images are deferred because the existing storage subsystem is not enabled; product names remain the primary touch target.
 
@@ -38,10 +38,10 @@ The operational shell follows the human request: ivory, evergreen primary action
 
 ## Validation and rollout
 
-Run `npm ci`, `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run test:e2e`. Backend: `deno check supabase/functions/account/index.ts` and `deno test supabase/functions/account/validation.deno.ts supabase/functions/account/authentication.deno.ts`.
+Run `npm ci`, `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run test:e2e`. Backend: `deno check supabase/functions/account/index.ts` and `deno test supabase/functions/account/*.deno.ts`.
 
 Domain tests cover exact money, bounds, timezone, HTTP validation and durable storage. PGlite SQL tests execute every checked-in migration and verify private grants/RLS, tenant/role restrictions, real device and personal session rejection, snapshots/replay, version conflicts, rollback and keyset pagination. Browser tests intercept synthetic OAuth/HTTP; financial calls execute those same PostgreSQL RPCs. They cover product lifecycle, all methods, quantities/removal, lost response/reload/PIN, rapid taps, multiple tabs, storage quota, rejected recovered drafts, stale/inactive products and 320/390/768/1024/1440px layouts. Synthetic screenshots are in ignored `artifacts/qa/`.
 
-PGlite is a single embedded database session: these checks do not establish multi-connection lock concurrency or the live Supabase Auth/Edge gateway. The separate 57 existing local Supabase integration tests require Docker and skip when unavailable. Run those with the disposable local stack before hosted rollout; verify concurrent identical/different-payload retries and product deactivation versus sale acceptance there. Physical phone/PWA installation and cloud Google/device/product/sale workflows remain deployment checks.
+PGlite is a single embedded database session: these checks do not establish multi-connection lock concurrency or the live Supabase Auth/Edge gateway. The 65 inherited integration cases plus seven product/sale cases require Docker and skip when unavailable. CI now starts an isolated loopback Supabase/Auth/Edge/Mailpit stack and runs them serially with complete credentials. Financial cases exercise simultaneous identical/conflicting submissions, deactivation versus cashier acceptance, tenant/role/browser-proof checks, paired registers, receipts and rollback/retry. Physical phone/PWA installation and cloud Google/device/product/sale workflows remain deployment checks.
 
 For a separately authorized rollout: inspect the linked project's migration history and concurrent employee work, apply only pending migrations, deploy the updated `account` function, then upload verified `dist` to the existing Cloudflare Direct Upload project. A GitHub branch push does not publish the application. Re-run the hosted gate and authenticated manual flows after deployment. Preserve existing credentials, RLS and origin restrictions. Orders, inventory, invoicing, terminal integration, refunds and offline operation remain subsequent modules.

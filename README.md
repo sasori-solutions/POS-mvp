@@ -1,20 +1,22 @@
+## Employee access and device notifications — feature branch
+
+Employee invitations use one link or locally generated QR, personal employee entry, one linked browser and owner approval of replacements. A persistent in-app inbox reports device linking and blocked attempts. See [implementation, limitations and release order](docs/employee-device-access.md). Requires migration 0008 and updated Edge before the frontend; not yet deployed.
+
 # POS México PWA
 
-Account and online POS MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN and an independent recovery code. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Products and online sales are implemented on the feature branch; orders remain a subsequent module.
+Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Products and online sales are implemented; orders remain a subsequent module.
 
-Shared registers use `/employee`: a one-use pairing code connects a restricted device, then each active employee selects their name and enters their PIN. The device never needs to retain the owner's Google session. Invited employees may also join with their own Google account. Roles come from the owner's assignment; the employee cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. Only the device credential is persisted; PINs and operator tokens stay in memory.
+Personal employee access uses `/employee`: open or paste the owner's invitation link, or scan its QR with the device camera, then sign in with Google and a personal PIN. The browser is linked to the employee; a different browser stays blocked until the owner approves a replacement in Notificaciones. Shared registers use `/register`, with a one-use pairing link/code and PIN entry for existing PIN-only employees. Google-linked employees use their personal linked browser. Roles come from the owner's assignment; employees cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. PINs and operator tokens stay in memory.
 
-Employees choose their own PIN. The owner assigns name/role and authorizes setup or reset, without entering the employee's PIN. Google invitees with no PIN create one when joining; a person who already has a PIN enters that same PIN to link Google. PIN-only employees receive a one-use, 15-minute setup code and choose their PIN on a paired register. Linking Google preserves the existing PIN and employee ID.
+Employees choose their own PIN. The owner assigns name/role and authorizes initial setup, without entering the employee's PIN. Google invitees with no PIN create one when joining; a person who already has a PIN enters that same PIN to link Google. Existing PIN-only employees can still complete initial setup on a paired register; forgotten-PIN recovery requires a linked account with a confirmed email. New employees are added through one invitation flow: name and role, share the link, then the employee signs in with Google and chooses their PIN. Linking Google preserves the existing PIN and employee ID.
 
-Owner recovery requires the same owner account, fresh Google authentication and the independent recovery code saved outside the shared browser. Google alone cannot reset the PIN or enroll recovery. Generating or replacing the recovery code requires an unlocked owner operator and the current PIN. Existing businesses receive no automatic recovery code or fallback: the owner must first unlock with the known PIN to prepare one. A successful recovery consumes the code, provides its replacement and closes prior owner operator sessions. A normal PIN change requires the current PIN and retains the recovery code.
+Forgotten-PIN recovery uses an email confirmation link sent to the account's confirmed address. The link lasts 15 minutes, works once and lets the person choose a new PIN without Google reauthentication or a manual recovery code. It grants no login/operator session and closes prior operators for that person/business. A normal PIN change still requires the current PIN. Resend, migration 0007, the account function and frontend are deployed; real inbox delivery remains a manual check. See [email recovery](docs/pin-email-recovery.md).
 
-Employee management uses one list, one Administrar action per employee and a focused form with Volver a empleados. Empleados and Dispositivos have separate tabs. Google access is optional and creates no provisional PIN. Each employee's detail shows whether an invitation is pending, accepted, cancelled, replaced, expired or unavailable, with recorded dates rather than a generic “revocado o utilizado” message. Owners can confirm Eliminar empleado and explicitly restore the same person from Empleados eliminados. Deletion closes access and sessions; restoration preserves identity and PIN without reviving old sessions or invitation codes.
+Employee management uses one list, one Administrar action per employee and a focused form with Volver a empleados. Empleados and Dispositivos de caja are separate destinations directly under Más. New employees always receive a Google invitation and choose their own PIN; the owner sees no access-method checkbox or provisional PIN. Existing PIN-only access remains supported. Each employee's detail shows whether an invitation is pending, accepted, cancelled, replaced, expired or unavailable, with recorded dates rather than a generic “revocado o utilizado” message. Owners can confirm Eliminar empleado and explicitly restore the same person from Empleados eliminados. Deletion closes access and sessions; restoration preserves identity and PIN without reviving old sessions or invitation codes.
 
-The PIN policy/recovery changes were published on 1 October 2026 by Agente de Larios with new migrations `20261001000500_employee_pin_policy.sql` and `20261001000600_owner_pin_recovery.sql`; previously applied migrations remain unchanged. Final validation passed **57/57 real local integration**, **16/16 Deno** and **160/160 desktop/phone-width browser cases**, build/typechecks and the real local browser, compatibility and production-authentication smokes. Compatibility preserved existing people, PIN hashes, lockout counters and invitation codes, with canonical statement history **44/48/27/23/29/21**. Public route/asset checks passed **27/27** and anonymous API probes **20/20**. See [DEPLOYMENT.md](DEPLOYMENT.md) for release artifacts and limits.
+The earlier PIN policy/recovery changes were published on 1 October 2026 by Agente de Larios with new migrations `20261001000500_employee_pin_policy.sql` and `20261001000600_owner_pin_recovery.sql`; previously applied migrations remain unchanged. Final validation passed **57/57 real local integration**, **16/16 Deno** and **160/160 desktop/phone-width browser cases**, build/typechecks and the real local browser, compatibility and production-authentication smokes. Compatibility preserved existing people, PIN hashes, lockout counters and invitation codes, with canonical statement history **44/48/27/23/29/21**. Public route/asset checks passed **27/27** and anonymous API probes **20/20**. See [DEPLOYMENT.md](DEPLOYMENT.md) for release artifacts and limits.
 
 The preceding employee lifecycle correction was published on 1 October 2026 by Agente de Larios, including migration `20261001000400_employee_lifecycle.sql`. Its validation passed 126/126 browser cases, 36/36 real integration tests and 13/13 Deno tests; public routes/assets passed 27/27. Successful cloud employee mutations, fresh business creation and physical-phone installation remain manual checks.
-
-The products/sales extension adds searchable categorized products, editing and reversible deactivation, a touch cart, integer MXN totals, cash/external-card/transfer registration and immutable sale history. It extends the existing account API for personal and paired-register operators. Accepted commands replay the original result; uncertain sale registration survives reload/PIN without storing credentials. See [docs/products-sales.md](docs/products-sales.md) for permissions, schema, validation and rollout. This extension has not been deployed to cloud.
 
 ## Cloud app
 
@@ -36,13 +38,11 @@ Set `.env.local` to the intended development backend's public Supabase URL and p
 
 ```sh
 npm run test
-npm run lint
-npm run typecheck
 npm run build
 npm run test:e2e
 ```
 
-Browser tests mock Google/Supabase network responses and test app behavior. Products/sales fixtures execute the actual migrations and financial RPCs in embedded PostgreSQL (PGlite). They do not prove a real Google authorization, Edge gateway, multi-connection database concurrency or cloud deployment. The separate local Supabase integration suite still needs Docker and skips when its stack is unavailable.
+Browser tests mock Google/Supabase network responses and test app behavior. They do not prove a real Google authorization or cloud deployment.
 
 ## Supabase and Google OAuth
 
@@ -71,7 +71,7 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 ## Design source
 
-Alpha v3 supplies the shared phone/tablet structure, local IBM Plex Sans, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. The products/sales request explicitly uses ivory and evergreen in the operational shell, with muted orange warnings and 14px corners. Authentication retains its existing design. Phone separates catalog and account; tablet/desktop show them side by side. Orders, inventory, tax calculation, invoicing and automatic payment processing remain pending.
+Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Products and online sale registration follow the scoped ivory/evergreen operational styles; orders, inventory, invoicing and automatic payment processing remain pending.
 
 ## Current hosted release: access UI correction
 
@@ -123,3 +123,9 @@ npx supabase migration list --linked
 ```
 
 The dashboard reconciliation above is complete. CLI linking and these inspection commands have not been executed in this deployment session; do not repeat history repair or reapply the foundation blindly. Enter any prompted database password privately.
+
+## Products and online sales
+
+Products and online sales extend the existing account API with categorized catalog management, reversible deactivation, a touch cart, exact MXN cents, cash/external-card/transfer registration and immutable history. Accepted commands replay their original result and uncertain registration survives reload/PIN without storing credentials. See [docs/products-sales.md](docs/products-sales.md) for permissions, migration 0009, validation and rollout. This extension has not been deployed to Supabase or Cloudflare.
+
+Run `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build` and `npm run test:e2e`. Financial browser fixtures execute the actual migrations/RPCs in embedded PostgreSQL; real Supabase Auth/Edge integration requires the disposable local stack.

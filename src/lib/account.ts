@@ -1,3 +1,4 @@
+import { signEmployeeDeviceRequest } from './employee-device'
 import type { AccountEnvelope, AccountErrorCode, AccountRequest, AccountResponses } from './contracts'
 import { supabase, supabasePublishableKey, supabaseUrl } from './supabase'
 
@@ -11,15 +12,19 @@ const messages: Record<AccountErrorCode, string> = {
   PERMISSION_DENIED: 'Tu rol no permite esta acción. Solicita ayuda al dueño.',
   INVITATION_INVALID: 'La invitación venció, fue revocada o ya no es válida. Pide una nueva al dueño.',
   PAIRING_INVALID: 'El código de conexión venció o ya no es válido. Pide uno nuevo al dueño.',
+  DEVICE_LINK_REQUIRED: 'Usa tu acceso personal con Google desde Entrar como empleado. Permite el almacenamiento del navegador para vincularlo.',
+  DEVICE_APPROVAL_REQUIRED: 'Este dispositivo no está autorizado. Revisa la solicitud con el dueño. Si fue rechazada, espera 10 minutos antes de intentar de nuevo.',
+  DEVICE_PROOF_INVALID: 'No pudimos verificar este dispositivo. Revisa la fecha y hora del equipo.',
   DEVICE_REVOKED: 'Este dispositivo fue revocado. Vuelve a conectarlo con el dueño.',
   EMPLOYEE_INACTIVE: 'Tu acceso fue desactivado. Contacta al dueño.',
   REAUTH_REQUIRED: 'Vuelve a verificar tu cuenta con Google para cambiar el PIN.',
   PIN_INVALID: 'PIN incorrecto. Intenta de nuevo.', PIN_LOCKED: 'Demasiados intentos. Espera antes de volver a ingresar tu PIN.',
   PIN_SETUP_INVALID: 'El código de PIN venció o ya no está disponible. Pide uno nuevo al dueño.',
   PIN_SETUP_ACCOUNT_MISMATCH: 'Entra con la cuenta Google del empleado a quien pertenece este código.',
-  RECOVERY_INVALID: 'El código de recuperación no es válido o ya fue utilizado.',
+  RECOVERY_INVALID: 'El enlace venció o ya fue utilizado. Solicita uno nuevo.',
   RECOVERY_LOCKED: 'Demasiados intentos de recuperación. Espera antes de volver a intentar.',
-  RECOVERY_UNAVAILABLE: 'Este negocio no tiene un código de recuperación preparado. Se genera al entrar con el PIN del dueño.',
+  RECOVERY_UNAVAILABLE: 'Esta persona aún no tiene un correo vinculado. Pide al dueño que vincule su cuenta desde Empleados.',
+  EMAIL_UNAVAILABLE: 'No pudimos enviar el correo. Intenta de nuevo más tarde.',
   SESSION_INVALID: 'La app está bloqueada. Ingresa tu PIN para continuar.', SESSION_EXPIRED: 'Tu sesión de trabajo venció. Ingresa tu PIN para continuar.',
   OPERATION_CONFLICT: 'Esta solicitud cambió. Revisa los datos e intenta de nuevo.',
   ORIGIN_FORBIDDEN: 'Abre el enlace oficial de POS México para entrar.',
@@ -51,11 +56,25 @@ export async function accountRequest<A extends AccountRequest['action']>(
     accessToken = identity.session.access_token
   }
 
-  return sendRequest(request, accessToken)
+  let deviceProof
+  try { deviceProof = await signEmployeeDeviceRequest(request) }
+  catch {
+    // Owners remain able to sign in when persistent storage is unavailable.
+    // The server rejects all employee access without a verified device proof.
+  }
+  return sendRequest<A>({ ...request, ...(deviceProof ? { deviceProof } : {}) } as Extract<AccountRequest, { action: A }>, accessToken)
 }
 
 /** Device credentials are independently checked by the server; no owner identity is forwarded. */
 export async function deviceRequest<A extends Extract<AccountRequest, { action: `device_${string}` }>['action']>(
+  request: Extract<AccountRequest, { action: A }>,
+): Promise<AccountResponses[A]> {
+  if (!supabase) throw new AccountClientError('SERVER_ERROR', 'La aplicación aún no está configurada.')
+  return sendRequest(request)
+}
+
+/** An email link authorizes only this PIN reset, without an identity or operator session. */
+export async function recoveryRequest<A extends 'pin_email_details' | 'confirm_pin_email'>(
   request: Extract<AccountRequest, { action: A }>,
 ): Promise<AccountResponses[A]> {
   if (!supabase) throw new AccountClientError('SERVER_ERROR', 'La aplicación aún no está configurada.')

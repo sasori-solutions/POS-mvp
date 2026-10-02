@@ -1,3 +1,4 @@
+import { signedRequest } from './device-proof-fixture'
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -142,9 +143,8 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     const roster=(await account<{employees:{id:string;role:string}[]}>(null,{action:'device_status',deviceToken:device.deviceToken})).body.data!;
     const ownerId=roster.employees.find(e=>e.role==='owner')!.id;
     const session=await account<BusinessSession & {business:{profile:{address:string}}}>(null,{action:'device_unlock',deviceToken:device.deviceToken,employeeId:ownerId,pin:validPin});expect(session.status).toBe(200);expect(session.body.data?.business.profile.address).toBe('');
-    const recoveryCode=await ownerRecoveryCode(business);
     sql(`update auth.sessions set created_at=now() where id=${sqlUuid(owner.sessionId)};`);
-    expect((await account(owner,{action:'reset_pin',businessId:business.business.id,pin:'901234',recoveryCode,operationId:randomUUID()})).status).toBe(200);
+    expect((await account(owner,{action:'change_pin',businessId:business.business.id,operatorToken:business.operatorToken,currentPin:validPin,pin:'901234',operationId:randomUUID()})).status).toBe(200);
     expect((await account(null,{action:'device_context',deviceToken:device.deviceToken,operatorToken:session.body.data!.operatorToken})).body.error?.code).toBe('SESSION_INVALID');
     const wrong=await Promise.all([
       account(owner,{action:'unlock',businessId:business.business.id,pin:validPin}),
@@ -176,12 +176,11 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     expect((await account(null,{action:'device_status',deviceToken:device.deviceToken})).body.error?.code).toBe('DEVICE_REVOKED');
   },30_000);
 
-  it('requires fresh owner authentication to reset PIN and revokes all old operator tokens', async () => {
+  it('requires the current owner PIN to change it and revokes all old operator tokens', async () => {
     const business = await newBusiness(owner);
-    const recoveryCode=await ownerRecoveryCode(business);
-    const request={action:'reset_pin',businessId:business.business.id,pin:'135790',recoveryCode,operationId:randomUUID()};
+    const request={action:'change_pin',businessId:business.business.id,operatorToken:business.operatorToken,currentPin:validPin,pin:'135790',operationId:randomUUID()};
     sql(`update auth.sessions set created_at = now() - interval '6 minutes' where id = ${sqlUuid(owner.sessionId)};`);
-    expect((await account(owner, request)).body.error?.code).toBe('REAUTH_REQUIRED');
+    expect((await account(owner, {...request,currentPin:'111111'})).body.error?.code).toBe('PIN_INVALID');
     sql(`update auth.sessions set created_at = now() where id = ${sqlUuid(owner.sessionId)};`);
     const reset = await account<BusinessSession>(owner, request); expect(reset.status).toBe(200);
     expect((await account(owner, { action: 'context', businessId: business.business.id, operatorToken: business.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
@@ -189,11 +188,6 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     expect((await account(owner, { action: 'unlock', businessId: business.business.id, pin: '135790' })).status).toBe(200);
   });
 });
-
-async function ownerRecoveryCode(business: BusinessSession) {
-  const result=await account<{recoveryCode:string}>(owner,{action:'create_recovery_code',businessId:business.business.id,operatorToken:business.operatorToken,currentPin:validPin,operationId:randomUUID()});
-  expect(result.status).toBe(200);return result.body.data!.recoveryCode;
-}
 
 function loadLocalConfig(): LocalConfig | null {
   let status: Record<string, string>;
@@ -276,7 +270,7 @@ async function account<T = unknown>(identity: TestAccount | null, request: Recor
       apikey: config!.anonKey,
       ...(identity ? { authorization: `Bearer ${identity.token}` } : {}),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify(await signedRequest(identity?.userId, request)),
   });
   return { status: response.status, body: await response.json() };
 }
