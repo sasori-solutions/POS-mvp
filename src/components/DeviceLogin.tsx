@@ -320,7 +320,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
   }, [operator?.operatorToken])
 
   const remaining = Math.max(0, Math.ceil((retryAt - now) / 1000))
-  if (operator) return <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} timezoneLabel={operator.business.timezone} />
+  if (operator) return <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void lock()} onSwitchEmployee={() => void lock()} logoutLabel="Salir de mi turno" busy={busy} error={error} />
   if (settingPin && deviceToken) return <div className="employee-shell"><EmployeePinSetup deviceToken={deviceToken} onBack={() => { generation.current += 1; setSettingPin(false) }} onBeforeConsume={() => broadcast('lock')} onDone={(result) => { operatorRef.current = result; setOperator(result); setSettingPin(false); setError(''); setRetryAt(0); if (result.business.employee) employeeRetryAt.current.delete(result.business.employee.id); broadcast('lock') }} /></div>
 
   return <div className="employee-shell">
@@ -329,7 +329,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
       : !deviceToken ? <section className="employee-screen">
         <h1>Entrar como empleado</h1><p>Pide al dueño un código para vincular esta caja.</p>
         <form onSubmit={pair}>
-          <div className="field"><label htmlFor="device-pairing">Código de emparejamiento</label><input id="device-pairing" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.trim())} maxLength={128} required disabled={busy} autoComplete="off" autoCapitalize="none" spellCheck={false} /></div>
+          <div className="field"><label htmlFor="device-pairing">Código para vincular dispositivo</label><input id="device-pairing" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.trim())} maxLength={128} required disabled={busy} autoComplete="off" autoCapitalize="none" spellCheck={false} /></div>
           <div className="field"><label htmlFor="device-name">Nombre del dispositivo</label><input id="device-name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} placeholder="Tablet de mostrador" minLength={2} maxLength={100} required disabled={busy} /></div>
           {error && <p className="error-message" role="alert">{error}</p>}
           <div className="screen-actions"><button className="button primary" disabled={busy || !identityClosed.current} aria-busy={busy}>{busy ? 'Vinculando…' : 'Vincular dispositivo'}</button></div>

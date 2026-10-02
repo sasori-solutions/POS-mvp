@@ -21,6 +21,7 @@ export async function mockOnboarding(page: Page, options: {
   createEmployeeResponseLosses?: number;
   invitations?: InvitationSummary[];
   employees?: EmployeeSummary[];
+  devices?: DeviceSummary[];
   recoveryReady?: boolean;
 } = {}) {
   await mockAccount(page, { existingBusiness: options.existingBusiness, authenticated: options.authenticated });
@@ -44,7 +45,7 @@ export async function mockOnboarding(page: Page, options: {
   const deletedEmployees: EmployeeSummary[] = [];
   let pinSetupEmployeeId: string = fixtureCashier.id;
   const employeePins = new Map<string, string>([[fixtureCashier.id, fixtureCashierPin], [fixtureKitchen.id, fixturePin]]);
-  const devices: DeviceSummary[] = [];
+  const devices: DeviceSummary[] = structuredClone(options.devices ?? []);
   const employeeOperations = new Map<string, unknown>();
   const invitationOperations = new Map<string, unknown>();
   let createEmployeeResponseLosses = options.createEmployeeResponseLosses ?? 0;
@@ -227,6 +228,7 @@ export async function mockOnboarding(page: Page, options: {
         currentDeviceOperator = '';
         return reply({ locked: true });
       case 'device_forget': case 'revoke_device':
+        if (body.action === 'revoke_device') devices.filter((item) => item.id === body.deviceId).forEach((item) => { item.active = false; });
         deviceRevoked = true;
         currentDeviceOperator = '';
         return reply({ revoked: true });

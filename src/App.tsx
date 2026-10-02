@@ -4,14 +4,14 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, Coffee, LockKeyhole, LogOut
 import { accountRequest, AccountClientError } from './lib/account'
 import type { AccountErrorCode, BusinessContext, BusinessProfile, BusinessSummary, BusinessType, InvitationDetails, OperatorSession } from './lib/contracts'
 import { allowIdentitySignIn, closeIdentity, hasCurrentStoredIdentity, initializeIdentity, supabase } from './lib/supabase'
-import HomeScreen from './components/HomeScreen'
+import HomeScreen, { type Destination } from './components/HomeScreen'
 import EmployeePinSetup from './components/EmployeePinSetup'
 const TeamPanel = lazy(() => import('./components/TeamPanel'))
 const BusinessSettings = lazy(() => import('./components/BusinessSettings'))
 const DeviceLogin = lazy(() => import('./components/DeviceLogin'))
 const loadingView = <section className="screen loading-screen" aria-live="polite" aria-busy="true"><span className="loader" aria-hidden="true" /><p>Preparando tu acceso…</p></section>
 
-type Screen = 'loading' | 'login' | 'choice' | 'join' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'ready' | 'home' | 'retry' | 'team' | 'settings' | 'reauth' | 'recover' | 'employee' | 'employee-pin' | 'change-pin' | 'recovery-code' | 'recovery-save'
+type Screen = 'loading' | 'login' | 'choice' | 'join' | 'business' | 'create-pin' | 'choose' | 'unlock' | 'ready' | 'home' | 'retry' | 'team' | 'devices' | 'settings' | 'reauth' | 'recover' | 'employee' | 'employee-pin' | 'change-pin' | 'recovery-code' | 'recovery-save'
 interface BusinessDraft { name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile }
 const initialDraft: BusinessDraft = { name: '', businessType: 'cafe', timezone: 'America/Mexico_City', profile: { branchName: 'Sucursal principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external'] } }
 const invitationKey = 'pos-mexico-pending-invitation'
@@ -105,6 +105,9 @@ export default function App() {
   const [intent] = useState(entryIntent)
   const [session, setSession] = useState<Session | null | undefined>(undefined)
   const [screen, setScreen] = useState<Screen>(intent.device ? 'employee' : 'loading')
+  const [homeDestination, setHomeDestination] = useState<Destination | undefined>()
+  const [moreReturn, setMoreReturn] = useState('')
+  const [homeNotice, setHomeNotice] = useState('')
   const [businesses, setBusinesses] = useState<BusinessSummary[]>([])
   const [selected, setSelected] = useState<BusinessSummary | null>(null)
   const [operator, setOperator] = useState<OperatorSession | null>(null)
@@ -148,6 +151,7 @@ export default function App() {
 
   function navigate(next: Screen) {
     setScreen(next)
+    window.scrollTo(0, 0)
     const path = next === 'login' ? '/login' : next === 'business' || next === 'create-pin' ? '/business/new' : next === 'join' ? '/join' : next === 'employee' ? '/employee' : next === 'unlock' ? '/unlock' : next === 'ready' ? '/business/ready' : '/'
     window.history.replaceState({}, '', path)
   }
@@ -168,6 +172,9 @@ export default function App() {
     clearRecoveryClipboard()
     operatorRef.current = null
     setOperator(null)
+    setHomeDestination(undefined)
+    setMoreReturn('')
+    setHomeNotice('')
     setPin('')
     setConfirmation('')
     setCurrentPin(''); setRecoveryInput(''); setSavedRecoveryCode(''); setJoinDetails(null)
@@ -576,7 +583,7 @@ export default function App() {
         await accountRequest({ action: 'lock', businessId: data.business.id, operatorToken: data.operatorToken }, identity.access_token).catch(() => undefined)
         return
       }
-      setOperator(data); setSelected(summaryForContext(data.business)); setPin(''); setConfirmation(''); setCurrentPin(''); recoveryOperation.current = null; navigate('home')
+      setOperator(data); setSelected(summaryForContext(data.business)); setPin(''); setConfirmation(''); setCurrentPin(''); recoveryOperation.current = null; setHomeNotice('PIN actualizado.'); navigate('home')
     } catch (problem) { if (requestEpoch === epoch.current) showFailure(problem) }
     finally { if (requestEpoch === epoch.current) { mutationPending.current = false; setBusy(false) } }
   }
@@ -603,7 +610,6 @@ export default function App() {
     const summary = summaryForContext(business)
     setSelected(summary)
     setBusinesses((current) => current.map((entry) => entry.id === business.id ? summary : entry))
-    navigate('home')
   }
 
   async function submitPin(event: FormEvent) {
@@ -666,10 +672,16 @@ export default function App() {
     finally { if (requestEpoch === epoch.current) setBusy(false) }
   }
 
+  function openMoreScreen(next: Screen, focus: string) {
+    setHomeNotice('')
+    setMoreReturn(focus)
+    navigate(next)
+  }
+
   function changePin() {
     if (!operatorRef.current || busy) return
     setCurrentPin(''); setPin(''); setConfirmation(''); setError(''); recoveryOperation.current = null
-    navigate('change-pin')
+    openMoreScreen('change-pin', 'pin')
   }
 
   async function logout() {
@@ -704,6 +716,7 @@ export default function App() {
 
   const hasIdentity = Boolean(session)
   const createPin = screen === 'create-pin'
+  const isManagement = ['settings', 'team', 'devices'].includes(screen)
   const isHome = screen === 'home' && Boolean(operator)
   const isReady = screen === 'ready' && Boolean(operator)
   const back = () => {
@@ -719,7 +732,7 @@ export default function App() {
     {!isHome && <header className="app-header"><span className="wordmark">POS México<span className="wordmark-square" aria-hidden="true" /></span>
       {hasIdentity && <button className="header-logout" onClick={() => void logout()} disabled={busy}><LogOut size={18} aria-hidden="true" /><span>Cerrar sesión</span></button>}
     </header>}
-    <main className={isHome ? 'pos-home' : isReady ? 'business-home' : 'auth-panel'}>
+    <main className={isHome ? 'pos-home' : isReady ? 'business-home' : isManagement ? 'management-main' : 'auth-panel'}>
       <Suspense fallback={loadingView}>
       {!supabase ? <section className="screen"><div className="screen-icon"><Store aria-hidden="true" /></div><h1>La app está en preparación</h1><p>Falta conectar el servicio de acceso. Contacta al equipo de POS México para terminar la configuración.</p></section>
       : screen === 'loading' ? <section className="screen loading-screen" aria-live="polite" aria-busy="true"><span className="loader" aria-hidden="true" /><p>Preparando tu acceso…</p></section>
@@ -734,8 +747,8 @@ export default function App() {
       : screen === 'employee-pin' ? <EmployeePinSetup accessToken={session?.access_token} onBack={() => { epoch.current += 1; navigate('unlock') }} onDone={(data) => { setOperator(data); setSelected(summaryForContext(data.business)); navigate('home') }} />
       : screen === 'reauth' ? <section className="screen"><h1>Recupera tu PIN</h1><p>{selected?.recoveryReady ? `Necesitarás el código de recuperación que guardaste fuera de este navegador y verificar la misma cuenta de Google de ${selected.name}.` : 'Aún no hay un código de recuperación. Cuando entres con tu PIN, podrás generarlo desde Más. Google por sí solo no restablece el PIN.'}</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions">{selected?.recoveryReady && <button className="button primary" disabled={busy} onClick={beginRecoveryVerification}>Volver a verificar con Google</button>}<button className="button secondary" disabled={busy} onClick={() => { clearRecoveryIntent(); navigate('unlock') }}>Volver</button></div></section>
       : screen === 'recover' ? <section className="screen"><h1>Crea un nuevo PIN</h1><p>Para {selected?.name}. Necesitas tu código de recuperación; Google por sí solo no cambia el PIN.</p><form onSubmit={(event) => void recoverPin(event)}><div className="field"><label htmlFor="owner-recovery-input">Código de recuperación</label><input id="owner-recovery-input" type="password" value={recoveryInput} onChange={(event) => setRecoveryInput(event.target.value.trim())} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={64} disabled={busy} required /></div><p id="pin-help" className="field-help">Usa seis dígitos.</p><PinField label="PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Guardar nuevo PIN</button>{error === accountMessages.REAUTH_REQUIRED && <button type="button" className="button secondary" disabled={busy} onClick={() => navigate('reauth')}>Volver a verificar con Google</button>}<button type="button" className="button secondary" disabled={busy} onClick={() => { clearSensitive(); navigate('unlock') }}>Cancelar</button></div></form></section>
-      : screen === 'change-pin' && operator ? <section className="screen"><h1>Cambiar mi PIN</h1><p>Verifica tu PIN actual y elige el nuevo.</p><form onSubmit={(event) => void saveChangedPin(event)}><div className="field"><label htmlFor="current-pin">PIN actual</label><input id="current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div><p id="pin-help" className="field-help">Usa seis dígitos.</p><PinField label="Nuevo PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Guardar nuevo PIN</button><button type="button" className="button secondary" disabled={busy} onClick={() => { setCurrentPin(''); setPin(''); setConfirmation(''); navigate('home') }}>Cancelar</button></div></form></section>
-      : screen === 'recovery-code' && operator ? <section className="screen"><h1>Recuperación de tu PIN</h1><p>{pendingRecoveryCreation.current ? 'Tu negocio ya está creado. Falta generar el código para recuperar tu PIN.' : 'Si olvidas tu PIN, necesitarás este código y tu cuenta de Google para recuperarlo. Guárdalo en papel o en otro dispositivo, fuera de esta caja. Generar uno nuevo invalida el anterior.'}</p><form onSubmit={(event) => void generateRecoveryCode(event, Boolean(pendingRecoveryCreation.current))}><div className="field"><label htmlFor="recovery-current-pin">PIN actual</label><input id="recovery-current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div>{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Generar código de recuperación</button><button type="button" className="button secondary" disabled={busy} onClick={() => { if (pendingRecoveryCreation.current) void lock(); else { setCurrentPin(''); navigate('home') } }}>Cancelar</button></div></form></section>
+      : screen === 'change-pin' && operator ? <section className="screen"><button type="button" className="back-button" disabled={busy} onClick={() => { setCurrentPin(''); setPin(''); setConfirmation(''); setError(''); navigate('home') }}><ArrowLeft size={18} aria-hidden="true" />Volver a Más</button><h1>Cambiar mi PIN</h1><p>Verifica tu PIN actual y elige el nuevo.</p><form onSubmit={(event) => void saveChangedPin(event)}><div className="field"><label htmlFor="current-pin">PIN actual</label><input id="current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div><p id="pin-help" className="field-help">Usa seis dígitos.</p><PinField label="Nuevo PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Guardar nuevo PIN</button></div></form></section>
+      : screen === 'recovery-code' && operator ? <section className="screen">{!pendingRecoveryCreation.current && <button type="button" className="back-button" disabled={busy} onClick={() => { setCurrentPin(''); setError(''); navigate('home') }}><ArrowLeft size={18} aria-hidden="true" />Volver a Más</button>}<h1>Código de recuperación</h1><p>{pendingRecoveryCreation.current ? 'Tu negocio ya está creado. Falta generar el código para recuperar tu PIN.' : 'Te permite crear un PIN nuevo si olvidas el actual. También necesitarás tu cuenta de Google.'}</p><p className="recovery-explanation">Guárdalo fuera de esta caja, en papel o en otro dispositivo. Si generas otro código, el anterior dejará de funcionar.</p><form onSubmit={(event) => void generateRecoveryCode(event, Boolean(pendingRecoveryCreation.current))}><div className="field"><label htmlFor="recovery-current-pin">PIN actual</label><input id="recovery-current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div>{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Generar código de recuperación</button>{pendingRecoveryCreation.current && <button type="button" className="button secondary" disabled={busy} onClick={() => void lock()}>Cancelar</button>}</div></form></section>
       : screen === 'recovery-save' && operator ? <section className="screen"><h1>Guarda tu código de recuperación</h1><p>Con este código y tu Google podrás recuperar el PIN. Guárdalo en otro dispositivo o en papel, no en esta caja. No se podrá consultar después.</p><div className="field"><label htmlFor="recovery-code-saved">Código de recuperación</label><input id="recovery-code-saved" readOnly value={savedRecoveryCode} autoComplete="off" onFocus={(event) => event.target.select()} /></div>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button secondary" onClick={() => void copyRecoveryCode()}>Copiar código</button><button className="button primary" onClick={() => { clearRecoveryClipboard(); setSavedRecoveryCode(''); recoveryOperation.current = null; navigate(recoveryNext) }}>Ya guardé mi código</button></div></section>
       : screen === 'business' ? <section className="screen">
         <p className="step-label">Tu negocio</p><h1>Vamos a empezar</h1><p>Cuéntanos lo esencial.</p>
@@ -768,8 +781,8 @@ export default function App() {
       : screen === 'choose' ? <section className="screen"><h1>Tus negocios</h1><p>Elige dónde quieres entrar.</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="business-list">{businesses.map((business) => <button className="business-choice" disabled={busy} key={business.id} onClick={() => { setSelected(business); setError(''); setPin(''); navigate('unlock') }}><span className="business-icon"><Coffee size={22} strokeWidth={1.5} aria-hidden="true" /></span><span>{business.name}</span><ChevronRight size={20} aria-hidden="true" /></button>)}</div><button className="button secondary" disabled={busy} onClick={() => { operationId.current = crypto.randomUUID(); setDraft(initialDraft); setError(''); navigate('business') }}>Crear otro negocio</button><button className="button secondary" disabled={busy} onClick={() => { setError(''); navigate('join') }}>Unirme a un negocio</button></section>
       : isReady && operator ? <section className="ready-screen"><div className="ready-mark"><Check size={28} strokeWidth={2} aria-hidden="true" /></div><p className="business-name">{operator.business.name}</p><h1>Cuenta creada</h1><p>Tu acceso está listo. Puedes configurar el negocio y añadir a tu equipo desde el inicio.</p><dl className="business-details"><div><dt>Tipo de negocio</dt><dd>{{ cafe: 'Cafetería', restaurant: 'Restaurante', other: 'Otro' }[operator.business.businessType]}</dd></div><div><dt>Zona horaria</dt><dd>{timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone}</dd></div><div><dt>Sucursal / caja</dt><dd>{operator.business.profile?.branchName} / {operator.business.profile?.registerName}</dd></div></dl>{error && <p className="error-message" role="alert">{error}</p>}<div className="home-actions"><button className="button primary" onClick={() => navigate('home')} disabled={busy}>Ir al inicio<ArrowRight size={20} aria-hidden="true" /></button><button className="button secondary" onClick={() => void lock()} disabled={busy}><LockKeyhole size={20} aria-hidden="true" />{busy ? 'Un momento…' : 'Bloquear'}</button></div></section>
       : screen === 'settings' && operator?.business.role === 'owner' ? <BusinessSettings business={operator.business} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
-      : screen === 'team' && operator?.business.role === 'owner' ? <TeamPanel business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
-      : isHome && operator ? <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} timezoneLabel={timezones.find(([value]) => value === operator.business.timezone)?.[1] ?? operator.business.timezone} onSettings={() => navigate('settings')} onTeam={() => navigate('team')} onSwitchBusiness={changeBusiness} onChangePin={changePin} onRecoveryCode={() => { setCurrentPin(''); setError(''); recoveryOperation.current = null; navigate('recovery-code') }} />
+      : (screen === 'team' || screen === 'devices') && operator?.business.role === 'owner' ? <TeamPanel key={screen} section={screen === 'devices' ? 'devices' : 'employees'} business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
+      : isHome && operator ? <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} destination={homeDestination} onDestinationChange={(value) => { setHomeDestination(value); setMoreReturn(''); setHomeNotice('') }} focusOnReturn={moreReturn} notice={homeNotice} onSettings={() => openMoreScreen('settings', 'settings')} onTeam={() => openMoreScreen('team', 'employees')} onDevices={() => openMoreScreen('devices', 'devices')} onSwitchBusiness={changeBusiness} onChangePin={changePin} onRecoveryCode={() => { setCurrentPin(''); setError(''); recoveryOperation.current = null; openMoreScreen('recovery-code', 'recovery') }} />
       : <section className="screen"><h1>No pudimos cargar tu negocio</h1>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" onClick={() => void loadBusinesses()}>Intentar de nuevo</button></div></section>}
       </Suspense>
     </main>

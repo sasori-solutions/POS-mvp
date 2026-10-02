@@ -8,3 +8,5 @@ Rhythm: touch controls at least 48px, generous vertical breathing room, content 
 Motion: no continuous animation; short input/button feedback. Respect reduced motion.
 
 Home reference: the Alpha phone home (node 8:94) uses the business name, category chips, a catalog area and five bottom destinations: Venta, Comandas, Ventas, Productos and Más. Its sample products, table number and cart total are prototype data. New businesses use an empty catalog with a clear availability message; the header and Más read the saved business context. The ready confirmation offers “Ir al inicio”; later PIN unlocks open Venta directly.
+
+Más review, 1 October 2026: the current implementation and synthetic phone/desktop renders are the comparison reference for this correction. Equal outlined buttons hide the distinction between navigation, PIN security and session actions. Employee/device tabs add a second menu. Returning from any child resets to Venta. Preserve the established Alpha visual language; use divided navigation rows with a label, useful short description and chevron, grouped by task. Keep employee and device administration directly reachable.

@@ -7,6 +7,7 @@ import './account-management.css'
 interface TeamPanelProps {
   business: BusinessContext
   operatorToken: string
+  section: 'employees' | 'devices'
   onBack: () => void
   onSessionError?: (error: AccountClientError) => void
 }
@@ -16,17 +17,18 @@ const roles: Record<BusinessRole, string> = { owner: 'Dueño', manager: 'Encarga
 const sessionErrors = ['AUTH_REQUIRED', 'GOOGLE_REQUIRED', 'SESSION_INVALID', 'SESSION_EXPIRED', 'BUSINESS_ACCESS_DENIED', 'PERMISSION_DENIED', 'REAUTH_REQUIRED']
 type Code = { setupId?: string; value: string; label: string; expiresAt: string; path: string; parameter: string; invitationId?: string; employeeId?: string }
 
-export default function TeamPanel({ business, operatorToken, onBack, onSessionError }: TeamPanelProps) {
+export default function TeamPanel({ business, operatorToken, section, onBack, onSessionError }: TeamPanelProps) {
   const [team, setTeam] = useState<AccountResponses['team'] | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [denied, setDenied] = useState(business.role !== 'owner')
-  const [tab, setTab] = useState<'employees' | 'devices'>('employees')
+  const tab = section
   const [form, setForm] = useState(false)
   const [editing, setEditing] = useState<EmployeeSummary | null>(null)
   const [inviteWithGoogle, setInviteWithGoogle] = useState(false)
+  const [deviceToRemove, setDeviceToRemove] = useState<{ id: string; name: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [name, setName] = useState('')
   const [role, setRole] = useState<EmployeeRole>('cashier')
@@ -34,7 +36,6 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   const [now, setNow] = useState(Date.now)
   const heading = useRef<HTMLHeadingElement>(null)
   const listButton = useRef<HTMLButtonElement>(null)
-  const tabs = useRef<Partial<Record<'employees' | 'devices', HTMLButtonElement | null>>>({})
   const selectedEmployee = useRef<string | null>(null)
   const mounted = useRef(true)
   const generation = useRef(0)
@@ -48,7 +49,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     return () => { mounted.current = false; operation.current = null }
   }, [])
 
-  useEffect(() => { if (form) heading.current?.focus() }, [form, editing?.id, confirmDelete])
+  useEffect(() => { heading.current?.focus() }, [form, editing?.id, confirmDelete])
 
   function showError(caught: unknown) {
     if (!mounted.current) return
@@ -94,7 +95,6 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     selectedEmployee.current = null
     setCode(null)
     setForm(false)
-    setTab('employees')
     setError('')
     setNotice('')
     setDenied(business.role !== 'owner')
@@ -189,7 +189,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
       setEditing(employee)
       selectedEmployee.current = employee.id
       setName(employee.name)
-      if (employee.pinSetup) setCode({ value: employee.pinSetup.setupCode, setupId: employee.pinSetup.setupId, label: 'Código para crear o restablecer PIN', expiresAt: employee.pinSetup.expiresAt, path: '', parameter: 'setup', employeeId: employee.id })
+      if (employee.pinSetup) setCode({ value: employee.pinSetup.setupCode, setupId: employee.pinSetup.setupId, label: 'Código para PIN', expiresAt: employee.pinSetup.expiresAt, path: '', parameter: 'setup', employeeId: employee.id })
       if (employee.invitation) {
         const invitation = employee.invitation
         rememberInvitation(employee, invitation)
@@ -232,9 +232,9 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     try {
       const result = await accountRequest({ action: 'create_pin_setup', businessId: business.id, operatorToken, employeeId: employee.id, operationId: operationId({ action: 'create_pin_setup', employeeId: employee.id }) })
       if (!mounted.current || current !== generation.current) return
-      setCode({ value: result.setupCode, setupId: result.setupId, label: 'Código para crear o restablecer PIN', expiresAt: result.expiresAt, path: '', parameter: 'setup', employeeId: employee.id })
+      setCode({ value: result.setupCode, setupId: result.setupId, label: 'Código para PIN', expiresAt: result.expiresAt, path: '', parameter: 'setup', employeeId: employee.id })
       operation.current = null
-      setNotice('Comparte el código con el empleado. Él elegirá su PIN en una caja vinculada o con su Google.')
+      setNotice('Código creado.')
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
   }
@@ -286,7 +286,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
     try {
       const result = await accountRequest({ action: 'create_pairing_code', businessId: business.id, operatorToken, operationId: operationId({ action: 'create_pairing_code' }) })
       if (!mounted.current || current !== generation.current) return
-      setCode({ value: result.pairingCode, label: 'Código de emparejamiento', expiresAt: result.expiresAt, path: '/employee', parameter: 'pair' })
+      setCode({ value: result.pairingCode, label: 'Código para vincular dispositivo', expiresAt: result.expiresAt, path: '/employee', parameter: 'pair' })
       operation.current = null
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -304,8 +304,9 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
       if (kind === 'invitation') await accountRequest({ action: 'revoke_invitation', businessId: business.id, operatorToken, invitationId: id })
       else await accountRequest({ action: 'revoke_device', businessId: business.id, operatorToken, deviceId: id })
       if (!mounted.current || current !== generation.current) return
-      setNotice(kind === 'invitation' ? 'Ese enlace ya no permite entrar.' : 'Dispositivo revocado. Sus operadores ya no pueden entrar.')
+      setNotice(kind === 'invitation' ? 'Ese enlace ya no permite entrar.' : 'Dispositivo desvinculado. Ya no permite entrar al negocio.')
       if (kind === 'invitation') setCode(null)
+      else setDeviceToRemove(null)
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -337,7 +338,7 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   }
 
   function date(value: string) {
-    return new Date(value).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short', timeZone: business.timezone })
+    return new Date(value).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short', hour12: false, timeZone: business.timezone })
   }
 
   function invitationLabel(invitation: InvitationSummary) {
@@ -368,32 +369,25 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
   const deletedEmployees = team?.deletedEmployees?.filter((employee) => employee.role !== 'owner') ?? []
   const employeeDirty = Boolean(editing && (name.trim().replace(/\s+/g, ' ') !== editing.name || role !== editing.role))
 
-  function selectTab(next: 'employees' | 'devices', focus = false) {
-    setTab(next)
-    setCode(null)
-    setError('')
-    setNotice('')
-    operation.current = null
-    if (focus) tabs.current[next]?.focus()
-  }
-
   function codeCard() {
     if (!currentCode) return null
     return <div className="management-code">
       <label htmlFor="management-code">{currentCode.label}</label>
       <input id="management-code" value={currentCode.value} readOnly onFocus={(event) => event.target.select()} />
+      {currentCode.parameter === 'pair' && <ol className="management-steps"><li>Abre POS México en el dispositivo de caja.</li><li>Elige «Entrar como empleado» e ingresa este código, o abre allí el enlace que copies.</li><li>Asigna un nombre para identificar el dispositivo.</li></ol>}
+      {currentCode.parameter === 'setup' && <p>En una caja vinculada, el empleado debe pulsar «Crear o restablecer mi PIN».</p>}
       <p>{currentCode.parameter !== 'invite' && <>Vence el {date(currentCode.expiresAt)}. </>}Sólo se puede usar una vez.</p>
       <button type="button" className="button secondary" disabled={busy} onClick={() => void copyCode()}>{currentCode.parameter === 'setup' ? 'Copiar código' : 'Copiar enlace'}</button>
     </div>
   }
 
   return <div className="management-shell" onKeyDown={(event) => { if (event.key === 'Escape' && form && !busy) { event.preventDefault(); if (confirmDelete) setConfirmDelete(false); else closeForm() } }}>
-    <button type="button" className="back-button" disabled={busy} onClick={form ? closeForm : onBack}><ArrowLeft size={18} aria-hidden="true" />{form ? 'Volver a empleados' : 'Volver'}</button>
-    <div className="management-heading"><h1 ref={heading} tabIndex={-1}>{confirmDelete && editing ? `¿Eliminar a ${editing.name}?` : form ? editing ? 'Administrar empleado' : 'Agregar empleado' : 'Personal y dispositivos'}</h1>{!form && <p>{business.name}</p>}</div>
+    <button type="button" className="back-button" disabled={busy} onClick={form ? closeForm : onBack}><ArrowLeft size={18} aria-hidden="true" />{form ? 'Volver a empleados' : 'Volver a Más'}</button>
+    <div className="management-heading"><h1 ref={heading} tabIndex={-1}>{confirmDelete && editing ? `¿Eliminar a ${editing.name}?` : form ? editing ? 'Administrar empleado' : 'Agregar empleado' : tab === 'devices' ? 'Dispositivos de caja' : 'Empleados'}</h1>{!form && <p>{business.name}</p>}</div>
     {error && <p className="error-message" role="alert">{error}</p>}
     {notice && <p className="management-success" role="status">{notice}</p>}
     {denied ? <p className="management-warning">Sólo el dueño puede administrar el personal y las cajas.</p> : <>
-      {loading && <div className="management-loading" role="status"><span className="loader" aria-hidden="true" />Cargando personal…</div>}
+      {loading && <div className="management-loading" role="status"><span className="loader" aria-hidden="true" />{section === 'devices' ? 'Cargando dispositivos…' : 'Cargando empleados…'}</div>}
       {!loading && !team && <button type="button" className="button secondary" onClick={() => { setError(''); void load() }}>Reintentar</button>}
       {form ? confirmDelete && editing ? <section className="management-confirmation">
         <p>Se cerrarán sus sesiones y sus invitaciones. Dejará de aparecer en las cajas.</p>
@@ -402,44 +396,40 @@ export default function TeamPanel({ business, operatorToken, onBack, onSessionEr
       </section> : <>
         <form className="management-form" onSubmit={saveEmployee}>
           <div className="field"><label htmlFor="employee-name">Nombre del empleado</label><input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={busy} /></div>
-          <div className="field"><label htmlFor="employee-role">Rol</label><select id="employee-role" value={role} onChange={(event) => setRole(event.target.value as EmployeeRole)} disabled={busy}><option value="manager">Encargado</option><option value="cashier">Cajero</option><option value="kitchen">Cocina</option></select></div>
+          <div className="field"><label htmlFor="employee-role">Puesto</label><select aria-describedby="employee-role-help" id="employee-role" value={role} onChange={(event) => setRole(event.target.value as EmployeeRole)} disabled={busy}><option value="manager">Encargado</option><option value="cashier">Cajero</option><option value="kitchen">Cocina</option></select><p id="employee-role-help" className="field-help">{role === 'kitchen' ? 'Acceso a Comandas.' : role === 'cashier' ? 'Acceso a Venta, Comandas y Productos.' : 'Acceso a Venta, Comandas, Ventas y Productos.'}</p></div>
           {!editing && <fieldset>
-            <legend>Acceso del empleado</legend>
-            <label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} aria-describedby="employee-access-help" onChange={(event) => { setInviteWithGoogle(event.target.checked); operation.current = null }} />Acceso personal con Google (opcional)</label>
-            <p id="employee-access-help" className="field-help">{inviteWithGoogle ? 'Comparte el enlace de invitación. Entrará con su propia cuenta de Google y creará su PIN, que también usará en la caja.' : 'Para trabajar en una caja vinculada sólo necesita su PIN. Comparte el código para que lo cree. Activa Google si también necesita entrar desde su propio dispositivo.'}</p>
+            <legend>Cómo entrará</legend>
+            <label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} aria-describedby="employee-access-help" onChange={(event) => { setInviteWithGoogle(event.target.checked); operation.current = null }} />Permitir acceso con Google</label>
+            <p id="employee-access-help" className="field-help">{inviteWithGoogle ? 'Al guardarlo, recibirás un enlace para compartir. Entrará con Google y elegirá su PIN.' : 'En la caja entrará con su PIN. Al guardarlo, recibirás un código para que él lo cree. Google es opcional y le permite entrar desde otro dispositivo.'}</p>
           </fieldset>}
           <div className="management-actions"><button className="button primary" disabled={busy || Boolean(editing && !employeeDirty)} aria-busy={busy}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar empleado'}</button>{!editing && <button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Cancelar</button>}</div>
         </form>
         {editing && <>
-          <section className="management-detail" aria-labelledby="access-title"><h2 id="access-title">Acceso</h2>{editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void authorizePin(editing)}>{editing.pinReady ? 'Restablecer PIN' : 'Autorizar creación de PIN'}</button>}{(editing.pinReady || editing.googleLinked || invitation?.status !== 'pending' || !editing.active) && <p>{editing.pinReady && !editing.googleLinked && editing.active ? 'PIN en caja' : accessLabel(editing)}</p>}
+          <section className="management-detail" aria-labelledby="access-title"><h2 id="access-title">PIN del empleado</h2><p className="field-help">El empleado elige su PIN. Si necesita uno nuevo, crea un código y compártelo con él.</p>{editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void authorizePin(editing)}>{editing.pinReady ? 'Crear código para restablecer PIN' : 'Crear código para PIN'}</button>}{(editing.pinReady || editing.googleLinked || invitation?.status !== 'pending' || !editing.active) && <p>{editing.pinReady && !editing.googleLinked && editing.active ? 'PIN en caja' : accessLabel(editing)}</p>}
             {!editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void reactivateEmployee(editing)}>Reactivar empleado</button>}
-            {invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
+            {currentCode?.parameter === 'setup' && codeCard()}
+            </section><section className="management-detail management-google" aria-labelledby="google-title"><h2 id="google-title">Acceso con Google</h2>{editing.googleLinked && <p>Cuenta vinculada.</p>}{!editing.googleLinked && !invitation && <p>Opcional. Comparte una invitación para que entre desde su propio dispositivo.</p>}{invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
             {currentCode?.parameter === 'invite' && <p className="field-help">Comparte este enlace con {editing.name}. No se envía por correo automáticamente.</p>}
-            {codeCard()}
+            {currentCode?.parameter === 'invite' && codeCard()}
             {editing.active && !editing.googleLinked && <>
               {invitation?.status === 'pending' && currentCode?.parameter !== 'invite' && <p className="field-help">El enlace sólo se muestra al crearlo. Renueva la invitación para obtener uno nuevo.</p>}
               <div className="management-actions">{(currentCode?.parameter !== 'invite' || invitation?.status !== 'pending') && <button type="button" className="button secondary" disabled={busy} onClick={() => void linkGoogle(editing)}>{invitation ? 'Renovar invitación' : 'Invitar a usar Google'}</button>}{invitation?.status === 'pending' && <button type="button" className="button secondary" disabled={busy} onClick={() => void revoke('invitation', invitation.id)}>Cancelar invitación</button>}</div>
-              {!invitation && <p className="field-help">Crearás un enlace para compartirlo con el empleado.</p>}
             </>}
           </section>
           <div className="management-danger"><button type="button" className="management-text-button" disabled={busy} onClick={() => { setConfirmDelete(true); setError(''); setNotice(''); operation.current = null }}>Eliminar empleado</button></div>
         </>}
       </> : team && <>
-        <div className="management-tabs" role="tablist" aria-label="Administrar personal y dispositivos">{(['employees', 'devices'] as const).map((item) => <button key={item} ref={(element) => { tabs.current[item] = element }} type="button" role="tab" tabIndex={tab === item ? 0 : -1} id={`management-${item}-tab`} aria-selected={tab === item} aria-controls={`management-${item}-panel`} className={tab === item ? 'selected' : ''} disabled={busy} onClick={() => selectTab(item)} onKeyDown={(event) => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || busy) return
-          event.preventDefault()
-          selectTab(event.key === 'Home' ? 'employees' : event.key === 'End' ? 'devices' : item === 'employees' ? 'devices' : 'employees', true)
-        }}>{item === 'employees' ? 'Empleados' : 'Dispositivos'}</button>)}</div>
-        <section hidden={tab !== 'employees'} id="management-employees-panel" role="tabpanel" aria-labelledby="management-employees-tab" className="management-section">
+        <section hidden={tab !== 'employees'} id="management-employees-panel" aria-label="Empleados" className="management-section">
           <button ref={listButton} type="button" className="button primary" disabled={busy} onClick={() => openForm()}>Agregar empleado</button>
           <ul className="management-list" aria-label="Empleados">{employees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}. {accessLabel(employee)}</p></div><button type="button" className="button secondary" aria-label={`Administrar ${employee.name}`} disabled={busy} onClick={() => openForm(employee)}>Administrar</button></li>)}</ul>
           {!employees.length && <p className="management-empty">Aún no has agregado empleados.</p>}
           {deletedEmployees.length > 0 && <details className="management-deleted"><summary>Empleados eliminados</summary><p>Restaurar devuelve el acceso por PIN o Google que ya tenía. Los enlaces y las sesiones anteriores no se reactivan.</p><ul className="management-list" aria-label="Empleados eliminados">{deletedEmployees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}{employee.deletedAt ? `. Eliminado el ${date(employee.deletedAt)}` : ''}</p></div><button type="button" className="button secondary" aria-label={`Restaurar ${employee.name}`} disabled={busy} onClick={() => void employeeLifecycle(employee, 'restore_employee')}>Restaurar</button></li>)}</ul></details>}
-        </section><section hidden={tab !== 'devices'} id="management-devices-panel" role="tabpanel" aria-labelledby="management-devices-tab" className="management-section"><p>Vincula una caja compartida para que los empleados entren con su PIN.</p>
+        </section><section hidden={tab !== 'devices'} id="management-devices-panel" aria-label="Dispositivos de caja" className="management-section"><p>Vincula la tablet o computadora de la caja. Los empleados podrán entrar allí con su PIN.</p>
           {codeCard()}
-          <ul className="management-list" aria-label="Dispositivos">{team.devices.map((device) => <li key={device.id}><div><strong>{device.name}</strong><p>{device.registerName}{device.active ? '' : '. Sin acceso'}</p></div>{device.active && <button type="button" className="button secondary" aria-label={`Revocar dispositivo ${device.name}`} disabled={busy} onClick={() => void revoke('device', device.id)}>Revocar</button>}</li>)}</ul>
-          {!team.devices.length && <p className="management-empty">No hay dispositivos vinculados.</p>}
-          <button type="button" className="button secondary" disabled={busy} onClick={() => void pairing()}>Emparejar dispositivo</button>
+          {deviceToRemove && <div className="management-device-confirm" role="region" aria-labelledby="remove-device-title" aria-describedby="remove-device-help"><h2 id="remove-device-title">¿Desvincular {deviceToRemove.name}?</h2><p id="remove-device-help">Se cerrarán las sesiones en ese dispositivo. Necesitarás vincularlo de nuevo para usarlo como caja.</p><div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void revoke('device', deviceToRemove.id)}>Confirmar desvinculación</button><button type="button" className="button secondary" disabled={busy} onClick={() => setDeviceToRemove(null)}>Cancelar</button></div></div>}
+          <ul className="management-list" aria-label="Dispositivos">{team.devices.map((device) => <li key={device.id}><div><strong>{device.name}</strong><p>{device.registerName}{device.active ? '' : '. Sin acceso'}</p></div>{device.active && <button type="button" className="button secondary" aria-label={`Desvincular ${device.name}`} disabled={busy} onClick={() => { setDeviceToRemove({ id: device.id, name: device.name }); setError(''); setNotice('') }}>Desvincular</button>}</li>)}</ul>
+          {!team.devices.length && <p className="management-empty">Aún no hay tablets o computadoras vinculadas.</p>}
+          <button type="button" className="button secondary" disabled={busy} onClick={() => void pairing()}>Vincular dispositivo</button>
         </section>
       </>}
     </>}

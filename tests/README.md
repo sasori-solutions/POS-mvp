@@ -1,3 +1,9 @@
+## Más navigation correction — 1 October 2026
+
+The local correction groups Más into Negocio, Mi acceso and Sesión, with direct employee/device entries and focus-preserving returns. Business profile saves stay in the form; employee PIN setup, optional Google access and device pairing have separate instructions. Device removal requires confirmation. The API and SQL are unchanged.
+
+Validation: 166/166 desktop/mobile browser cases passed in a stable final run, production build/typecheck and `git diff --check` passed. The real loopback browser/Auth/Edge/Postgres smoke passed for employee PIN setup/linking, deletion/restoration, device revocation, and owner PIN change/recovery, with synthetic identities cleaned. New UI checks cover keyboard round trips, phone overflow down to 320px, device-removal cancellation/confirmation and instruction text. Captures are synthetic and local under `/tmp/pos-mas-*`. These results do not establish a hosted deployment or physical-device compatibility.
+
 # Account flow verification
 
 ## Current access UI correction
