@@ -148,6 +148,7 @@ export async function mockAccount(page: Page, options: {
       expiresAt: new Date(Date.now() + 8 * 3_600_000).toISOString(),
     };
     switch (body.action) {
+      case 'notifications': return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { notifications: [], unreadCount: 0 } }) });
       case 'status':
         return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType }] : [] });
       case 'create_business':

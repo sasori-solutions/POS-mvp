@@ -1,8 +1,12 @@
+## Employee access and device notifications — feature branch
+
+Employee invitations use one link or locally generated QR, personal employee entry, one linked browser and owner approval of replacements. A persistent in-app inbox reports device linking and blocked attempts. See [implementation, limitations and release order](docs/employee-device-access.md). Requires migration 0008 and updated Edge before the frontend; not yet deployed.
+
 # POS México PWA
 
 Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Catalog, orders and sales still show availability messages until those modules are implemented.
 
-Shared registers use `/employee`: a one-use pairing code connects a restricted device, then each active employee selects their name and enters their PIN. The device never needs to retain the owner's Google session. Invited employees may also join with their own Google account. Roles come from the owner's assignment; the employee cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. Only the device credential is persisted; PINs and operator tokens stay in memory.
+Personal employee access uses `/employee`: open or paste the owner's invitation link, or scan its QR with the device camera, then sign in with Google and a personal PIN. The browser is linked to the employee; a different browser stays blocked until the owner approves a replacement in Notificaciones. Shared registers use `/register`, with a one-use pairing link/code and PIN entry for existing PIN-only employees. Google-linked employees use their personal linked browser. Roles come from the owner's assignment; employees cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. PINs and operator tokens stay in memory.
 
 Employees choose their own PIN. The owner assigns name/role and authorizes initial setup, without entering the employee's PIN. Google invitees with no PIN create one when joining; a person who already has a PIN enters that same PIN to link Google. Existing PIN-only employees can still complete initial setup on a paired register; forgotten-PIN recovery requires a linked account with a confirmed email. New employees are added through one invitation flow: name and role, share the link, then the employee signs in with Google and chooses their PIN. Linking Google preserves the existing PIN and employee ID.
 

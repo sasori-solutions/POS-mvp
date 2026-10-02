@@ -105,16 +105,36 @@ export interface PairedDevice {
   registerName: string
 }
 
+export interface DeviceProof {
+  publicKey: string
+  nonce: string
+  issuedAt: number
+  signature: string
+}
+export interface OwnerNotification {
+  id: string
+  type: 'employee_device_requested' | 'employee_device_linked'
+  employeeId: string
+  employeeName: string
+  deviceName: string
+  createdAt: string
+  readAt: string | null
+  status: 'pending' | 'approved' | 'rejected' | 'info'
+}
+
 type OwnerRequest = { businessId: string; operatorToken: string }
-export type AccountRequest =
+type AccountRequestBody =
   | { action: 'status' }
   | { action: 'create_business'; name: string; businessType: BusinessType; timezone: string; operationId: string; pin: string; profile?: BusinessProfile }
   | ({ action: 'update_business'; name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile } & OwnerRequest)
-  | { action: 'unlock'; businessId: string; pin: string }
+  | { action: 'unlock'; businessId: string; pin: string; deviceName?: string }
   | ({ action: 'context' } & OwnerRequest)
   | ({ action: 'lock' } & OwnerRequest)
   | { action: 'revoke_sessions' }
   | ({ action: 'team' } & OwnerRequest)
+  | ({ action: 'notifications' } & OwnerRequest)
+  | ({ action: 'mark_notification_read'; notificationId: string } & OwnerRequest)
+  | ({ action: 'review_employee_device'; notificationId: string; decision: 'approve' | 'reject' } & OwnerRequest)
   | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: null; inviteWithGoogle?: boolean; operationId: string } & OwnerRequest)
   | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; active: boolean; pin: null } & OwnerRequest)
   | ({ action: 'create_pin_setup'; employeeId: string; operationId: string } & OwnerRequest)
@@ -124,7 +144,7 @@ export type AccountRequest =
   | ({ action: 'create_invitation'; operationId: string } & OwnerRequest & ({ employeeId: string } | { name: string; role: EmployeeRole }))
   | ({ action: 'revoke_invitation'; invitationId: string } & OwnerRequest)
   | { action: 'invitation_details'; invitationCode: string }
-  | { action: 'accept_invitation'; invitationCode: string; name?: string; pin: string; operationId: string }
+  | { action: 'accept_invitation'; invitationCode: string; name?: string; pin: string; operationId: string; deviceName?: string }
   | ({ action: 'create_pairing_code'; operationId: string } & OwnerRequest)
   | ({ action: 'revoke_device'; deviceId: string } & OwnerRequest)
   | { action: 'device_request_pin_email'; deviceToken: string; employeeId: string }
@@ -141,6 +161,8 @@ export type AccountRequest =
   | { action: 'device_context'; deviceToken: string; operatorToken: string }
   | { action: 'device_lock'; deviceToken: string; operatorToken: string }
 
+export type AccountRequest = AccountRequestBody & { deviceProof?: DeviceProof }
+
 export interface AccountResponses {
   status: { businesses: BusinessSummary[] }
   create_business: OperatorSession
@@ -150,6 +172,9 @@ export interface AccountResponses {
   lock: { locked: true }
   revoke_sessions: { revoked: true }
   team: TeamContext
+  notifications: { notifications: OwnerNotification[]; unreadCount: number }
+  mark_notification_read: { read: true }
+  review_employee_device: { reviewed: true }
   create_employee: EmployeeCreation
   update_employee: EmployeeSummary
   create_pin_setup: PinSetupAuthorization
@@ -180,6 +205,7 @@ export interface AccountResponses {
 export type AccountErrorCode =
   | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
   | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
+  | 'DEVICE_LINK_REQUIRED' | 'DEVICE_APPROVAL_REQUIRED' | 'DEVICE_PROOF_INVALID'
   | 'REAUTH_REQUIRED' | 'EMPLOYEE_INACTIVE' | 'PIN_INVALID' | 'PIN_LOCKED'
   | 'PIN_SETUP_INVALID' | 'PIN_SETUP_ACCOUNT_MISMATCH' | 'RECOVERY_INVALID' | 'RECOVERY_LOCKED' | 'RECOVERY_UNAVAILABLE' | 'EMAIL_UNAVAILABLE'
   | 'SESSION_INVALID' | 'SESSION_EXPIRED' | 'OPERATION_CONFLICT' | 'ORIGIN_FORBIDDEN'

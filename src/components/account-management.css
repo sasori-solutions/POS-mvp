@@ -49,6 +49,11 @@
 .employee-invitation-link input { width: 100%; min-height: 48px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 14px; color: var(--secondary); background: var(--surface); }
 .employee-invitation-link > .button { margin-top: 12px; display: flex; justify-content: center; align-items: center; gap: 10px; }
 .employee-invitation-link > p { font-size: 13px; margin-top: 12px; }
+.invitation-qr { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 0 0 24px; padding: 20px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.invitation-qr svg { display: block; max-width: 100%; height: auto; flex-shrink: 0; }
+.invitation-qr figcaption { max-width: 340px; color: var(--secondary); font-size: 14px; line-height: 1.5; text-align: center; }
+.invitation-share-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.invitation-share-actions .button { display: flex; align-items: center; justify-content: center; gap: 10px; flex: 1 1 200px; }
 .employee-invitation-next { margin: 28px 0; padding-top: 24px; border-top: 1px solid var(--border); }
 .employee-invitation-next h2 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
 .employee-invitation-next ol { padding-left: 20px; margin: 0; color: var(--secondary); font-size: 14px; }

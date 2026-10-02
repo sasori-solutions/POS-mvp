@@ -1,5 +1,6 @@
+import { signedRequest } from './device-proof-fixture'
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -176,7 +177,8 @@ async function newBusiness() {
   expect(result.error).toBeUndefined(); businesses.push(result.data!.business.id); return result.data!;
 }
 async function manage<T = unknown>(person: Identity, action: string, payload: Record<string, unknown>): Promise<Reply<T>> {
-  const result = await admin.rpc('account_manage', { p_user_id: person.userId, p_auth_session_id: person.sessionId, p_action: action, p_payload: payload });
+  const signed = await signedRequest(person.userId, { action, ...payload }) as { deviceProof: { publicKey: string; nonce: string } };
+  const result = await admin.rpc('account_secure', { p_user_id: person.userId, p_auth_session_id: person.sessionId, p_action: action, p_payload: payload, p_device_key_hash: createHash('sha256').update(Buffer.from(signed.deviceProof.publicKey, 'base64url')).digest('hex'), p_proof_nonce: signed.deviceProof.nonce });
   return result.error ? { error: { code: result.error.message } } : result.data;
 }
 async function deviceCall<T = unknown>(action: string, payload: Record<string, unknown>): Promise<Reply<T>> {
@@ -184,7 +186,7 @@ async function deviceCall<T = unknown>(action: string, payload: Record<string, u
   return result.error ? { error: { code: result.error.message } } : result.data;
 }
 async function edge<T = unknown>(person: Identity, request: Record<string, unknown>): Promise<Reply<T>> {
-  const response = await fetch(`${local!.url}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: local!.anonKey, authorization: `Bearer ${person.token}` }, body: JSON.stringify(request) });
+  const response = await fetch(`${local!.url}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: local!.anonKey, authorization: `Bearer ${person.token}` }, body: JSON.stringify(await signedRequest(person.userId, request)) });
   return response.json();
 }
 async function identity(): Promise<Identity> {
@@ -197,10 +199,11 @@ async function identity(): Promise<Identity> {
 }
 function localConfig() {
   let status: Record<string, string>;
-  try { status = JSON.parse(execFileSync('./node_modules/.bin/supabase', ['status', '-o', 'json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); } catch { return null; }
+  if (process.env.TEST_SUPABASE_URL) status = { API_URL: process.env.TEST_SUPABASE_URL, ANON_KEY: process.env.TEST_SUPABASE_ANON_KEY ?? '', SERVICE_ROLE_KEY: process.env.TEST_SUPABASE_SERVICE_ROLE_KEY ?? '' };
+  else try { status = JSON.parse(execFileSync('./node_modules/.bin/supabase', ['status', '-o', 'json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })); } catch { return null; }
   if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(status.API_URL).hostname)) throw new Error('PIN integration tests refuse cloud');
   const project = readFileSync('supabase/config.toml', 'utf8').match(/^project_id\s*=\s*"([^"\n]+)"/m)![1];
-  return { url: status.API_URL, anonKey: status.ANON_KEY, serviceKey: status.SERVICE_ROLE_KEY, dbContainer: `supabase_db_${project}` };
+  return { url: status.API_URL, anonKey: status.ANON_KEY, serviceKey: status.SERVICE_ROLE_KEY, dbContainer: process.env.TEST_LOCAL_DB_CONTAINER ?? `supabase_db_${project}` };
 }
 function sql(statement: string) { return execFileSync('docker', ['exec', '-i', local!.dbContainer, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At', '-q', '-c', statement], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
 function uuid(value: string) { if (!/^[a-f0-9-]{36}$/i.test(value)) throw new Error('Synthetic UUID expected'); return `'${value}'::uuid`; }

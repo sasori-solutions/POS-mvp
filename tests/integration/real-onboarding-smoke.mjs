@@ -1,25 +1,45 @@
 /** Real loopback browser -> account function -> Postgres smoke. No network response mocks.
  * Run with local Supabase/account already serving; ALLOWED_ORIGINS must include 127.0.0.1:5175.
+ * TEST_SUPABASE_* and TEST_LOCAL_DB_CONTAINER can select an isolated loopback stack.
+ * TEST_MAILPIT_URL optionally selects its loopback mailbox.
  * Synthetic password authentication is injected only in this test, never in application UI.
  */
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, webcrypto } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { setTimeout as pause } from 'node:timers/promises'
 import { chromium, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
-const config = JSON.parse(execFileSync('./node_modules/.bin/supabase', ['status', '-o', 'json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
+const config = process.env.TEST_SUPABASE_URL ? { API_URL: process.env.TEST_SUPABASE_URL, ANON_KEY: process.env.TEST_SUPABASE_ANON_KEY, SERVICE_ROLE_KEY: process.env.TEST_SUPABASE_SERVICE_ROLE_KEY } : JSON.parse(execFileSync('./node_modules/.bin/supabase', ['status', '-o', 'json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }))
 assert(['localhost', '127.0.0.1', '[::1]'].includes(new URL(config.API_URL).hostname), 'Loopback Supabase required')
+assert(config.ANON_KEY && config.SERVICE_ROLE_KEY, 'Local credentials required')
+const projectId = readFileSync('supabase/config.toml', 'utf8').match(/^project_id\s*=\s*"([^"\n]+)"/m)?.[1]
+const databaseContainer = process.env.TEST_LOCAL_DB_CONTAINER ?? `supabase_db_${projectId}`
+const mailbox = new URL(process.env.TEST_MAILPIT_URL ?? config.MAILPIT_URL ?? config.API_URL)
+if (!process.env.TEST_MAILPIT_URL && !config.MAILPIT_URL) mailbox.port = String(Number(new URL(config.API_URL).port) + 3)
+assert(['localhost', '127.0.0.1', '[::1]'].includes(mailbox.hostname), 'Loopback Mailpit required')
 const origin = 'http://127.0.0.1:5175'
 const admin = createClient(config.API_URL, config.SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
 const credentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
 let userId, employeeUserId, invitedUserId, businessId, browser, server
 let stage = 'prepare'
+const rawKeys = new Map()
+async function rawAccount(request, accessToken) {
+  let body = request
+  if (accessToken) {
+    if (!rawKeys.has(accessToken)) rawKeys.set(accessToken, await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']))
+    const keys = rawKeys.get(accessToken), nonce = randomUUID(), issuedAt = Date.now()
+    const signature = await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, keys.privateKey, new TextEncoder().encode(JSON.stringify({ request, nonce, issuedAt })))
+    body = { ...request, deviceProof: { publicKey: Buffer.from(await webcrypto.subtle.exportKey('spki', keys.publicKey)).toString('base64url'), nonce, issuedAt, signature: Buffer.from(signature).toString('base64url') } }
+  }
+  return fetch(`${config.API_URL}/functions/v1/account`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, apikey: config.ANON_KEY, ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) }, body: JSON.stringify(body) })
+}
 const accountResponse = (page, action) => page.waitForResponse(response => response.url().endsWith('/functions/v1/account') && JSON.parse(response.request().postData() ?? '{}').action === action)
 function staffSnapshot() {
   assert.match(businessId, /^[a-f0-9-]{36}$/i)
-  return JSON.parse(execFileSync('docker', ['exec', '-i', 'supabase_db_pos-mexico-pwa', 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-tA', '-c',
+  return JSON.parse(execFileSync('docker', ['exec', '-i', databaseContainer, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-tA', '-c',
     `select coalesce(jsonb_agg(jsonb_build_object('id',e.id,'name',e.name,'userId',e.user_id,'sharedPin',exists(select 1 from app_private.shared_employee_credentials c where c.business_id=e.business_id and c.employee_id=e.id)) order by e.name),'[]'::jsonb) from app_private.employees e where e.business_id='${businessId}'::uuid and e.role<>'owner';`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim())
 }
 try {
@@ -69,10 +89,7 @@ try {
   await ownerPage.getByRole('button', { name: 'Más', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Empleados', exact: true }).click()
   stage = 'seed an existing PIN-only employee for compatibility'
-  const legacyResponse = await fetch(`${config.API_URL}/functions/v1/account`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, apikey: config.ANON_KEY, Authorization: `Bearer ${signed.data.session.access_token}` },
-    body: JSON.stringify({ action: 'create_employee', businessId, operatorToken: creation.data.operatorToken, name: 'Cajero smoke', role: 'cashier', pin: null, inviteWithGoogle: false, operationId: randomUUID() }),
-  })
+  const legacyResponse = await rawAccount({ action: 'create_employee', businessId, operatorToken: creation.data.operatorToken, name: 'Cajero smoke', role: 'cashier', pin: null, inviteWithGoogle: false, operationId: randomUUID() }, signed.data.session.access_token)
   assert.equal(legacyResponse.status, 200)
   const employee = (await legacyResponse.json()).data
   assert(employee.id && !employee.pinReady && !employee.googleLinked && employee.pinSetup)
@@ -110,7 +127,7 @@ try {
   await ownerPage.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   const pairingCode = await ownerPage.getByLabel('Código para vincular dispositivo', { exact: true }).inputValue()
   assert.match(pairingCode, /^[a-f0-9]{64}$/)
-  await devicePage.goto(`${origin}/employee`)
+  await devicePage.goto(`${origin}/register`)
   await devicePage.getByLabel('Código para vincular dispositivo', { exact: true }).fill(pairingCode)
   await devicePage.getByLabel('Nombre del dispositivo', { exact: true }).fill('Tablet smoke')
   await devicePage.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
@@ -157,7 +174,8 @@ try {
   }, employeeSigned.data.session)
   const personalPage = await personalContext.newPage()
   await personalPage.goto(`${origin}/join`)
-  await personalPage.getByLabel('Código de invitación', { exact: true }).fill(invitationCode)
+  await personalPage.getByLabel('Enlace de invitación', { exact: true }).fill(`${origin}/#invite=${invitationCode}`)
+  await personalPage.getByRole('button', { name: 'Abrir invitación', exact: true }).click()
   assert.equal(await personalPage.getByLabel('Tu nombre', { exact: true }).count(), 0)
   await personalPage.getByTestId('pin-input').fill('024680')
   assert.equal(await personalPage.getByTestId('pin-confirm-input').count(), 0, 'Linking verifies and preserves the existing PIN')
@@ -179,16 +197,11 @@ try {
   stage = 'linked employee preserves PIN and revokes previous device session'
   await devicePage.evaluate(() => window.dispatchEvent(new Event('focus')))
   await devicePage.getByRole('heading', { name: 'Elige tu nombre', exact: true }).waitFor({ timeout: 15_000 })
-  assert.equal(await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).count(), 1)
+  assert.equal(await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).count(), 0, 'Google-linked staff no longer appear on shared registers')
   assert.equal(await devicePage.getByRole('button', { name: 'Pendiente Google smoke', exact: true }).count(), 0)
-  await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).click()
-  await devicePage.getByTestId('employee-pin-input').fill('864202')
-  const oldPinResponse = accountResponse(devicePage, 'device_unlock')
-  await devicePage.getByRole('button', { name: 'Entrar', exact: true }).click()
-  assert.equal((await (await oldPinResponse).json()).error.code, 'PIN_INVALID')
-  await devicePage.getByTestId('employee-pin-input').fill('024680')
-  await devicePage.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await devicePage.getByRole('button', { name: 'Más', exact: true }).waitFor()
+  const linkedDeviceToken = await devicePage.evaluate(() => localStorage.getItem('pos-mexico-device'))
+  const blockedRegister = await rawAccount({ action: 'device_unlock', deviceToken: linkedDeviceToken, employeeId: employee.id, pin: '024680' })
+  assert.equal((await blockedRegister.json()).error.code, 'DEVICE_LINK_REQUIRED', 'A correct employee PIN cannot bypass the linked browser through a register')
   stage = 'invitation outcome and employee deletion'
   await ownerPage.getByRole('button', { name: 'Volver a empleados', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Volver a Más', exact: true }).click()
@@ -231,10 +244,8 @@ try {
   await personalPage.getByRole('button', { name: 'Entrar', exact: true }).click()
   await personalPage.getByRole('button', { name: 'Más', exact: true }).waitFor()
   await devicePage.reload()
-  await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).click()
-  await devicePage.getByTestId('employee-pin-input').fill('024680')
-  await devicePage.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await devicePage.getByRole('button', { name: 'Más', exact: true }).waitFor()
+  await devicePage.getByRole('heading', { name: 'Elige tu nombre', exact: true }).waitFor()
+  assert.equal(await devicePage.getByRole('button', { name: 'Cajero smoke', exact: true }).count(), 0, 'Restoration does not revive a Google-linked register bypass')
   stage = 'cancel and renew invitation with exact outcome'
   await ownerPage.getByRole('button', { name: 'Administrar Pendiente Google smoke', exact: true }).click()
   const cancelInvitation = accountResponse(ownerPage, 'revoke_invitation')
@@ -259,9 +270,9 @@ try {
   await ownerPage.getByRole('button', { name: 'Confirmar desvinculación', exact: true }).click()
   assert.equal((await revocationResponse).status(), 200)
   stage = 'verify revoked device'
-  // An actual focus/context verification detects server revocation without waiting for the timer.
-  await devicePage.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await devicePage.getByRole('heading', { name: 'Entrar como empleado', exact: true }).waitFor({ timeout: 15_000 })
+  // This register is idle after linked employees were removed from its roster; reload requests fresh device_status.
+  await devicePage.reload()
+  await devicePage.getByRole('heading', { name: 'Vincular caja compartida', exact: true }).waitFor({ timeout: 15_000 })
   assert.equal(await devicePage.evaluate(() => localStorage.getItem('pos-mexico-device')), null)
   stage = 'new invitation recipient chooses their PIN'
   const invitedCredentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
@@ -277,7 +288,7 @@ try {
   const invitedPage = await invitedContext.newPage()
   await invitedPage.goto(`${origin}/#invite=${renewed.invitationCode}`)
   await invitedPage.getByTestId('pin-confirm-input').waitFor()
-  assert.equal(await invitedPage.getByLabel('Código de invitación', { exact: true }).count(), 0, 'The link fills the invitation without manual code entry')
+  assert.equal(await invitedPage.getByLabel('Enlace de invitación', { exact: true }).count(), 0, 'The link fills the invitation without manual code entry')
   await invitedPage.getByTestId('pin-input').fill('024682')
   await invitedPage.getByTestId('pin-confirm-input').fill('024682')
   const invitedAcceptance = accountResponse(invitedPage, 'accept_invitation')
@@ -304,10 +315,10 @@ try {
   await ownerPage.getByRole('button', { name: 'Enviar enlace al correo', exact: true }).click()
   assert.equal((await mailResponse).status(), 200)
   await ownerPage.getByRole('heading', { name: 'Revisa tu correo', exact: true }).waitFor()
-  const inbox = await (await fetch('http://127.0.0.1:54324/api/v1/messages')).json()
+  const inbox = await (await fetch(new URL('/api/v1/messages', mailbox))).json()
   const found = inbox.messages.find(message => message.To.some(to => to.Address===credentials.email))
   assert(found, 'Recovery reaches the synthetic local mailbox')
-  const mail = await (await fetch(`http://127.0.0.1:54324/api/v1/message/${found.ID}`)).json()
+  const mail = await (await fetch(new URL(`/api/v1/message/${found.ID}`, mailbox))).json()
   const recoveryToken = mail.Text.match(/#recovery=([a-f0-9]{64})/)?.[1]
   assert(recoveryToken)
   const recoveryContext = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 393, height: 851 } })
@@ -328,9 +339,11 @@ try {
   await ownerPage.getByTestId('pin-input').fill('482620')
   await ownerPage.getByRole('button', { name: 'Entrar', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Más', exact: true }).waitFor()
-  console.log('PASS real loopback browser/Auth/Edge/Postgres/Mailpit: email confirmation opens in a signed-out browser, PIN updates without Google/code entry, original account unlocks with the new PIN; current-PIN change, employee-owned setup, same-PIN Google linking, invitation acceptance, deletion/restoration and devices remain working. Synthetic identities only; no hosted email delivery claim.')
+  console.log('PASS real loopback browser/Auth/Edge/Postgres/Mailpit: email confirmation opens in a signed-out browser, PIN updates without Google/code entry, original account unlocks with the new PIN; current-PIN change, employee-owned setup, same-PIN Google linking, invitation acceptance, deletion/restoration, linked-browser enforcement and legacy PIN-only registers remain working. Synthetic identities only; no hosted email delivery claim.')
 
-} catch {
+} catch (error) {
+  console.error(`Failure category: ${error?.name ?? 'Error'}; ${String(error?.message ?? '').split('\n')[0]}`)
+  await browser?.contexts()[0]?.pages()[0]?.screenshot({ path: '/tmp/pos-real-onboarding-failure.png', fullPage: true }).catch(() => undefined)
   throw new Error(`Real loopback onboarding smoke failed at: ${stage}. Credentials and response payloads omitted.`)
 } finally {
   await browser?.close()
@@ -340,6 +353,6 @@ try {
   if (userId) { const result = await admin.auth.admin.deleteUser(userId); if (result.error) throw new Error('Synthetic user cleanup failed') }
   if (businessId) {
     assert.match(businessId, /^[a-f0-9-]{36}$/i)
-    execFileSync('docker', ['exec', '-i', 'supabase_db_pos-mexico-pwa', 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-c', `delete from app_private.businesses where id='${businessId}'::uuid;`], { stdio: ['ignore', 'pipe', 'pipe'] })
+    execFileSync('docker', ['exec', '-i', databaseContainer, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-q', '-c', `delete from app_private.businesses where id='${businessId}'::uuid;`], { stdio: ['ignore', 'pipe', 'pipe'] })
   }
 }

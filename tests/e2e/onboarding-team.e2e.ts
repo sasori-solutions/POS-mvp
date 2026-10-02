@@ -95,13 +95,15 @@ test('joining retries invalid invitations and applies the invited role without s
   await page.goto('/');
   await page.getByRole('button', { name: 'Unirme a un negocio', exact: true }).click();
   await expect(page.getByLabel('Puesto', { exact: true })).not.toBeVisible();
-  await page.getByLabel('Código de invitación', { exact: true }).fill('ff'.repeat(32));
+  await page.getByLabel('Enlace de invitación', { exact: true }).fill(`http://127.0.0.1:5174/#invite=${'ff'.repeat(32)}`);
+  await page.getByRole('button', { name: 'Abrir invitación', exact: true }).click();
   await expect(page.getByLabel('Tu nombre', { exact: true })).not.toBeVisible();
   await expect(page.getByRole('alert')).toContainText(/invitación/i);
   await expect(page.getByRole('button', { name: 'Unirme', exact: true })).toBeDisabled();
   await expect(page.getByTestId('pin-input')).not.toBeVisible();
   expect(calls.filter((call) => call.action === 'accept_invitation')).toHaveLength(0);
-  await page.getByLabel('Código de invitación', { exact: true }).fill(fixtureInvitation);
+  await page.getByLabel('Enlace de invitación', { exact: true }).fill(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
+  await page.getByRole('button', { name: 'Abrir invitación', exact: true }).click();
   await page.getByLabel('PIN', { exact: true }).fill(fixturePin);
   await page.getByLabel('Confirma tu PIN', { exact: true }).fill(fixturePin);
   await page.getByRole('button', { name: 'Unirme', exact: true }).click();
@@ -253,6 +255,7 @@ test('employee forms focus on one person and keep their PIN private', async ({ p
   await expect(page.getByRole('button', { name: 'Crear código para restablecer PIN', exact: true })).toBeVisible();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Caja actualizada');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
+  await expect(page.getByRole('status').filter({ hasText: /^Cambios guardados\.$/ })).toBeVisible();
   expect(calls.find((call) => call.action === 'update_employee')).toMatchObject({ name: 'Caja actualizada', pin: null });
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
@@ -442,7 +445,7 @@ test('employee creation has one invitation method and keeps PIN entry with the e
   await expect(page.getByRole('radio')).toHaveCount(3);
   await expect(page.getByRole('radio', { name: 'Cajero', exact: true })).toBeChecked();
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
-  await expect(page.getByText('Recibirás un enlace para compartir. El empleado entrará con Google y creará su PIN.')).toBeVisible();
+  await expect(page.getByText('Recibirás un enlace y un QR para compartir. El empleado entrará con Google, creará su PIN y vinculará su dispositivo.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).toHaveCount(1);
 });
 
@@ -593,8 +596,8 @@ test('the owner creates employee access and invitations with assigned roles', as
 test('employee pairing, PIN switch and reload keep only the restricted device credential', async ({ page }, testInfo) => {
   const fixture = await mockOnboarding(page, { authenticated: false });
   await page.goto('/login');
-  await page.getByRole('button', { name: 'Entrar como empleado', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Entrar como empleado', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Abrir caja compartida', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
   await capture(page, testInfo.project.name, 'employee-pairing');
   await page.getByLabel('Código para vincular dispositivo', { exact: true }).fill('ff'.repeat(32));
   await page.getByLabel('Nombre del dispositivo', { exact: true }).fill('Tablet mostrador');
@@ -639,7 +642,7 @@ test('employee pairing, PIN switch and reload keep only the restricted device cr
 
 test('a revoked shared device loses access and cannot resume an employee session', async ({ page }) => {
   const fixture = await mockOnboarding(page, { authenticated: false });
-  await page.goto('/employee');
+  await page.goto('/register');
   await page.getByLabel('Código para vincular dispositivo', { exact: true }).fill(fixturePairingCode);
   await page.getByLabel('Nombre del dispositivo', { exact: true }).fill('Tablet revocable');
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
@@ -648,12 +651,12 @@ test('a revoked shared device loses access and cannot resume an employee session
   await page.getByRole('button', { name: fixtureCashier.name, exact: true }).click();
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin);
   await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Entrar como empleado', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText(/revocado|vincular/i);
   await expect(page.getByRole('navigation', { name: 'Navegación principal' })).not.toBeVisible();
   expect(await page.evaluate(() => JSON.stringify(Object.entries(localStorage)))).not.toContain(fixtureDeviceToken);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Entrar como empleado', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
 });
 
 async function fillAccountPin(page: Page, pin = fixturePin) {

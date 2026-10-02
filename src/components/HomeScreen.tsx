@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeftRight, ChevronRight, ClipboardList, KeyRound, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText, Store, Tablet, Users, type LucideIcon } from 'lucide-react'
+import { ArrowLeftRight, Bell, ChevronRight, ClipboardList, KeyRound, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText, Store, Tablet, Users, type LucideIcon } from 'lucide-react'
 import type { BusinessContext } from '../lib/contracts'
 import { roleSections } from '../lib/navigation'
 import './home-screen.css'
@@ -14,6 +14,8 @@ interface HomeScreenProps {
   destination?: Destination
   onDestinationChange?: (destination: Destination) => void
   focusOnReturn?: string
+  onNotifications?: () => void
+  unreadCount?: number
   onSettings?: () => void
   onTeam?: () => void
   onDevices?: () => void
@@ -40,7 +42,7 @@ const upcoming = {
   Productos: { title: 'Tu catálogo, próximamente', description: 'Aquí podrás agregar y organizar los productos de tu negocio.', icon: Package },
 } as const
 
-export default function HomeScreen({ business, onLock, onLogout, busy, error, notice, destination: selectedDestination, onDestinationChange, focusOnReturn, onSettings, onTeam, onDevices, onSwitchBusiness, onChangePin, onSwitchEmployee, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
+export default function HomeScreen({ business, onLock, onLogout, busy, error, notice, destination: selectedDestination, onDestinationChange, focusOnReturn, onSettings, onTeam, onDevices, onSwitchBusiness, onChangePin, onSwitchEmployee, onNotifications, unreadCount = 0, logoutLabel = 'Cerrar sesión' }: HomeScreenProps) {
   const [localDestination, setLocalDestination] = useState<Destination>(business.role === 'kitchen' ? 'Comandas' : 'Venta')
   const destination = selectedDestination ?? localDestination
   const more = useRef<HTMLDivElement>(null)
@@ -67,6 +69,7 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, no
     <header className="pos-header">
       <p className="pos-business-name">{business.name}</p>
       {business.employee && <span className="pos-employee-name">{business.employee.name}</span>}
+      {business.role === 'owner' && onNotifications && <button className="pos-icon-button notification-button" type="button" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} onClick={onNotifications} disabled={busy}><Bell size={22} aria-hidden="true" />{unreadCount > 0 && <span className="notification-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>}</button>}
       <button className="pos-icon-button" type="button" aria-label="Bloquear" title="Bloquear" onClick={onLock} disabled={busy} aria-busy={busy}>
         <LockKeyhole size={22} strokeWidth={1.6} aria-hidden="true" />
       </button>
@@ -92,6 +95,7 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, no
       </> : active === 'Más' ? <div className="pos-more" ref={more}>
         {business.role === 'owner' && <section className="pos-menu-group" aria-labelledby="more-business-title">
           <h2 id="more-business-title">Negocio</h2>
+          {onNotifications && row('notifications', 'Notificaciones', Bell, onNotifications, 'Solicitudes de cambio de dispositivo')}
           {onSettings && row('settings', 'Datos del negocio', Store, onSettings, 'Nombre, dirección y formas de pago')}
           {onTeam && row('employees', 'Empleados', Users, onTeam, 'Agregar personas y administrar su acceso')}
           {onDevices && row('devices', 'Dispositivos de caja', Tablet, onDevices, 'Tablets y computadoras donde trabaja tu equipo')}

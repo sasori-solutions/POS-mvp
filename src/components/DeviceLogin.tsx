@@ -126,6 +126,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
     if (hash.has('pair')) {
       hash.delete('pair')
       url.hash = hash.toString()
+      if (url.pathname === '/employee') url.pathname = '/register'
       window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
     }
     const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(channelName) : null
@@ -331,7 +332,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
     {onExit && <button type="button" className="back-button" onClick={onExit} disabled={busy}><ArrowLeft size={18} aria-hidden="true" />Acceso del dueño</button>}
     {loading ? <div className="employee-loading" role="status"><span className="loader" aria-hidden="true" /><p>Cargando caja…</p></div>
       : !deviceToken ? <section className="employee-screen">
-        <h1>Entrar como empleado</h1><p>Pide al dueño un código para vincular esta caja.</p>
+        <h1>Vincular caja compartida</h1><p>Abre el enlace o escanea el QR del dueño para vincular esta caja. También puedes ingresar su código.</p>
         <form onSubmit={pair}>
           <div className="field"><label htmlFor="device-pairing">Código para vincular dispositivo</label><input id="device-pairing" value={pairingCode} onChange={(event) => setPairingCode(event.target.value.trim())} maxLength={128} required disabled={busy} autoComplete="off" autoCapitalize="none" spellCheck={false} /></div>
           <div className="field"><label htmlFor="device-name">Nombre del dispositivo</label><input id="device-name" value={deviceName} onChange={(event) => setDeviceName(event.target.value)} placeholder="Tablet de mostrador" minLength={2} maxLength={100} required disabled={busy} /></div>

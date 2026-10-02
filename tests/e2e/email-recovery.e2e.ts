@@ -99,7 +99,7 @@ test('linked employees can request email recovery from their personal account', 
 
 test('paired registers request email for the selected employee without personal identity', async ({ page }) => {
   const { calls, authorizations } = await mockOnboarding(page, { authenticated: false })
-  await page.goto('/employee')
+  await page.goto('/register')
   await page.getByLabel('Código para vincular dispositivo').fill('b2'.repeat(32)); await page.getByLabel('Nombre del dispositivo').fill('Caja sintética')
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   await page.getByRole('button', { name: new RegExp(fixtureCashier.name) }).click()
