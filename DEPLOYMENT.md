@@ -18,6 +18,14 @@ The frontend is a static Vite PWA. Supabase project `sdisalomdxgejyhpxtri` remai
 
 The current public host is **[pos-mexico-mvp.pages.dev](https://pos-mexico-mvp.pages.dev)**. The Pages project uses Direct Upload; upload the verified build for each release. Pushing the repository alone does not update this deployment.
 
+## Release lane for parallel agents
+
+Each agent uses a separate worktree and branch, then opens a PR to `main`. Review the PR's CI and any required real local Supabase tests. Resolve conflicts on the PR branch and rerun CI before merging. The PR template records migration order and compatibility. GitHub currently does not enforce branch protection for this private repository on the organization's plan, so reviewers must follow this process deliberately.
+
+The `production` GitHub environment is restricted to `main`. After the PR is merged and any compatible Supabase migration/function is live, run the **Deploy Cloudflare Pages** workflow manually from `main`. It checks that its commit is still the latest `main`, runs web and browser checks, uploads only `dist` to the existing Direct Upload project, then compares the live routes/assets with the build. GitHub Actions concurrency permits one run in this lane at a time. Never run a second dashboard/CLI upload in parallel. Record the commit, Cloudflare deployment ID and live-check result; verify real OAuth/PIN or backend behavior separately when affected.
+
+The workflow needs `CLOUDFLARE_ACCOUNT_ID` as a `production` environment variable and `CLOUDFLARE_API_TOKEN` as an environment secret. The account token should grant only **Account → Cloudflare Pages → Edit** for the relevant Cloudflare account. A human account owner must create and enter it privately; until then, the workflow cannot publish. Do not add the token to repository files, public Drive notes, or browser build variables. See [Cloudflare's Direct Upload CI guide](https://developers.cloudflare.com/pages/how-to/use-direct-upload-with-continuous-integration/).
+
 Historical employee invitation correction, 1 October 2026, Agente de Larios: production **`174c4310-c35b-4c74-87cd-cde2be13dd6a`** publishes the verified 20-file frontend with `index-BQvTqgkV.js`. Release ZIP: 309,851 bytes, SHA-256 `99054725a86958f3060a93c182fc67d84a3be02f5933ebaae0ba0f6bb0b01b47`. The public route/asset gate passed **27/27** against local `dist`.
 
 Adding an employee now uses one Google invitation flow. Native role choices show included and restricted navigation sections; the Google checkbox is removed. Creation leads to a focused share screen with Copiar enlace. Recipients see an invitation-specific login and do not re-enter the invitation code once its details load. Existing PIN-only employees, PIN ownership and backend policies remain supported. No backend/schema deployment was needed.

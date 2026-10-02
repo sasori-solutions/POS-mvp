@@ -40,6 +40,15 @@ El perfil de sucursal/caja es configuración inicial de un local; no representa 
 - Verifica comportamientos afectados con las pruebas apropiadas. Reporta servicios faltantes, pruebas omitidas y resultados reales; un test de integración omitido no acredita seguridad. Para documentación solamente, revisa contenido, fuentes, rutas y diff.
 - No publiques secretos ni datos reales en Git, fixtures, logs o Drive. El workspace de Drive fue documentado como público por enlace; usa ejemplos ficticios y evidencia anonimizada.
 
+### Colaboración en Git y salida a producción
+
+- Cada agente trabaja en su propio worktree o clon y en una rama corta desde `origin/main` (`feat/`, `fix/` o `chore/`). No trabajes en el checkout ni en la rama donde otro agente tenga cambios sin comitear; no prepares ni comitees archivos ajenos.
+- Sube esa rama y abre un PR hacia `main`. Indica alcance, pruebas, migraciones y orden de publicación. Pide revisión humana de otra persona; no hagas push directo ni force push a `main`. Si `main` avanzó, actualiza la rama, resuelve conflictos en el PR y vuelve a ejecutar CI antes de fusionar.
+- Los checks de `.github/workflows/ci.yml` verifican build, pruebas de navegador con API simulada y validación Deno. No ejecutan `npm run test` contra el stack Supabase compartido. La integración real local de Supabase y el OAuth real requieren comprobaciones adicionales cuando el cambio los afecte; un check verde no acredita esas rutas por sí solo.
+- Cloudflare Pages `pos-mexico-mvp` usa Direct Upload. Los PR y pushes no publican la PWA. Después de integrar y verificar las dependencias de Supabase, ejecuta **Deploy Cloudflare Pages** manualmente desde `main`; ese workflow serializa cargas, exige que el commit siga siendo el HEAD de `main` y comprueba los assets públicos. No subas `dist` manualmente mientras haya otra publicación en curso. Registra el commit y el deployment observados.
+- El entorno GitHub `production` acepta sólo `main`. Para activar el workflow se necesita el secreto de entorno `CLOUDFLARE_API_TOKEN` con permiso limitado de Pages; no guardes el token en Git, Drive, logs ni variables públicas. La variable `CLOUDFLARE_ACCOUNT_ID` no concede acceso por sí sola.
+- **Límite actual:** GitHub indica que las reglas de protección de ramas no se aplican al repositorio privado con el plan actual de la organización. El PR y la revisión son el acuerdo operativo del equipo hasta que un plan compatible permita exigirlos técnicamente. Tampoco se puede bloquear al propietario de Cloudflare para que no publique desde el dashboard; cualquier excepción debe coordinarse y registrarse.
+
 ## 2. PRD: propósito, usuarios y restricciones
 
 ### Problema y propuesta de valor
