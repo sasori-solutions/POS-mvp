@@ -33,7 +33,7 @@ export default function SalesScreen({ access, ownOnly, onSessionError }: { acces
   return <div className="sales-screen">
     <div className="catalog-toolbar"><p>{ownOnly ? 'Las ventas que registraste.' : 'Ventas registradas de tu negocio.'}</p><button className="pos-button pos-secondary compact" onClick={() => void load(false)} disabled={loading}>Actualizar ventas</button></div>
     {error && <div className="pos-error" role="alert"><p>{error}</p><button className="pos-button pos-secondary compact" disabled={loading} onClick={() => void load(Boolean(sales.length && cursor))}>Reintentar</button></div>}
-    {loading && <p className="pos-status" role="status">Cargando ventas…</p>}
+    {loading && !loaded && <p className="pos-status" role="status">Cargando ventas…</p>}
     {loaded && !sales.length && <div className="pos-empty"><ReceiptText className="pos-empty-icon" size={32} strokeWidth={1.4} aria-hidden="true" /><h2>Aún no hay ventas</h2><p>Cuando registres una venta, aparecerá aquí.</p></div>}
     <ul className="sales-list">{sales.map(sale => <li key={sale.id}><button onClick={() => setSelectedId(sale.id)} aria-label={`Ver venta ${sale.id.slice(0, 8)}, ${money(sale.totalCents)}`}><div><strong>#{sale.id.slice(0, 8).toUpperCase()}</strong><p>{saleDate(sale.createdAt, sale.timezone)}</p><span>{paymentLabels[sale.paymentMethod]} / {sale.itemCount} artículos</span></div><b>{money(sale.totalCents)}</b><ChevronRight size={20} aria-hidden="true" /></button></li>)}</ul>
     {cursor && <button className="pos-button pos-secondary history-more" disabled={loading} onClick={() => void load(true)}>Cargar más ventas</button>}

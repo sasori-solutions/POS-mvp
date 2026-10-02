@@ -1,6 +1,14 @@
 # Products and online sales
 
-Originally implemented on `feat/products-sales`, 1 October 2026, and now merged into `main`. Frontend publication follows the automatic CI process in [DEPLOYMENT.md](../DEPLOYMENT.md). These implementation notes and local results do not establish that the corresponding Supabase migration/function is deployed; verify and record backend release state separately.
+Originally implemented on `feat/products-sales`, 1 October 2026, and now merged into `main` through PR #4. Frontend publication follows the automatic CI process in [DEPLOYMENT.md](../DEPLOYMENT.md). These implementation notes and local results do not establish that the corresponding Supabase migration/function is deployed; verify and record backend release state separately.
+
+## Interface review — 2 October 2026
+
+The human requested a deeper review, Square-like product/sale workflows, and correction of flashing text in Venta/Productos. This correction restores the app's existing monochrome tokens, divided product library and focused editing. Square's public [item library](https://squareup.com/help/us/en/article/8335-create-and-edit-items) and [checkout grid](https://squareup.com/help/us/en/article/8334-set-up-item-grid) informed the interaction pattern. It retains this product's existing data model and permissions.
+
+The catalog's focus/reconnection/minute refresh used to insert a loading paragraph above existing products. Loading copy now appears only before the first successful load. Concurrent refresh events share one request; a saved product invalidates older responses. Failed refreshes remain visible until a successful retry, so checkout does not briefly resume on unconfirmed data. Access changes invalidate the previous request, and revoked-session errors still reach the existing lock flow.
+
+Activation previously submitted as soon as its dialog mounted, briefly flashing a saving dialog. Both activation and deactivation now wait for the operator's confirmation. Tablet accounts scroll their lines independently and retain the total/charge action; small or short viewports retain normal page scrolling. Product tiles show quantities already in the account and stop adding items during checkout; returning to Editar venta re-enables them. No migrations, Edge changes, dependencies, payment integrations or production mutations are part of this correction. Validation and rollout state belong in [tests/README.md](../tests/README.md) and the PR.
 
 ## Existing architecture and extension
 
