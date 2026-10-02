@@ -1,3 +1,4 @@
+import { parseProductDetails, parseSelection } from './product-validation.ts'
 import type { PosCommand, SaleInputLine } from '../../../src/lib/pos-contracts.ts'
 import type { PaymentMethod } from '../../../src/lib/contracts.ts'
 import { isUuid, RequestValidationError } from './validation.ts'
@@ -23,15 +24,24 @@ export function parsePosCommand(input: Record<string, unknown>, accessKeys: stri
   switch (input.command) {
     case 'catalog': keys([]); return { command: 'catalog' }
     case 'save_product':
-      keys(['operationId', 'productId', 'expectedVersion', 'name', 'category', 'priceCents'])
+      keys(['operationId', 'productId', 'expectedVersion', 'name', 'category', 'priceCents', ...(Object.hasOwn(input, 'details') ? ['details'] : [])])
       return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId),
         expectedVersion: input.expectedVersion === null ? null : integer(input.expectedVersion, 1, 2_147_483_647),
-        name: text(input.name, 1, 100), category: text(input.category, 0, 60), priceCents: integer(input.priceCents, 0, 99_999_999) }
+        name: text(input.name, 1, 100), category: text(input.category, 0, 60), priceCents: integer(input.priceCents, 0, 99_999_999), ...(Object.hasOwn(input, 'details') ? { details: parseProductDetails(input.details) } : {}) }
     case 'set_product_active':
       keys(['operationId', 'productId', 'expectedVersion', 'active'])
       if (typeof input.active !== 'boolean') invalid()
       return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId),
         expectedVersion: integer(input.expectedVersion, 1, 2_147_483_647), active: input.active }
+    case 'set_product_sold_out':
+      keys(['operationId', 'productId', 'expectedVersion', 'soldOut'])
+      if (typeof input.soldOut !== 'boolean') invalid()
+      return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId), expectedVersion: integer(input.expectedVersion, 1, 2_147_483_647), soldOut: input.soldOut }
+    case 'upload_product_image':
+      keys(['operationId', 'imageId', 'part', 'parts', 'data'])
+      if (typeof input.data !== 'string' || !/^[A-Za-z0-9+/=]{1,4096}$/.test(input.data)) invalid()
+      if (integer(input.part, 0, 59) >= integer(input.parts, 1, 60)) invalid()
+      return { command: input.command, operationId: uuid(input.operationId), imageId: uuid(input.imageId), part: input.part as number, parts: input.parts as number, data: input.data }
     case 'complete_sale': {
       keys(['operationId', 'items', 'totalCents', 'paymentMethod'])
       if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 40) invalid()
@@ -39,11 +49,11 @@ export function parsePosCommand(input: Record<string, unknown>, accessKeys: stri
       const items: SaleInputLine[] = input.items.map(value => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) invalid()
         const line = value as Record<string, unknown>
-        exactKeys(line, ['productId', 'quantity', 'unitPriceCents', 'version'])
+        exactKeys(line, ['productId', 'quantity', 'unitPriceCents', 'version', ...(Object.hasOwn(line, 'selection') ? ['selection'] : [])])
         return { productId: uuid(line.productId), quantity: integer(line.quantity, 1, 999),
-          unitPriceCents: integer(line.unitPriceCents, 0, 99_999_999), version: integer(line.version, 1, 2_147_483_647) }
-      }).sort((a, b) => a.productId.localeCompare(b.productId))
-      if (new Set(items.map(line => line.productId)).size !== items.length) invalid()
+          unitPriceCents: integer(line.unitPriceCents, 0, 99_999_999), version: integer(line.version, 1, 2_147_483_647), ...(Object.hasOwn(line, 'selection') ? { selection: parseSelection(line.selection) } : {}) }
+      }).sort((a, b) => JSON.stringify([a.productId, a.selection]).localeCompare(JSON.stringify([b.productId, b.selection])))
+      if (new Set(items.map(line => JSON.stringify([line.productId, line.selection]))).size !== items.length) invalid()
       const totalCents = integer(input.totalCents, 0, 9_999_999_999)
       if (items.reduce((sum, line) => sum + line.quantity * line.unitPriceCents, 0) !== totalCents) invalid()
       return { command: input.command, operationId: uuid(input.operationId), items, totalCents, paymentMethod: input.paymentMethod as PaymentMethod }

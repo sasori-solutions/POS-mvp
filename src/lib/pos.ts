@@ -1,4 +1,6 @@
 import { accountRequest, deviceRequest } from './account'
+import { selectedPrice } from './product-details'
+export { money, saleDate } from './format'
 import type { PosCommand, PosResponses, CartLine, Product } from './pos-contracts'
 
 export const maxProductPrice = 99_999_999
@@ -19,18 +21,17 @@ export function priceInput(cents: number): string {
   return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
 }
 
-const currency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' })
-export function money(cents: number): string { return currency.format(cents / 100) }
-
 export function cartTotal(lines: CartLine[]): number {
   if (lines.length > maxSaleLines) throw new Error(`La venta admite hasta ${maxSaleLines} productos distintos.`)
   let total = 0
-  for (const { product, quantity } of lines) {
+  for (const { product, quantity, selection } of lines) {
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > maxQuantity
       || !Number.isInteger(product.priceCents) || product.priceCents < 0 || product.priceCents > maxProductPrice) {
       throw new Error('Revisa las cantidades y los precios de la venta.')
     }
-    total += quantity * product.priceCents
+    const price = selectedPrice(product, selection)
+    if (!Number.isSafeInteger(price) || price < 0 || price > maxProductPrice) throw new Error('Revisa el precio del producto.')
+    total += quantity * price
   }
   if (!Number.isSafeInteger(total) || total > maxSaleTotal) throw new Error('El total supera el límite de esta venta.')
   return total
@@ -43,11 +44,7 @@ export function searchText(value: string): string {
 export function filterProducts(products: Product[], query: string, category: string): Product[] {
   const search = searchText(query)
   return products.filter(product => (!category || product.category === category)
-    && (!search || searchText(product.name).includes(search)))
-}
-
-export function saleDate(value: string, timezone: string): string {
-  return new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(value))
+    && (!search || searchText([product.name, product.details?.sku, product.details?.barcode, ...product.details?.variations?.map(v => `${v.name} ${v.sku} ${v.barcode}`) ?? []].join(' ')).includes(search)))
 }
 
 export interface PosAccess { businessId: string; operatorToken: string; deviceToken?: string }

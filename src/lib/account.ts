@@ -3,10 +3,10 @@ import type { AccountEnvelope, AccountErrorCode, AccountRequest, AccountResponse
 import { supabase, supabasePublishableKey, supabaseUrl } from './supabase'
 
 const messages: Record<AccountErrorCode, string> = {
-  PRODUCT_CHANGED: 'El producto cambió. Actualiza el catálogo y revisa la venta antes de cobrar.',
-  PRODUCT_UNAVAILABLE: 'Un producto ya no está disponible. Actualiza el catálogo y retíralo de la venta.',
+  PRODUCT_CHANGED: 'El producto cambió. Revisa la cuenta antes de cobrar.',
+  PRODUCT_UNAVAILABLE: 'Un producto ya no está disponible. Revisa los productos de la cuenta.',
   SALE_NOT_FOUND: 'No encontramos esta venta.',
-  PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado. Actualiza el catálogo y elige otro.',
+  PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado. Elige otro método disponible.',
   AUTH_REQUIRED: 'Tu sesión venció. Vuelve a entrar con Google.', GOOGLE_REQUIRED: 'Entra con Google para continuar.',
   VALIDATION_ERROR: 'Revisa los datos e intenta de nuevo.', BUSINESS_ACCESS_DENIED: 'No tienes acceso a este negocio.',
   PERMISSION_DENIED: 'Tu rol no permite esta acción. Solicita ayuda al dueño.',

@@ -23,7 +23,7 @@ export function EmptyCatalog({ title = 'Aún no hay productos', description = 'A
   return <div className="pos-empty"><Package className="pos-empty-icon" size={32} strokeWidth={1.4} aria-hidden="true" /><h2>{title}</h2><p>{description}</p>{children}</div>
 }
 
-export function PosDialog({ title, onClose, busy = false, children }: { title: string; onClose: () => void; busy?: boolean; children: React.ReactNode }) {
+export function PosDialog({ title, onClose, busy = false, children, className = '' }: { className?: string; title: string; onClose: () => void; busy?: boolean; children: React.ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const dialog = ref.current!
@@ -31,7 +31,7 @@ export function PosDialog({ title, onClose, busy = false, children }: { title: s
     dialog.showModal()
     return () => { dialog.close(); previous?.focus() }
   }, [])
-  return <dialog ref={ref} className="pos-dialog" aria-labelledby="pos-dialog-title" onCancel={event => { event.preventDefault(); if (!busy) onClose() }}>
+  return <dialog ref={ref} className={`pos-dialog ${className}`} aria-labelledby="pos-dialog-title" onCancel={event => { event.preventDefault(); if (!busy) onClose() }}>
     <div className="pos-dialog-heading"><h2 id="pos-dialog-title">{title}</h2><button className="pos-icon-button" aria-label="Cerrar" onClick={onClose} disabled={busy}><X size={22} aria-hidden="true" /></button></div>
     {children}
   </dialog>
@@ -41,8 +41,8 @@ export function SaleDetail({ sale }: { sale: Sale }) {
   return <div className="sale-detail">
     <p className="sale-reference">Venta #{sale.id.slice(0, 8).toUpperCase()}</p>
     <p>{saleDate(sale.createdAt, sale.timezone)}</p>
-    <ul className="sale-detail-items">{sale.items.map(item => <li key={item.productId}><div><strong>{item.name}</strong><p>{item.quantity} × {money(item.unitPriceCents)}</p></div><span>{money(item.totalCents)}</span></li>)}</ul>
-    <dl className="sale-totals"><div><dt>Subtotal</dt><dd>{money(sale.totalCents)}</dd></div><div className="sale-total"><dt>Total MXN</dt><dd>{money(sale.totalCents)}</dd></div><div><dt>Método de pago</dt><dd>{paymentLabels[sale.paymentMethod]}</dd></div><div><dt>Registró</dt><dd>{sale.operatorName}</dd></div></dl>
+    <ul className="sale-detail-items">{sale.items.map((item, index) => <li key={`${item.productId}:${index}`}><div><strong>{item.name}</strong><p>{item.selectionLabel}</p><p>{item.quantity} × {money(item.unitPriceCents)}</p></div><span>{money(item.totalCents)}</span></li>)}</ul>
+    <dl className="sale-totals"><div><dt>Subtotal</dt><dd>{money(sale.totalCents)}</dd></div>{sale.items.some(i => i.taxCents) && <div><dt>Impuestos incluidos</dt><dd>{money(sale.items.reduce((sum,i) => sum + (i.taxCents ?? 0),0))}</dd></div>}<div className="sale-total"><dt>Total MXN</dt><dd>{money(sale.totalCents)}</dd></div><div><dt>Método de pago</dt><dd>{paymentLabels[sale.paymentMethod]}</dd></div><div><dt>Registró</dt><dd>{sale.operatorName}</dd></div></dl>
   </div>
 }
 

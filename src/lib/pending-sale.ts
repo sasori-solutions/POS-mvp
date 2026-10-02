@@ -1,4 +1,4 @@
-import type { PosCommand } from './pos-contracts'
+import type { ItemSelection, PosCommand } from './pos-contracts'
 
 export type PendingSale = Extract<PosCommand, { command: 'complete_sale' }>
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -19,10 +19,10 @@ export function readPendingSale(key: string, storage: Storage = localStorage): P
       || value.items.some(line => !uuid.test(line.productId) || !Number.isInteger(line.quantity) || line.quantity < 1 || line.quantity > 999
         || !Number.isInteger(line.unitPriceCents) || line.unitPriceCents < 0 || line.unitPriceCents > 99_999_999
         || !Number.isInteger(line.version) || line.version < 1 || line.version > 2_147_483_647)
-      || new Set(value.items.map(line => line.productId)).size !== value.items.length
+      || new Set(value.items.map(line => JSON.stringify([line.productId, validatedSelection(line.selection)]))).size !== value.items.length
       || value.items.reduce((sum, line) => sum + line.unitPriceCents * line.quantity, 0) !== value.totalCents) throw new Error()
     return { command: 'complete_sale', operationId: value.operationId, items: value.items.map(line => ({
-      productId: line.productId, quantity: line.quantity, unitPriceCents: line.unitPriceCents, version: line.version,
+      productId: line.productId, quantity: line.quantity, unitPriceCents: line.unitPriceCents, version: line.version, ...(line.selection ? { selection: validatedSelection(line.selection) } : {}),
     })), totalCents: value.totalCents, paymentMethod: value.paymentMethod }
   } catch {
     throw new Error('Hay un registro pendiente que no pudimos leer. Conserva este dispositivo y pide ayuda antes de volver a cobrar.')
@@ -37,4 +37,15 @@ export function writePendingSale(key: string, command: PendingSale, storage: Sto
 export function clearPendingSale(key: string, operationId: string, storage: Storage = localStorage): void {
   // Another tab may already have started the next sale. Never erase its recovery command.
   if (readPendingSale(key, storage)?.operationId === operationId) storage.removeItem(key)
+}
+
+function validatedSelection(value: ItemSelection | undefined): ItemSelection | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 3
+    || !['variationId','modifierIds','variablePriceCents'].every(key => Object.hasOwn(value,key))
+    || (value.variationId !== null && !uuid.test(value.variationId))
+    || !Array.isArray(value.modifierIds) || value.modifierIds.length > 24 || value.modifierIds.some(id => !uuid.test(id))
+    || new Set(value.modifierIds).size !== value.modifierIds.length
+    || (value.variablePriceCents !== null && (!Number.isSafeInteger(value.variablePriceCents) || value.variablePriceCents < 0 || value.variablePriceCents > 99_999_999))) throw new Error('Invalid selection')
+  return { variationId: value.variationId, modifierIds: [...value.modifierIds].sort(), variablePriceCents: value.variablePriceCents }
 }
