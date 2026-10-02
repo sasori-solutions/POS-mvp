@@ -91,7 +91,14 @@ jobs:
           if (!ready) throw new Error('Local account API did not become ready');
           JS
       - name: Run real Auth, Edge and PostgreSQL tests without skips
-        run: npm run test -- --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --hookTimeout=60000
+        run: |
+          npm run test -- --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --hookTimeout=60000 --reporter=default --reporter=json --outputFile=/tmp/pos-integration-report.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync('/tmp/pos-integration-report.json', 'utf8'));
+          if (!report.success || report.numFailedTests !== 0 || report.numPendingTests !== 0) throw new Error('Integration must pass without skipped tests');
+          console.log(`Verified ${report.numPassedTests} tests without skips`);
+          JS
       - name: Stop disposable services
         if: always()
         run: npx supabase stop --no-backup

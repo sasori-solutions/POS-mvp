@@ -137,8 +137,6 @@ function localPasswordTesting(url: string): boolean {
 
 function rpcFor(request: AccountRequest): { name: string; args: Record<string, unknown> } {
   switch (request.action) {
-    case 'pos':
-      return { name: 'pos_execute', args: { p_business_id: request.businessId, p_operator_token: request.operatorToken, p_payload: request } }
     case 'device_pos':
       return { name: 'pos_device', args: { p_device_token: request.deviceToken, p_operator_token: request.operatorToken, p_payload: request } }
     case 'device_request_pin_email':
