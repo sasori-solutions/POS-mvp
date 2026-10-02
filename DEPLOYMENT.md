@@ -1,5 +1,7 @@
 ## PIN email recovery — production deployment
 
+Current employee deletion behavior and the 0010 release procedure are documented in [permanent employee unlinking](docs/employee-permanent-unlink.md). The release notes below include historical behavior; restoration is superseded by permanent removal and a fresh PIN on reinvitation.
+
 Agente de Larios, 1 October 2026. Resend verified larioscow.dev; the human saved RESEND_API_KEY, PIN_RECOVERY_FROM and APP_ORIGIN in Supabase. The existing key now has Sending access restricted to this domain. Migration 0007, the account function and frontend are deployed.
 
 Cloudflare production **9cbb112c-668d-4274-b411-3e592720e695** publishes 20 files including `index-CEC8y_T0.js`; **28/28** anonymous route/asset hashes match the release build. ZIP SHA-256: `826cdaaab3e3a36c75543d05ff79d90be60e25c44af125d2f3caacea0cbfc812`.

@@ -40,7 +40,6 @@ export async function mockOnboarding(page: Page, options: {
     { ...fixtureCashier }, { ...fixtureKitchen },
   ]);
   const invitations: InvitationSummary[] = structuredClone(options.invitations ?? []);
-  const deletedEmployees: EmployeeSummary[] = [];
   let pinSetupEmployeeId: string = fixtureCashier.id;
   const employeePins = new Map<string, string>([[fixtureCashier.id, fixtureCashierPin], [fixtureKitchen.id, fixturePin]]);
   const devices: DeviceSummary[] = structuredClone(options.devices ?? []);
@@ -52,8 +51,7 @@ export async function mockOnboarding(page: Page, options: {
     if (index < 0) return;
     const [employee] = employees.splice(index, 1);
     employee.active = false;
-    employee.deletedAt = new Date().toISOString();
-    deletedEmployees.push(employee);
+    employeePins.delete(employee.id);
     invitations.filter((item) => item.employeeId === employee.id && item.active).forEach((item) => Object.assign(item, { active: false, status: 'revoked', revokedAt: new Date().toISOString(), revokeReason: 'employee_deleted' }));
     currentDeviceOperator = '';
   }
@@ -151,7 +149,7 @@ export async function mockOnboarding(page: Page, options: {
       }
       case 'team':
         if (locked || googleRole !== 'owner') return reject(403, 'PERMISSION_DENIED', 'Acceso restringido.');
-        return reply({ employees, invitations, devices, deletedEmployees });
+        return reply({ employees, invitations, devices });
       case 'create_employee': {
         if (employeeOperations.has(body.operationId)) return reply(employeeOperations.get(body.operationId));
         if (body.pin !== null) return reject(400, 'VALIDATION_ERROR', 'Revisa el acceso del empleado.');
@@ -193,14 +191,6 @@ export async function mockOnboarding(page: Page, options: {
       case 'delete_employee': {
         deleteEmployee(body.employeeId);
         return reply({ id: body.employeeId, deleted: true });
-      }
-      case 'restore_employee': {
-        const index = deletedEmployees.findIndex((item) => item.id === body.employeeId);
-        if (index < 0) return reject(404, 'EMPLOYEE_INACTIVE', 'Empleado no disponible.');
-        const [employee] = deletedEmployees.splice(index, 1);
-        Object.assign(employee, { active: true, deletedAt: null });
-        employees.push(employee);
-        return reply(employee);
       }
       case 'create_pairing_code': return reply({ pairingCode: fixturePairingCode, expiresAt: expiresAt() });
       case 'device_pair':

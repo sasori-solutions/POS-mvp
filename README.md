@@ -1,6 +1,6 @@
 ## Employee access and device notifications — feature branch
 
-Employee invitations use one link or locally generated QR, personal employee entry, one linked browser and owner approval of replacements. A persistent in-app inbox reports device linking and blocked attempts. See [implementation, limitations and release order](docs/employee-device-access.md). Requires migration 0008 and updated Edge before the frontend; not yet deployed.
+Employee invitations use one link or locally generated QR, one linked browser and owner approval of device replacements. Deleting an employee permanently removes their business membership, PIN, sessions and device binding. A new invitation creates a new employee and PIN; there is no restoration flow. See [permanent unlinking and release order](docs/employee-permanent-unlink.md) and [device access limitations](docs/employee-device-access.md). The current correction requires migration 0010 and updated Edge before the frontend.
 
 # POS México PWA
 
@@ -73,7 +73,7 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Catalog, sales, payments, inventory and invoicing operations are still pending.
 
-## Current hosted release: access UI correction
+## Historical hosted release: access UI correction
 
 Agente de Larios, 1 October 2026. Cambiar PIN now shares the same width and spacing as the other Más actions. Business settings, PIN and session actions are grouped consistently. Recuperación de mi PIN explains its independent recovery code. Employee creation labels Google as optional personal access and explains that a paired register needs only the employee's PIN. The existing backend and security policy remain unchanged.
 
