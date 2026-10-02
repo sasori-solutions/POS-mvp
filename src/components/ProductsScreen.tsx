@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Pencil, Plus, Power } from 'lucide-react'
+import { ChevronRight, Plus, Power } from 'lucide-react'
 import { AccountClientError } from '../lib/account'
 import type { PosCommand, Product } from '../lib/pos-contracts'
 import { filterProducts, money, parsePrice, posRequest, priceInput, type PosAccess } from '../lib/pos'
@@ -25,14 +25,17 @@ export default function ProductsScreen({ access, catalog, canManage, onSessionEr
     setToggling(null)
   }
   return <div className="products-screen">
-    <div className="catalog-toolbar"><p>{canManage ? 'Tu catálogo, listo para vender.' : 'Consulta los productos disponibles.'}</p>{canManage && <button className="pos-button pos-primary compact" onClick={() => { setMessage(''); setEditing('new') }}><Plus size={20} aria-hidden="true" />Agregar producto</button>}</div>
+    <div className="catalog-toolbar"><p>{canManage ? 'Administra nombres, precios y disponibilidad.' : 'Consulta los productos disponibles.'}</p>{canManage && <button className="pos-button pos-primary compact" onClick={() => { setMessage(''); setEditing('new') }}><Plus size={20} aria-hidden="true" />Agregar producto</button>}</div>
     {message && <p className="pos-status" role="status">{message}</p>}
     <CatalogFilters products={catalog.products} query={query} category={category} onQuery={setQuery} onCategory={setCategory} />
     {canManage && <div className="catalog-status-filter"><label htmlFor="product-status">Mostrar</label><select id="product-status" value={status} onChange={event => setStatus(event.target.value)}><option value="active">Activos</option><option value="inactive">Inactivos</option><option value="all">Todos</option></select></div>}
     {catalog.error && <div className="pos-error" role="alert"><p>{catalog.error}</p><button className="pos-button pos-secondary compact" onClick={() => void catalog.refresh()} disabled={catalog.loading}>Reintentar</button></div>}
-    {catalog.loading && <p className="pos-status" role="status">Cargando productos…</p>}
+    {catalog.loading && !catalog.loaded && <p className="pos-status" role="status">Cargando productos…</p>}
     {catalog.loaded && !filtered.length ? <EmptyCatalog title={catalog.products.length ? 'Sin productos para esta búsqueda' : 'Aún no hay productos'} description={catalog.products.length ? 'Prueba otro nombre, categoría o estado.' : canManage ? 'Agrega tu primer producto para empezar a vender.' : 'Pide al dueño que agregue productos.'} /> :
-      <ul className="product-list">{filtered.map(product => <li key={product.id} className={product.active ? '' : 'inactive-product'}><div className="product-list-info"><strong>{product.name}</strong><p>{product.category || 'Sin categoría'}{!product.active && <span className="product-state">Inactivo</span>}</p></div><span className="product-price">{money(product.priceCents)}</span>{canManage && <div className="product-row-actions"><button className="pos-icon-button" aria-label={`Editar ${product.name}`} onClick={() => { setMessage(''); setEditing(product) }}><Pencil size={19} aria-hidden="true" /></button><button className="pos-icon-button" aria-label={`${product.active ? 'Desactivar' : 'Activar'} ${product.name}`} onClick={() => { setMessage(''); setToggling(product) }}><Power size={19} aria-hidden="true" /></button></div>}</li>)}</ul>}
+      <ul className="product-list" aria-label="Catálogo de productos">{filtered.map(product => {
+        const details = <><div className="product-list-info"><strong>{product.name}</strong><p>{product.category || 'Sin categoría'}{!product.active && <span className="product-state">Inactivo</span>}</p></div><span className="product-price">{money(product.priceCents)}</span></>
+        return <li key={product.id} className={product.active ? '' : 'inactive-product'}>{canManage ? <button className="product-edit" aria-label={`Editar ${product.name}`} onClick={() => { setMessage(''); setEditing(product) }}>{details}<ChevronRight size={18} aria-hidden="true" /></button> : <div className="product-edit">{details}</div>}{canManage && <button className="pos-icon-button product-availability" title={product.active ? 'Desactivar producto' : 'Activar producto'} aria-label={`${product.active ? 'Desactivar' : 'Activar'} ${product.name}`} onClick={() => { setMessage(''); setToggling(product) }}><Power size={19} aria-hidden="true" /></button>}</li>
+      })}</ul>}
     {editing && <ProductEditor product={editing === 'new' ? null : editing} products={catalog.products} access={access} onClose={() => setEditing(null)} onSaved={saved} onRefresh={() => { setEditing(null); void catalog.refresh() }} onSessionError={onSessionError} />}
     {toggling && <ProductActivation product={toggling} access={access} onClose={() => setToggling(null)} onSaved={saved} onRefresh={() => { setToggling(null); void catalog.refresh() }} onSessionError={onSessionError} />}
   </div>
@@ -90,7 +93,7 @@ function ProductEditor({ product, products, access, onClose, onSaved, onRefresh,
       <div className="field"><label htmlFor="product-category">Categoría (opcional)</label><input id="product-category" value={category} onChange={event => setCategory(event.target.value)} maxLength={60} list="product-categories" disabled={busy || uncertain || conflict} /><datalist id="product-categories">{[...new Set(products.map(item => item.category).filter(Boolean))].map(value => <option key={value} value={value} />)}</datalist></div>
       {error && <p className="pos-error" role="alert">{error}</p>}
       {uncertain && <p>Reintenta para confirmar si el producto quedó guardado.</p>}
-      {conflict ? <button type="button" className="pos-button pos-primary" onClick={onRefresh}>Cargar catálogo actual</button> : <button className="pos-button pos-primary" disabled={busy} aria-busy={busy}>{busy ? 'Guardando…' : uncertain ? 'Reintentar guardado' : 'Guardar producto'}</button>}
+      <div className="dialog-actions">{conflict ? <button type="button" className="pos-button pos-primary" onClick={onRefresh}>Cargar catálogo actual</button> : <button className="pos-button pos-primary" disabled={busy} aria-busy={busy}>{busy ? 'Guardando…' : uncertain ? 'Reintentar guardado' : 'Guardar producto'}</button>}<button type="button" className="pos-button pos-secondary" disabled={busy} onClick={onClose}>Cancelar</button></div>
     </form>
   </PosDialog>
 }
@@ -120,7 +123,6 @@ function ProductActivation({ product, access, onClose, onSaved, onRefresh, onSes
       }
     } finally { submitting.current = false; if (mounted.current) setBusy(false) }
   }
-  useEffect(() => { if (!product.active) void save() }, [])
   return <PosDialog title={product.active ? 'Desactivar producto' : 'Activar producto'} onClose={onClose} busy={busy}>
     <p><strong>{product.name}</strong>{product.active ? ' dejará de aparecer en nuevas ventas. Las ventas anteriores se conservan.' : ' volverá a estar disponible para vender.'}</p>
     {error && <p className="pos-error" role="alert">{error}</p>}

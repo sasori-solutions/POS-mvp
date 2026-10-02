@@ -16,6 +16,76 @@ async function openCart(page: Page) {
 }
 async function add(page: Page, name: string) { await page.getByRole('button', { name: new RegExp(`^Agregar ${name},`) }).click() }
 
+test('reopening a product for sale waits for confirmation without flashing a saving dialog', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    const latte = (await backend.catalog()).products.find(product => product.name === 'Latte')!
+    await backend.execute({ command: 'set_product_active', operationId: crypto.randomUUID(), productId: latte.id, expectedVersion: latte.version, active: false })
+    await unlock(page); await navigate(page, 'Productos')
+    await page.getByLabel('Mostrar').selectOption('inactive')
+    await page.getByRole('button', { name: 'Activar Latte' }).click()
+    await expect(page.getByRole('dialog', { name: 'Activar producto' })).toBeVisible()
+    expect((await backend.catalog()).products.find(product => product.id === latte.id)?.active).toBe(false)
+    await page.getByRole('button', { name: 'Activar', exact: true }).click()
+    await expect.poll(async () => (await backend.catalog()).products.find(product => product.id === latte.id)?.active).toBe(true)
+  } finally { await backend.db.close() }
+})
+
+for (const destination of ['Venta', 'Productos']) test(`${destination} refresh preserves layout and search without flashing loading text`, async ({ page }) => {
+  const backend = await mockPos(page)
+  let release!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  try {
+    await unlock(page)
+    if (destination === 'Productos') await navigate(page, destination)
+    const search = page.getByRole('searchbox', { name: 'Buscar producto' })
+    await search.fill('Latte')
+    const item = destination === 'Venta' ? page.getByRole('button', { name: /^Agregar Latte,/ }) : page.getByRole('button', { name: 'Editar Latte' })
+    await expect(item).toBeVisible()
+    const before = await item.boundingBox()
+    await page.route('**/functions/v1/account', async route => {
+      if (route.request().postDataJSON()?.command === 'catalog') await pending
+      await route.fallback()
+    })
+    const request = page.waitForRequest(request => request.postDataJSON()?.command === 'catalog')
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await request
+    await expect(page.getByText('Cargando productos…', { exact: true })).not.toBeVisible({ timeout: 500 })
+    expect((await item.boundingBox())?.y).toBe(before?.y)
+    await expect(search).toHaveValue('Latte')
+    await expect(search).toBeFocused()
+    release()
+    await expect(item).toBeVisible()
+  } finally { release(); await page.unroute('**/functions/v1/account'); await backend.db.close() }
+})
+
+test('tablet keeps the total and charge action visible with a long account', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    await page.setViewportSize({ width: 1024, height: 940 })
+    await unlock(page)
+    for (const name of ['Latte', 'Americano', 'Capuchino', 'Té negro', 'Sándwich', 'Croissant', 'Espresso', 'Chocolate', 'Panqué']) await add(page, name)
+    const charge = page.getByRole('button', { name: 'Cobrar $490.00' })
+    await expect(charge).toBeInViewport({ ratio: 1 })
+    await expect(page.locator('.current-sale .sale-total')).toBeInViewport({ ratio: 1 })
+  } finally { await backend.db.close() }
+})
+
+test('checkout keeps the reviewed amount until the operator returns to editing', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    await page.setViewportSize({ width: 1024, height: 940 })
+    await unlock(page); await add(page, 'Latte')
+    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
+    const croissant = page.getByRole('button', { name: /^Agregar Croissant,/ })
+    await expect(croissant).toBeDisabled()
+    await expect(page.locator('.current-sale .sale-total')).toContainText('$58.00')
+    await page.getByRole('button', { name: 'Editar venta', exact: true }).click()
+    await croissant.click()
+    await expect(page.getByRole('button', { name: 'Cobrar $106.00' })).toBeEnabled()
+  } finally { await backend.db.close() }
+})
+
 test('catalog creates/edits/searches/filters/deactivates and restores a product', async ({ page }) => {
   const backend = await mockPos(page, { empty: true })
   try {
@@ -47,6 +117,7 @@ test('catalog creates/edits/searches/filters/deactivates and restores a product'
     await expect(page.getByRole('heading', { name: 'Sin productos para esta búsqueda' })).toBeVisible()
     await page.getByLabel('Mostrar').selectOption('inactive')
     await page.getByRole('button', { name: 'Activar Café frío' }).click()
+    await page.getByRole('button', { name: 'Activar', exact: true }).click()
     await expect.poll(async () => (await backend.catalog()).products[0].active).toBe(true)
     await page.getByLabel('Mostrar').selectOption('active')
     await expect(page.getByRole('button', { name: 'Editar Café frío' })).toBeVisible()
@@ -242,6 +313,19 @@ test('phone/tablet layout and draft survive navigation without horizontal overfl
       await page.setViewportSize({ width, height: 940 })
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.screenshot({ path: `artifacts/qa/${info.project.name}-venta-${width}.png`, fullPage: true })
+    }
+    for (const width of [320, 390, 1024]) {
+      await page.setViewportSize({ width, height: 940 })
+      await navigate(page, 'Productos')
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      await page.screenshot({ path: `artifacts/qa/${info.project.name}-productos-${width}.png`, fullPage: true })
+      await page.getByRole('button', { name: 'Editar Latte' }).click()
+      await expect(page.getByRole('dialog')).toBeInViewport({ ratio: 1 })
+      await page.screenshot({ path: `artifacts/qa/${info.project.name}-editar-${width}.png` })
+      await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+      await navigate(page, 'Más')
+      await page.screenshot({ path: `artifacts/qa/${info.project.name}-mas-${width}.png`, fullPage: true })
+      await navigate(page, 'Venta')
     }
   } finally { await backend.db.close() }
 })

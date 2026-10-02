@@ -77,7 +77,7 @@ export default function SaleScreen({ access, employeeId, catalog, onProducts, on
   const canCheckout = cart.length > 0 && !outdated && !totalError && catalog.loaded && !catalog.error && online && !frozen
 
   function add(product: Product) {
-    if (frozen) return
+    if (frozen || checkout) return
     const existing = cart.find(line => line.product.id === product.id)
     if (existing && existing.quantity >= maxQuantity) { setError(`Máximo ${maxQuantity} unidades por producto.`); return }
     if (!existing && cart.length >= maxSaleLines) { setError(`Máximo ${maxSaleLines} productos distintos por venta.`); return }
@@ -162,15 +162,19 @@ export default function SaleScreen({ access, employeeId, catalog, onProducts, on
       <CatalogFilters products={activeProducts} query={query} category={category} onQuery={setQuery} onCategory={setCategory} />
       {!online && <p className="pos-warning" role="status">Sin conexión. Conéctate para registrar la venta.</p>}
       {catalog.error && <div className="pos-error" role="alert"><p>{catalog.error}</p><button className="pos-button pos-secondary compact" onClick={() => void catalog.refresh()} disabled={catalog.loading}>Reintentar</button></div>}
-      {catalog.loading && <p className="pos-status" role="status">Cargando productos…</p>}
+      {catalog.loading && !catalog.loaded && <p className="pos-status" role="status">Cargando productos…</p>}
       {catalog.loaded && !activeProducts.length ? <EmptyCatalog description="Agrega productos activos para empezar a vender."><button className="pos-button pos-secondary compact" onClick={onProducts}>Ver productos</button></EmptyCatalog>
         : catalog.loaded && !filtered.length ? <EmptyCatalog title="No encontramos productos" description="Prueba otro nombre o categoría." />
-        : <div className="touch-catalog">{filtered.map(product => <button key={product.id} className="touch-product" onClick={() => add(product)} disabled={frozen} aria-label={`Agregar ${product.name}, ${money(product.priceCents)}`}><strong>{product.name}</strong><span>{product.category || 'Sin categoría'}</span><b>{money(product.priceCents)}</b></button>)}</div>}
+        : <div className="touch-catalog">{filtered.map(product => {
+          const amount = cart.find(line => line.product.id === product.id)?.quantity ?? 0
+          return <button key={product.id} className="touch-product" onClick={() => add(product)} disabled={frozen || checkout} aria-label={`Agregar ${product.name}, ${money(product.priceCents)}`}><strong>{product.name}</strong>{product.category && <span>{product.category}</span>}<b>{money(product.priceCents)}</b>{amount > 0 && <span className="touch-product-quantity" aria-hidden="true">{amount}</span>}</button>
+        })}</div>}
       <div className="mobile-cart-action"><button className="pos-button pos-primary" onClick={() => setShowCart(true)} disabled={!displayCart.length && !storageError}>{displayCart.length ? `Ver cuenta (${displayCart.reduce((sum, line) => sum + line.quantity, 0)}) ${money(total)}` : 'Venta actual'}</button></div>
     </div>
     <aside className="current-sale" aria-label="Venta actual">
       {!pending && <div className="mobile-back"><BackToCatalog onClick={() => { setShowCart(false); setCheckout(false) }} /></div>}
       <div className="current-sale-heading"><h2>{checkout ? 'Registrar pago' : 'Venta actual'}</h2><span>{displayCart.reduce((sum, line) => sum + line.quantity, 0)} artículos</span></div>
+      <div className="current-sale-body">
       {notice && <p className="pos-status" role="status">{notice}</p>}
       {error && <p className="pos-error" role="alert">{error}</p>}
       {storageError && <button className="pos-button pos-secondary" onClick={restorePending}>Revisar registro pendiente</button>}
@@ -178,7 +182,8 @@ export default function SaleScreen({ access, employeeId, catalog, onProducts, on
       <ul className="cart-lines">{displayCart.map(({ product, quantity: amount }) => <li key={product.id}><div className="cart-line-heading"><strong>{product.name}</strong><span>{money(product.priceCents * amount)}</span></div><p>{money(product.priceCents)} por unidad</p>{!checkout && !pending ? <div className="quantity-controls"><button className="pos-icon-button" aria-label={`Disminuir ${product.name}`} disabled={frozen} onClick={() => quantity(product.id, -1)}><Minus size={18} aria-hidden="true" /></button><span aria-label={`Cantidad de ${product.name}`}>{amount}</span><button className="pos-icon-button" aria-label={`Aumentar ${product.name}`} disabled={frozen || amount >= maxQuantity} onClick={() => quantity(product.id, 1)}><Plus size={18} aria-hidden="true" /></button><button className="pos-icon-button cart-remove" aria-label={`Quitar ${product.name}`} disabled={frozen} onClick={() => { setCart(previous => previous.filter(line => line.product.id !== product.id)); setError('') }}><Trash2 size={18} aria-hidden="true" /></button></div> : <p>Cantidad: {amount}</p>}</li>)}</ul>
       {outdated && <div className="pos-warning" role="alert"><p>El catálogo cambió. Revisa los precios y retira los productos no disponibles.</p><button className="pos-button pos-secondary" onClick={updateCart}>Actualizar venta</button></div>}
       {totalError && <p className="pos-error" role="alert">{totalError}</p>}
-      <div className="cart-checkout"><dl className="sale-totals"><div><dt>Subtotal</dt><dd>{money(total)}</dd></div><div className="sale-total"><dt>Total MXN</dt><dd>{money(total)}</dd></div></dl>
+      </div>
+      <div className="cart-checkout"><dl className="sale-totals"><div className="sale-total"><dt>Total MXN</dt><dd>{money(total)}</dd></div></dl>
         {checkout || pending ? <>
           <fieldset className="sale-payment-methods" disabled={frozen}><legend>Método de pago</legend>{(pending ? [pending.paymentMethod] : catalog.paymentMethods).map(method => <label key={method}><input type="radio" name="sale-payment" value={method} checked={payment === method} onChange={() => setPayment(method)} /><span>{paymentLabels[method]}</span></label>)}</fieldset>
           {payment === 'card_external' ? <p className="payment-instructions">Cobra en tu terminal y registra el pago.</p> : payment === 'transfer' ? <p className="payment-instructions">Verifica que recibiste la transferencia antes de registrar el pago.</p> : <p className="payment-instructions">Recibe el efectivo antes de confirmar la venta.</p>}
