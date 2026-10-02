@@ -83,6 +83,23 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect((await pos(cashier, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Forbidden', category: '', priceCents: 100 }, employee)).body.error!.code).toBe('PERMISSION_DENIED')
   })
 
+  it('rejects an erased employee sale replay after a fresh invitation while preserving financial history', async () => {
+    const operator = await business()
+    const original = await cashierFor(operator)
+    const product = await save(operator)
+    const command = sale(product)
+    const receipt = data(await pos<Sale>(original, command, employee))
+    data(await call(owner, { action: 'delete_employee', ...args(operator), employeeId: original.business.employee.id, operationId: randomUUID() }))
+    expect(sql(`select actor_id is null from app_private.pos_operations where business_id=${uuid(operator.business.id)} and operation_id=${uuid(command.operationId)};`).trim()).toBe('t')
+    expect((await pos(original, command, employee)).status).toBeGreaterThanOrEqual(400)
+    const current = await cashierFor(operator)
+    expect(current.business.employee.id).not.toBe(original.business.employee.id)
+    expect((await pos(current, command, employee)).body.error?.code).toBe('OPERATION_CONFLICT')
+    expect((await pos(operator, command)).body.error?.code).toBe('OPERATION_CONFLICT')
+    expect(data(await pos<Sale>(operator, { command: 'sale', saleId: receipt.id }))).toEqual(receipt)
+    expect(count('sales', operator)).toBe(1)
+  })
+
   it('keeps a cashier sale consistent when product deactivation races registration', async () => {
     const operator = await business(); const cashier = await cashierFor(operator); const product = await save(operator)
     const [registration, deactivation] = await Promise.all([

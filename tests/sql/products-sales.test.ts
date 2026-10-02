@@ -71,6 +71,21 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
       expect((await db.query<{allowed:boolean}>("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,fn])).rows[0].allowed).toBe(false)
   })
 
+  it('rejects replay by another actor after the original employee is permanently removed', async () => {
+    const owner = await newActor()
+    const original = await newActor('cashier', owner.businessId)
+    const current = await newActor('cashier', owner.businessId)
+    const product = await execute<Product>(owner, newProduct())
+    const command = saleCommand(product)
+    const receipt = await execute<Sale>(original, command)
+    await db.query('delete from app_private.employees where id=$1', [original.employeeId])
+    expect((await db.query<{ actor_id: null }>('select actor_id from app_private.pos_operations where operation_id=$1', [command.operationId])).rows[0].actor_id).toBeNull()
+    await expect(execute(current, command)).rejects.toThrow('OPERATION_CONFLICT')
+    await expect(execute(original, command)).rejects.toThrow()
+    expect(await execute(owner, { command: 'sale', saleId: receipt.id })).toEqual(receipt)
+    expect(await count('sales', owner.businessId)).toBe(1)
+  })
+
   it('applies migrations with RLS and grants only the service entry points', async () => {
     const rows = await db.query<{ relname: string; relrowsecurity: boolean }>(`select relname,relrowsecurity from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='app_private' and relname in ('products','sales','sale_items','pos_operations')`)
     expect(rows.rows).toHaveLength(4); expect(rows.rows.every(row => row.relrowsecurity)).toBe(true)
