@@ -1,6 +1,14 @@
-## PIN email recovery — prepared, not deployed
+## PIN email recovery — production deployment
 
-Agente de Larios, 1 October 2026. Migration 0007, standalone Edge and frontend are verified locally. Sender configuration for the user-supplied larioscow.dev is pending. Do not describe production as running this feature until sender, migration, account and frontend are activated together. See docs/pin-email-recovery.md.
+Agente de Larios, 1 October 2026. Resend verified larioscow.dev; the human saved RESEND_API_KEY, PIN_RECOVERY_FROM and APP_ORIGIN in Supabase. The existing key now has Sending access restricted to this domain. Migration 0007, the account function and frontend are deployed.
+
+Cloudflare production **9cbb112c-668d-4274-b411-3e592720e695** publishes 20 files including `index-CEC8y_T0.js`; **28/28** anonymous route/asset hashes match the release build. ZIP SHA-256: `826cdaaab3e3a36c75543d05ff79d90be60e25c44af125d2f3caacea0cbfc812`.
+
+Migration 0007 passed the exact six-migration history guard. All **52 SQL function bodies** match the checked local sources; **19 private tables** and private/public RPC permissions have zero verification failures. Canonical statement counts: **44/48/27/23/29/21/16**. The downloaded deployed `account` source is byte-identical to the 36,017-byte standalone artifact, SHA-256 `f5f464fddf5b1f285840194d9ba2f94d4b01de6bd892a7119ef1a3c581709ef8`. All **26 anonymous cloud API probes** passed, covering rejected legacy resets, invalid identities/devices/links, caller-selected recipients/redirects, CORS and no-store responses.
+
+The new deployment renders the incomplete-link state. An existing canonical-host browser still loaded the previous service worker bundle; close all app windows and reopen to adopt the update. No real recovery email was sent and no human PIN was changed during verification. Domain/secrets configuration and anonymous probes do not establish successful provider acceptance or inbox delivery.
+
+See docs/pin-email-recovery.md for local coverage and limits.
 
 # Public PWA deployment on Cloudflare Pages
 
@@ -10,7 +18,7 @@ The frontend is a static Vite PWA. Supabase project `sdisalomdxgejyhpxtri` remai
 
 The current public host is **[pos-mexico-mvp.pages.dev](https://pos-mexico-mvp.pages.dev)**. The Pages project uses Direct Upload; upload the verified build for each release. Pushing the repository alone does not update this deployment.
 
-Current employee invitation correction, 1 October 2026, Agente de Larios: production **`174c4310-c35b-4c74-87cd-cde2be13dd6a`** publishes the verified 20-file frontend with `index-BQvTqgkV.js`. Release ZIP: 309,851 bytes, SHA-256 `99054725a86958f3060a93c182fc67d84a3be02f5933ebaae0ba0f6bb0b01b47`. The public route/asset gate passed **27/27** against local `dist`.
+Historical employee invitation correction, 1 October 2026, Agente de Larios: production **`174c4310-c35b-4c74-87cd-cde2be13dd6a`** publishes the verified 20-file frontend with `index-BQvTqgkV.js`. Release ZIP: 309,851 bytes, SHA-256 `99054725a86958f3060a93c182fc67d84a3be02f5933ebaae0ba0f6bb0b01b47`. The public route/asset gate passed **27/27** against local `dist`.
 
 Adding an employee now uses one Google invitation flow. Native role choices show included and restricted navigation sections; the Google checkbox is removed. Creation leads to a focused share screen with Copiar enlace. Recipients see an invitation-specific login and do not re-enter the invitation code once its details load. Existing PIN-only employees, PIN ownership and backend policies remain supported. No backend/schema deployment was needed.
 
@@ -88,7 +96,7 @@ The current worker uses prompt-style updates but has no update banner. Existing 
 Before calling the public deployment ready:
 
 1. Open the HTTPS URL in a fresh browser without a Cloudflare account. Confirm the app loads and does not require a hosting login.
-2. Directly open and reload all seven SPA paths: `/login`, `/business/new`, `/business/ready`, `/unlock`, `/join`, `/employee`, and `/auth/callback?error=access_denied`. Each must serve the app shell; the denied callback should show the app's Google error message. Private home and ready routes must still require a valid operator session.
+2. Directly open and reload all eight SPA paths: `/login`, `/business/new`, `/business/ready`, `/unlock`, `/join`, `/employee`, `/recover-pin`, and `/auth/callback?error=access_denied`. Each must serve the app shell; the denied callback should show the app's Google error message. Private home and ready routes must still require a valid operator session.
 3. Fetch `/manifest.webmanifest`, `/sw.js`, the actual hashed JS/CSS paths, and both icon files. Confirm each serves its own expected content, not `index.html`.
 4. Confirm the built bundle uses the expected cloud Supabase URL. An unauthenticated account POST with the public app origin should return `AUTH_REQUIRED`, not `ORIGIN_FORBIDDEN`.
 5. Complete Google consent, callback exchange, and account loading from that public origin with the human's authorized account. Then verify business creation, PIN unlock, lock, reload requiring PIN, and logout. Existing mocked browser tests do not establish this live OAuth result.
@@ -100,7 +108,7 @@ After building and deploying the same `dist`, run the anonymous HTTP gate with t
 npm run check:live -- https://pos-mexico-mvp.pages.dev
 ```
 
-It checks the root and all seven exact SPA paths return HTTP 200 without redirects, validates every generated asset's content type, and compares public response hashes with the local build. The current 20-file build produces 27 checks (eight shell routes plus 19 non-index assets). It sends only anonymous GETs; it does not test CORS, sign in, or verify Google consent. Complete the live Google flow before the next GitHub push.
+It checks the root and all eight exact SPA paths return HTTP 200 without redirects, validates every generated asset's content type, and compares public response hashes with the local build. The current 20-file build produces 28 checks (nine shell routes plus 19 non-index assets). It sends only anonymous GETs; it does not test CORS, sign in, or verify Google consent. Complete the live Google flow before the next GitHub push.
 
 Historical home release: 21/21 hosted route and asset checks, 44 desktop/mobile browser tests and production typecheck/build passed. That release's live bundle was verified in Brave after closing app windows to activate the new worker. The human's existing PIN opened Venta; Ver productos, Más with saved business details and navigation back to Venta also passed live. The preceding auth release passed eight anonymous cloud API checks, real Google login/logout/relogin/reload, an existing PIN unlock and live lock, plus 11 real local database integration tests. The home release changes no backend code or schema; database integration tests were not rerun. Fresh cloud business creation and physical-phone installation remain separate manual checks.
 
