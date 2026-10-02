@@ -95,6 +95,7 @@ export default function App() {
   const [invitationCode, setInvitationCode] = useState(() => sessionStorage.getItem(invitationKey) ?? '')
   const [joinDetails, setJoinDetails] = useState<InvitationDetails | null>(null)
   const [joinLoading, setJoinLoading] = useState(false)
+  const [invitationConflict, setInvitationConflict] = useState(false)
   const [invitationLink, setInvitationLink] = useState('')
   const [deviceName, setDeviceName] = useState('Mi dispositivo')
   const [unreadCount, setUnreadCount] = useState(0)
@@ -143,7 +144,7 @@ export default function App() {
     setHomeNotice('')
     setPin('')
     setConfirmation('')
-    setCurrentPin(''); setJoinDetails(null)
+    setCurrentPin(''); setJoinDetails(null); setInvitationConflict(false)
     pinChangeOperation.current = null
     mutationPending.current = false
     sessionStorage.removeItem('pos-mexico-pin-recovery')
@@ -211,6 +212,15 @@ export default function App() {
       return
     }
     setError('No pudimos completar la solicitud. Intenta de nuevo.')
+  }
+
+  function showInvitationFailure(problem: unknown) {
+    if (problem instanceof AccountClientError && problem.code === 'BUSINESS_ACCESS_DENIED') {
+      setPin(''); setConfirmation(''); setJoinDetails(null); setInvitationConflict(true)
+      setError('Esta cuenta de Google ya está vinculada a otra persona de este negocio. Entra con otra cuenta o pide al dueño revisar tu acceso.')
+      return
+    }
+    showFailure(problem)
   }
 
   async function loadBusinesses() {
@@ -384,10 +394,10 @@ export default function App() {
     const identity = sessionRef.current
     const requestEpoch = epoch.current
     let alive = true
-    setJoinLoading(true); setPin(''); setConfirmation(''); setError('')
+    setJoinLoading(true); setPin(''); setConfirmation(''); setError(''); setInvitationConflict(false)
     void accountRequest({ action: 'invitation_details', invitationCode: invitationCode.trim() }, identity.access_token)
       .then((result) => { if (alive && requestEpoch === epoch.current && identitySessionKey(sessionRef.current) === identitySessionKey(identity)) setJoinDetails(result) })
-      .catch((problem) => { if (alive && requestEpoch === epoch.current) showFailure(problem) })
+      .catch((problem) => { if (alive && requestEpoch === epoch.current) showInvitationFailure(problem) })
       .finally(() => { if (alive && requestEpoch === epoch.current) setJoinLoading(false) })
     return () => { alive = false }
   }, [screen === 'join', invitationCode, identitySessionKey(session)])
@@ -398,7 +408,7 @@ export default function App() {
       const code = new URLSearchParams(url.hash.slice(1)).get('invite')
       if (url.origin !== window.location.origin || !code || !/^[a-f0-9]{64}$/i.test(code)) throw new Error()
       sessionStorage.setItem(invitationKey, code)
-      setInvitationCode(code); setError(''); setInvitationLink('')
+      setInvitationCode(code); setError(''); setInvitationLink(''); setInvitationConflict(false)
       navigate(session ? 'join' : 'login')
     } catch { setError('Pega el enlace de invitación de POS México que te compartió el dueño.') }
   }
@@ -470,7 +480,26 @@ export default function App() {
       setBusinesses((current) => current.some((business) => business.id === data.business.id) ? current : [...current, data.business])
       setPin(''); setConfirmation(''); setInvitationCode(''); navigate('home')
       joinPayload.current = ''
-    } catch (problem) { if (requestEpoch === epoch.current) showFailure(problem) }
+    } catch (problem) {
+      if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) return
+      if (problem instanceof AccountClientError && problem.code === 'DEVICE_APPROVAL_REQUIRED') {
+        // This denial follows a valid PIN and committed invitation acceptance; no operator was issued.
+        const joinedBusiness = joinDetails.business
+        sessionStorage.removeItem(invitationKey)
+        setInvitationCode(''); setJoinDetails(null); setInvitationConflict(false)
+        setBusinesses((current) => current.some((business) => business.id === joinedBusiness.id) ? current : [...current, joinedBusiness])
+        setSelected(joinedBusiness); setPin(''); setConfirmation('')
+        joinPayload.current = ''
+        navigate('unlock')
+        void accountRequest({ action: 'status' }, identity.access_token).then((status) => {
+          if (requestEpoch !== epoch.current || identitySessionKey(sessionRef.current) !== identitySessionKey(identity)) return
+          setBusinesses(status.businesses)
+          const summary = status.businesses.find((business) => business.id === joinedBusiness.id)
+          if (summary && selectedRef.current?.id === joinedBusiness.id && !operatorRef.current) setSelected(summary)
+        }).catch(() => { /* The known business still allows a PIN retry if this refresh fails. */ })
+      }
+      if (requestEpoch === epoch.current && identitySessionKey(sessionRef.current) === identitySessionKey(identity)) showInvitationFailure(problem)
+    }
     finally { if (requestEpoch === epoch.current) setBusy(false) }
   }
 
@@ -640,7 +669,7 @@ export default function App() {
       </section>
       : screen === 'employee-entry' ? <section className="screen"><button className="back-button" onClick={() => navigate('login')}><ArrowLeft size={20} />Volver</button><h1>Acceso de empleado</h1><p>Si ya aceptaste tu invitación, entra con Google desde tu dispositivo vinculado.</p>{error && <p className="error-message" role="alert">{error}</p>}<button className="button primary google-button" disabled={busy} onClick={() => void googleLogin()}><GoogleMark /><span>Continuar con Google</span></button><form onSubmit={(event) => { event.preventDefault(); useInvitationLink() }}><h2>¿Es tu primera vez?</h2><p>Escanea el QR del dueño con la cámara de este dispositivo o pega su enlace de invitación.</p><div className="field"><label htmlFor="employee-invitation-link">Enlace de invitación</label><input id="employee-invitation-link" type="url" autoComplete="off" required value={invitationLink} onChange={(event) => setInvitationLink(event.target.value)} /></div><button className="button secondary" type="submit" disabled={busy}>Abrir invitación</button></form><button className="text-button" onClick={() => window.location.assign('/register')}>Abrir caja compartida</button></section>
       : screen === 'choice' ? <section className="screen"><h1>¿Qué quieres hacer?</h1><p>Crea tu negocio o entra con una invitación.</p>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" onClick={() => { setError(''); setDraft(initialDraft); navigate('business') }}>Crear mi negocio<ArrowRight size={20} /></button><button className="button secondary" onClick={() => { setError(''); navigate('join') }}>Unirme a un negocio</button></div></section>
-      : screen === 'join' ? <section className="screen"><button className="back-button" disabled={busy} onClick={() => { clearSensitive(); setError(''); navigate(businesses.length ? 'choose' : 'choice') }}><ArrowLeft size={20} />Volver</button><h1>Unirme a un negocio</h1><p>{joinDetails ? `Invitación para ${joinDetails.employee.name} en ${joinDetails.business.name}.` : 'Escanea el QR del dueño con la cámara de este dispositivo o pega su enlace de invitación.'}</p><form onSubmit={(event) => void joinBusiness(event)}>{!joinDetails && <div className="field"><label htmlFor="invitation-link">Enlace de invitación</label><input id="invitation-link" type="url" disabled={busy} autoComplete="off" value={invitationLink} onChange={(event) => setInvitationLink(event.target.value)} /><button className="button secondary" type="button" disabled={busy || !invitationLink.trim()} onClick={useInvitationLink}>Abrir invitación</button></div>}{joinLoading && <p role="status">Revisando invitación…</p>}{joinDetails && <><p>Vincularemos tu cuenta a este navegador. Para cambiar de dispositivo necesitarás autorización del dueño.</p><div className="field"><label htmlFor="join-device-name">Nombre de este dispositivo</label><input id="join-device-name" value={deviceName} required maxLength={100} onChange={(event) => setDeviceName(event.target.value)} disabled={busy} /></div><p id="pin-help" className="field-help">{joinDetails.employee.pinReady ? 'Verifica el PIN que ya usas en la caja. Conservarás el mismo.' : 'Elige tu PIN personal de seis dígitos.'}</p><PinField label={joinDetails.employee.pinReady ? 'PIN actual' : 'PIN'} value={pin} onChange={setPin} disabled={busy} />{!joinDetails.employee.pinReady && <PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />}</>}{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" disabled={busy || !joinDetails}>Unirme</button></div></form></section>
+      : screen === 'join' ? <section className="screen"><button className="back-button" disabled={busy} onClick={() => { clearSensitive(); setError(''); navigate(businesses.length ? 'choose' : 'choice') }}><ArrowLeft size={20} />Volver</button><h1>Unirme a un negocio</h1><p>{invitationConflict ? 'Tu invitación sigue disponible. Puedes continuar con otra cuenta de Google.' : joinDetails ? `Invitación para ${joinDetails.employee.name} en ${joinDetails.business.name}.` : 'Escanea el QR del dueño con la cámara de este dispositivo o pega su enlace de invitación.'}</p><form onSubmit={(event) => void joinBusiness(event)}>{!joinDetails && !invitationConflict && <div className="field"><label htmlFor="invitation-link">Enlace de invitación</label><input id="invitation-link" type="url" disabled={busy} autoComplete="off" value={invitationLink} onChange={(event) => setInvitationLink(event.target.value)} /><button className="button secondary" type="button" disabled={busy || !invitationLink.trim()} onClick={useInvitationLink}>Abrir invitación</button></div>}{joinLoading && <p role="status">Revisando invitación…</p>}{joinDetails && <><p>{joinDetails.returningEmployee ? 'Conservarás tu PIN y tu dispositivo vinculado. Si usas otro, el dueño deberá autorizarlo.' : 'Vincularemos tu cuenta a este navegador. Para cambiar de dispositivo necesitarás autorización del dueño.'}</p><div className="field"><label htmlFor="join-device-name">Nombre de este dispositivo</label><input id="join-device-name" value={deviceName} required maxLength={100} onChange={(event) => setDeviceName(event.target.value)} disabled={busy} /></div><p id="pin-help" className="field-help">{joinDetails.returningEmployee ? 'Ya tenías acceso a este negocio. Ingresa tu PIN actual para volver a entrar.' : joinDetails.employee.pinReady ? 'Verifica el PIN que ya usas en la caja. Conservarás el mismo.' : 'Elige tu PIN personal de seis dígitos.'}</p><PinField label={joinDetails.employee.pinReady ? 'PIN actual' : 'PIN'} value={pin} onChange={setPin} disabled={busy} />{!joinDetails.employee.pinReady && <PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />}</>}{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions">{invitationConflict ? <button className="button primary" type="button" disabled={busy} onClick={() => void logout()}>Usar otra cuenta de Google</button> : <button className="button primary" disabled={busy || !joinDetails}>Unirme</button>}</div></form></section>
       : screen === 'recover-email' && selected && session ? <RequestPinRecovery businessName={selected.name} email={session.user.email} request={() => accountRequest({ action: 'request_pin_email', businessId: selected.id }, session.access_token)} onBack={() => { setError(''); navigate('unlock') }} onSessionError={showFailure} />
       : screen === 'change-pin' && operator ? <section className="screen"><button type="button" className="back-button" disabled={busy} onClick={() => { setCurrentPin(''); setPin(''); setConfirmation(''); setError(''); navigate('home') }}><ArrowLeft size={18} aria-hidden="true" />Volver a Más</button><h1>Cambiar mi PIN</h1><p>Verifica tu PIN actual y elige el nuevo.</p><form onSubmit={(event) => void saveChangedPin(event)}><div className="field"><label htmlFor="current-pin">PIN actual</label><input id="current-pin" type="password" inputMode="numeric" autoComplete="off" value={currentPin} onChange={(event) => setCurrentPin(event.target.value.replace(/[^0-9]/g, '').slice(0, 6))} maxLength={6} disabled={busy} required /></div><p id="pin-help" className="field-help">Usa seis dígitos.</p><PinField label="Nuevo PIN" value={pin} onChange={setPin} disabled={busy} /><PinField label="Confirma tu PIN" value={confirmation} onChange={setConfirmation} confirm disabled={busy} />{error && <p className="error-message" role="alert">{error}</p>}{secondsLeft > 0 && <p role="status">Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.</p>}<div className="screen-actions"><button className="button primary" disabled={busy || secondsLeft > 0}>Guardar nuevo PIN</button></div></form></section>
       : screen === 'business' ? <section className="screen">
