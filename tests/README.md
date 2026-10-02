@@ -1,12 +1,12 @@
 ## Más navigation correction — 1 October 2026
 
-The local correction groups Más into Negocio, Mi acceso and Sesión, with direct employee/device entries and focus-preserving returns. Business profile saves stay in the form; employee PIN setup, optional Google access and device pairing have separate instructions. Device removal requires confirmation. The API and SQL are unchanged.
+The published correction groups Más into Negocio, Mi acceso and Sesión, with direct employee/device entries and focus-preserving returns. Business profile saves stay in the form; employee PIN setup, optional Google access and device pairing have separate instructions. Device removal requires confirmation. The API and SQL are unchanged.
 
-Validation: 166/166 desktop/mobile browser cases passed in a stable final run, production build/typecheck and `git diff --check` passed. The real loopback browser/Auth/Edge/Postgres smoke passed for employee PIN setup/linking, deletion/restoration, device revocation, and owner PIN change/recovery, with synthetic identities cleaned. New UI checks cover keyboard round trips, phone overflow down to 320px, device-removal cancellation/confirmation and instruction text. Captures are synthetic and local under `/tmp/pos-mas-*`. These results do not establish a hosted deployment or physical-device compatibility.
+Validation: 166/166 desktop/mobile browser cases passed in a stable final run, production build/typecheck and `git diff --check` passed. The real loopback browser/Auth/Edge/Postgres smoke passed for employee PIN setup/linking, deletion/restoration, device revocation, and owner PIN change/recovery, with synthetic identities cleaned. New UI checks cover keyboard round trips, phone overflow down to 320px, device-removal cancellation/confirmation and instruction text. Captures are synthetic and local under `/tmp/pos-mas-*`. Production Cloudflare deployment `c45a4597-3627-4f1b-a96a-830d0f58b45a` passed 27/27 exact public route/asset checks against this build. Physical-device compatibility and authenticated cloud mutations were not repeated.
 
 # Account flow verification
 
-## Current access UI correction
+## Historical access UI correction
 
 Agente de Larios, 1 October 2026. **162/162 Playwright cases**, frontend typecheck/build and **27/27 exact hosted route/asset checks** passed. The new Más geometry regression reproduced mismatched Cambiar PIN widths on desktop and phone before the fix, then verified consistent action widths, at least 12px gaps, 48px touch targets and logout reachable above the fixed navigation after scrolling. Synthetic screenshots are `/tmp/pos-mexico-{desktop|mobile}-more-pin-layout.png`. Google checkbox locators were adapted to the explicit optional-personal-access label; the real browser smoke's locator was adapted but the smoke itself was not rerun for this text/layout correction.
 
