@@ -80,16 +80,25 @@ jobs:
           npx supabase functions serve account --env-file .env.functions > /tmp/pos-account-edge.log 2>&1 &
           node --input-type=module <<'JS'
           let ready = false;
+          let lastStatus = null;
+          let lastCode = null;
           for (let attempt = 0; attempt < 60; attempt++) {
             try {
               const response = await fetch(`${process.env.TEST_SUPABASE_URL}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: process.env.TEST_SUPABASE_ANON_KEY, origin: 'http://127.0.0.1:5173' }, body: JSON.stringify({ action: 'status' }), signal: AbortSignal.timeout(5000) });
               const body = await response.json();
+              lastStatus = response.status;
+              lastCode = body.error?.code ?? body.code ?? null;
               if (response.status === 401 && body.error?.code === 'AUTH_REQUIRED') { ready = true; break; }
             } catch {}
             await new Promise(resolve => setTimeout(resolve, 1000));
           }
-          if (!ready) throw new Error('Local account API did not become ready');
+          if (!ready) throw new Error(`Local account API did not become ready (status=${lastStatus}, code=${lastCode})`);
           JS
+      - name: Diagnose local service failures
+        if: failure()
+        run: |
+          tail -100 /tmp/pos-account-edge.log || true
+          docker logs --tail 100 supabase_edge_runtime_pos-mexico-pwa || true
       - name: Run real Auth, Edge and PostgreSQL tests without skips
         run: |
           npm run test -- --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --hookTimeout=60000 --reporter=default --reporter=json --outputFile=/tmp/pos-integration-report.json
