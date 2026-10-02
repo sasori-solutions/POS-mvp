@@ -14,7 +14,7 @@ The preceding PIN-policy frontend production deployment `4332457e-e8b5-4ad2-8bcd
 
 The preceding hosted employee lifecycle release applied 0004 in `sdisalomdxgejyhpxtri` after exact 0001–0003 history guards, with ledger **44/48/27/23**, ten checked SQL bodies, private RLS/grants and nine public RPC grants. The downloaded 26,669-byte Edge source matched SHA-256 `28e973733f8c783a530061b29bd96deb51f5bc6d03715ea4a8627e77e57397df`. Its eight anonymous probes, 36/36 real local integration, 13/13 Deno and 126/126 browser cases passed. Cloudflare deployment `6cb52946-9921-4b92-b552-a3f282b225d2` passed 27/27 public build hashes and its worker was activated visibly. These bundle hashes and counts describe that earlier release.
 
-This slice supports Google sign-in, progressive business creation/settings, personal employee invitations, employee-selected PIN setup/reset, a restricted shared-register login, device revocation, owner recovery with an independent code, normal current-PIN changes, and locking/sign-out. Sales and offline transactions remain subsequent slices. All account operations require a network connection.
+This slice supports Google sign-in, progressive business creation/settings, personal employee invitations, employee-selected PIN setup/reset, a restricted shared-register login, device revocation, owner recovery with an independent code, normal current-PIN changes, and locking/sign-out. The products/sales branch adds online POS commands; see [../docs/products-sales.md](../docs/products-sales.md). Offline transactions remain a subsequent slice. All account operations require a network connection.
 
 ## Trust boundary
 
@@ -80,7 +80,7 @@ ALLOW_TEST_PASSWORD_AUTH=true
 
 The CLI supplies `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` automatically. The test password bypass requires both the flag and a local Supabase hostname (`localhost`, loopback, Docker `kong`, or `host.docker.internal`); it is rejected on hosted Supabase project URLs. Never configure this test flag for a hosted deployment.
 
-For a separately authorized hosted deployment, apply all six checked-in migrations to a new database (or only pending migrations after verifying existing history), deploy `account`, and set `ALLOWED_ORIGINS` to the exact HTTPS PWA origin. The origin list must be nonempty; wildcards and insecure external origins are rejected. Set `[functions.account] verify_jwt = false`: the handler verifies Auth for personal commands and Postgres validates restricted device credentials for device commands, enabling consistent error shapes. Do not put a service key in any `VITE_*` variable.
+For a separately authorized hosted deployment, apply all checked-in migrations to a new database (or only pending migrations after verifying existing history), deploy `account`, and set `ALLOWED_ORIGINS` to the exact HTTPS PWA origin. The origin list must be nonempty; wildcards and insecure external origins are rejected. Set `[functions.account] verify_jwt = false`: the handler verifies Auth for personal commands and Postgres validates restricted device credentials for device commands, enabling consistent error shapes. Do not put a service key in any `VITE_*` variable.
 
 Google OAuth additionally needs a Google Cloud Web OAuth client, its private secret configured in Supabase Auth, the Supabase callback URL registered at Google, and the actual PWA callback URL on Supabase's redirect allowlist. Google login cannot be verified until those credentials and redirect URLs exist.
 

@@ -1,7 +1,7 @@
 // Agente de Larios. Real 0004 -> 0005/0006 compatibility in a disposable loopback database.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -61,6 +61,6 @@ try {
   writeFileSync('/tmp/pos-pin-email-canonical-ledger.json',JSON.stringify(rows))
   console.log(`PASS real 0006→0007 compatibility: preserves identities, hashes/counters, invitations, prior sessions; rejects legacy reset; scoped mail request; private tables and RPC grants; canonical ledger ${rows.map(r=>r.statements.length).join('/')}.`)
 } catch(error) {
-  const diagnostic=String(error.stderr??'').split('\n').find(line=>/^ERROR:/.test(line))
+  const diagnostic=String(error.stderr??'').split('\n').find(line=>line.startsWith('ERROR:'))
   console.error(`Email migration smoke failed at ${stage}: ${error instanceof assert.AssertionError ? error.message : diagnostic??error.name}`); process.exitCode=1
 } finally { if(created) sql(`drop database ${database} with (force);`,'postgres'); rmSync(workspace,{recursive:true,force:true}) }

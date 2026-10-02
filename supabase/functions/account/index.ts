@@ -7,6 +7,10 @@ import { claimsFromVerifiedJwt, verifiedGoogleAuthentication } from './authentic
 
 const maxBodyBytes = 8192
 const errorDefinitions: Record<AccountErrorCode, { status: number; message: string }> = {
+  PRODUCT_CHANGED: { status: 409, message: 'The product changed. Review current catalog.' },
+  PRODUCT_UNAVAILABLE: { status: 409, message: 'The product is unavailable.' },
+  SALE_NOT_FOUND: { status: 404, message: 'The sale is unavailable.' },
+  PAYMENT_METHOD_DISABLED: { status: 409, message: 'The payment method is disabled.' },
   AUTH_REQUIRED: { status: 401, message: 'Sign in to continue.' },
   GOOGLE_REQUIRED: { status: 403, message: 'Sign in with Google to continue.' },
   VALIDATION_ERROR: { status: 400, message: 'The request is invalid.' },
@@ -133,6 +137,8 @@ function localPasswordTesting(url: string): boolean {
 
 function rpcFor(request: AccountRequest): { name: string; args: Record<string, unknown> } {
   switch (request.action) {
+    case 'device_pos':
+      return { name: 'pos_device', args: { p_device_token: request.deviceToken, p_operator_token: request.operatorToken, p_payload: request } }
     case 'device_request_pin_email':
       return { name: 'account_device_request_pin_email', args: { p_device_token: request.deviceToken, p_employee_id: request.employeeId } }
     case 'request_pin_email':

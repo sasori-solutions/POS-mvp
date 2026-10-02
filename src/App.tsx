@@ -4,7 +4,8 @@ import { ArrowLeft, ArrowRight, Check, ChevronRight, Coffee, LockKeyhole, LogOut
 import { accountRequest, AccountClientError } from './lib/account'
 import type { AccountErrorCode, BusinessContext, BusinessProfile, BusinessSummary, BusinessType, InvitationDetails, OperatorSession } from './lib/contracts'
 import { allowIdentitySignIn, closeIdentity, hasCurrentStoredIdentity, initializeIdentity, supabase } from './lib/supabase'
-import HomeScreen, { type Destination } from './components/HomeScreen'
+import type { Destination } from './components/HomeScreen'
+const HomeScreen = lazy(() => import('./components/HomeScreen'))
 import PinField from './components/PinField'
 import RequestPinRecovery from './components/RequestPinRecovery'
 import './components/notifications.css'
@@ -36,6 +37,10 @@ function entryIntent() {
   return { device: url.pathname === '/register' || (url.pathname === '/employee' && new URLSearchParams(url.hash.slice(1)).has('pair')), employee: url.pathname === '/employee', create: url.pathname === '/business/new', join: url.pathname === '/join' || Boolean(invitation) }
 }
 const accountMessages: Record<AccountErrorCode | 'NETWORK_ERROR', string> = {
+  PRODUCT_CHANGED: 'El producto cambió. Actualiza el catálogo y revisa la venta.',
+  PRODUCT_UNAVAILABLE: 'Un producto ya no está disponible. Revisa la venta.',
+  SALE_NOT_FOUND: 'No encontramos esta venta.',
+  PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado. Elige otro.',
   AUTH_REQUIRED: 'Tu sesión venció. Vuelve a entrar con Google.',
   GOOGLE_REQUIRED: 'Entra con tu cuenta de Google para continuar.',
   VALIDATION_ERROR: 'Revisa los datos e intenta de nuevo.',
@@ -705,7 +710,7 @@ export default function App() {
       : screen === 'settings' && operator?.business.role === 'owner' ? <BusinessSettings business={operator.business} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
       : (screen === 'team' || screen === 'devices') && operator?.business.role === 'owner' ? <TeamPanel key={screen} section={screen === 'devices' ? 'devices' : 'employees'} business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
       : screen === 'notifications' && operator?.business.role === 'owner' ? <NotificationsPanel businessId={operator.business.id} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} onUnreadCount={setUnreadCount} />
-      : isHome && operator ? <HomeScreen business={operator.business} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} destination={homeDestination} onDestinationChange={(value) => { setHomeDestination(value); setMoreReturn(''); setHomeNotice('') }} focusOnReturn={moreReturn} notice={homeNotice} onSettings={() => openMoreScreen('settings', 'settings')} onTeam={() => openMoreScreen('team', 'employees')} onDevices={() => openMoreScreen('devices', 'devices')} onSwitchBusiness={changeBusiness} onChangePin={changePin} onNotifications={() => openMoreScreen('notifications', 'notifications')} unreadCount={unreadCount} />
+      : isHome && operator ? <HomeScreen key={operator.operatorToken} business={operator.business} operatorToken={operator.operatorToken} onSessionError={showFailure} onLock={() => void lock()} onLogout={() => void logout()} busy={busy} error={error} destination={homeDestination} onDestinationChange={(value) => { setHomeDestination(value); setMoreReturn(''); setHomeNotice('') }} focusOnReturn={moreReturn} notice={homeNotice} onSettings={() => openMoreScreen('settings', 'settings')} onTeam={() => openMoreScreen('team', 'employees')} onDevices={() => openMoreScreen('devices', 'devices')} onSwitchBusiness={changeBusiness} onChangePin={changePin} onNotifications={() => openMoreScreen('notifications', 'notifications')} unreadCount={unreadCount} />
       : <section className="screen"><h1>No pudimos cargar tu negocio</h1>{error && <p className="error-message" role="alert">{error}</p>}<div className="screen-actions"><button className="button primary" onClick={() => void loadBusinesses()}>Intentar de nuevo</button></div></section>}
       </Suspense>
     </main>

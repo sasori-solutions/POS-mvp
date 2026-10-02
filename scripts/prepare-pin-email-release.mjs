@@ -1,16 +1,9 @@
 // Builds reviewable dashboard artifacts; does not deploy or read credentials.
 import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
+import { buildAccountSource } from './build-account-source.mjs'
 const hash = value => createHash('sha256').update(value).digest('hex')
-const paths = ['src/lib/contracts.ts','supabase/functions/account/validation.ts','supabase/functions/account/device-proof.ts','supabase/functions/account/authentication.ts','supabase/functions/account/email.ts','supabase/functions/account/index.ts']
-const npmImport = "import { createClient } from 'npm:@supabase/supabase-js@2.117.2'"
-const source = paths.map(path => ({ path, text: readFileSync(path,'utf8') }))
-const bodies = source.map(({path,text}) => {
-  const body = text.replace(npmImport+'\n','').replace(/^import[^\n]*from ['"](?:\.\.\/\.\.\/\.\.\/src\/lib\/contracts\.ts|\.\/validation\.ts|\.\/authentication\.ts|\.\/email\.ts|\.\/device-proof\.ts)['"]\r?\n/gm,'')
-  if (/^import\b/m.test(body)) throw new Error('Unresolved import')
-  return `// Source: ${path}; SHA-256 ${hash(text)}\n${body.trimEnd()}\n`
-})
-const edge = npmImport+'\n\n'+bodies.join('\n')
+const { source, edge } = buildAccountSource()
 writeFileSync('/tmp/pos-pin-email-account-cloud.ts',edge)
 const rows=JSON.parse(readFileSync('/tmp/pos-pin-email-canonical-ledger.json','utf8'))
 if(rows.length!==7 || rows[6].version!=='20261001000700') throw Error('Run the email migration compatibility smoke first')

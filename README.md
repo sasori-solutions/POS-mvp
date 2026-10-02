@@ -4,7 +4,7 @@ Employee invitations use one link or locally generated QR, personal employee ent
 
 # POS México PWA
 
-Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Catalog, orders and sales still show availability messages until those modules are implemented.
+Account and home MVP: a new Google account chooses “Crear mi negocio” or “Unirme a un negocio”. Business creation saves the first branch/register names, payment methods and optional public address/contact, then a confirmed six-digit owner PIN. Existing members choose their business and unlock directly into home. Owners can edit the profile, manage staff and invitations, and pair/revoke devices. Products and online sales are implemented; orders remain a subsequent module.
 
 Personal employee access uses `/employee`: open or paste the owner's invitation link, or scan its QR with the device camera, then sign in with Google and a personal PIN. The browser is linked to the employee; a different browser stays blocked until the owner approves a replacement in Notificaciones. Shared registers use `/register`, with a one-use pairing link/code and PIN entry for existing PIN-only employees. Google-linked employees use their personal linked browser. Roles come from the owner's assignment; employees cannot select their own permissions. Reload, lock, employee switch and expiry require PIN entry again. PINs and operator tokens stay in memory.
 
@@ -71,7 +71,7 @@ Official setup references: [Google sign-in](https://supabase.com/docs/guides/aut
 
 ## Design source
 
-Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Catalog, sales, payments, inventory and invoicing operations are still pending.
+Alpha v3 reference: black/white, local IBM Plex Sans, the same functions on phone and tablet, 420px authentication forms, concise Spanish controls and five bottom navigation destinations. See the local design system and reference read. This implementation includes business/access setup and the home shell. Products and online sale registration follow the scoped ivory/evergreen operational styles; orders, inventory, invoicing and automatic payment processing remain pending.
 
 ## Current hosted release: access UI correction
 
@@ -123,3 +123,9 @@ npx supabase migration list --linked
 ```
 
 The dashboard reconciliation above is complete. CLI linking and these inspection commands have not been executed in this deployment session; do not repeat history repair or reapply the foundation blindly. Enter any prompted database password privately.
+
+## Products and online sales
+
+Products and online sales extend the existing account API with categorized catalog management, reversible deactivation, a touch cart, exact MXN cents, cash/external-card/transfer registration and immutable history. Accepted commands replay their original result and uncertain registration survives reload/PIN without storing credentials. See [docs/products-sales.md](docs/products-sales.md) for permissions, migration 0010, validation and rollout. This extension has not been deployed to Supabase or Cloudflare.
+
+Run `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build` and `npm run test:e2e`. Financial browser fixtures execute the actual migrations/RPCs in embedded PostgreSQL; real Supabase Auth/Edge integration requires the disposable local stack.

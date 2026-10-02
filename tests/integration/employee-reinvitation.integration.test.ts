@@ -18,7 +18,10 @@ const admin = url ? createClient(url, service, { auth: { persistSession: false, 
 
 describe.skipIf(!url)('deleted employee accepts a new owner invitation without losing personal identity', () => {
   beforeAll(async () => {
-    if (url !== 'http://127.0.0.1:55321' || container !== 'supabase_db_pos-employee-device-test') throw new Error('Requires the isolated local employee test stack')
+    const developerStack = url === 'http://127.0.0.1:55321' && container === 'supabase_db_pos-employee-device-test'
+    const disposableCI = process.env.CI === 'true' && process.env.TEST_DISPOSABLE_SUPABASE === 'true'
+      && url === 'http://127.0.0.1:54321' && container === 'supabase_db_pos-mexico-pwa'
+    if (!developerStack && !disposableCI) throw new Error('Requires an explicitly isolated local employee test stack')
     ;[owner, employee] = await Promise.all([identity(), identity()])
   })
   afterAll(async () => {

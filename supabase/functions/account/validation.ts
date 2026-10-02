@@ -1,4 +1,5 @@
 import type { AccountRequest, BusinessProfile, BusinessType, EmployeeRole, PaymentMethod } from '../../../src/lib/contracts.ts'
+import { parsePosCommand } from './pos-validation.ts'
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const pinPattern = /^[0-9]{6}$/
 const tokenPattern = /^[0-9a-f]{64}$/
@@ -41,6 +42,11 @@ export function parseAccountRequest(value: unknown): AccountRequest {
   const owner = ['action', 'businessId', 'operatorToken']
   const ownerArgs = () => ({ businessId: uuid(input, 'businessId'), operatorToken: token(input, 'operatorToken') })
   switch (input.action) {
+    case 'pos':
+      return { action: 'pos', ...ownerArgs(), ...parsePosCommand(input, owner) }
+    case 'device_pos':
+      return { action: 'device_pos', deviceToken: token(input, 'deviceToken'), operatorToken: token(input, 'operatorToken'),
+        ...parsePosCommand(input, ['action', 'deviceToken', 'operatorToken']) }
     case 'status': case 'revoke_sessions': exactKeys(input, ['action']); return { action: input.action }
     case 'create_business':
       exactKeys(input, ['action', 'name', 'businessType', 'timezone', 'operationId', 'pin'], ['profile'])
