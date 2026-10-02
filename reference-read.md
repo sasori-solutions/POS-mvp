@@ -1,4 +1,16 @@
+## Referencia vigente — 2 de octubre de 2026
+
+La petición humana más reciente pide conservar Tailwind y los iconos originales, con un diseño mejor y más cercano al original. La implementación previa del repositorio es la autoridad visual para identidad, acceso, navegación y gestión. Square POS sigue orientando el catálogo y la cuenta, según la petición anterior. No se añade una identidad gráfica nueva.
+
+Se aplican Impeccable y Web Design Guidelines para afinar jerarquía, contraste, foco, alineación y adaptación, respetando esa referencia. El MCP oficial de shadcn instalado aporta consultas a patrones accesibles; no reemplaza los componentes ni los iconos del proyecto.
+
+---
+
 # Alpha reference read
+
+Products and checkout expansion, 2 October 2026: current human instruction requests Square POS as the visual reference and removes routine refresh controls. Read Square's current item creation, grid and POS pages (links below), including the published editor image; the editor separates item identity/description from image, pricing, variations, modifiers and availability. Adopt its white workspace, compact divided library, square visual tiles and a fixed checkout column. Use IBM Plex Sans, #111111 text, #626262 secondary text, #E4E4E4 borders and #006AFF for the operational primary action. Preserve five destinations and mobile access. Updates happen in the background; catalog changes require review before payment. This supersedes the previous restricted editor scope.
+
+Expansion review: inspected the actual Square editor image and synthetic desktop/phone checkout/editor captures. Images/monograms, tile menus, sold-out labels and the separate account remain readable. Reviewed 320/390/768/1024/1440px layouts and dialog bounds; phone editor fields stack below 480px and save controls remain visible while scrolling. These are browser checks, not physical hardware/PWA installation evidence. Functional boundaries and local verification are recorded in `docs/products-sales.md`.
 
 Reference: POS México MVP Figma file I57LlREWsM5GvU235IsnXq, current v3 session/audit and locally saved phone/tablet renders. Live design-context connector reached its Starter quota; this slice uses the verified style and functional scope, not a claim of pixel-perfect screen export.
 

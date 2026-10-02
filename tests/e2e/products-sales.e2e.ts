@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture'
 import { pendingSaleKey } from '../../src/lib/pending-sale'
 import { mockPos } from './pos-fixture'
+import type { Product, Sale } from '../../src/lib/pos-contracts'
 
 async function unlock(page: Page) {
   await page.goto('/')
@@ -94,10 +95,9 @@ test('catalog creates/edits/searches/filters/deactivates and restores a product'
     await page.getByRole('button', { name: 'Ver productos', exact: true }).click()
     await page.getByRole('button', { name: 'Agregar producto' }).click()
     await page.getByLabel('Nombre', { exact: true }).fill('Café frío')
-    await page.getByLabel('Precio MXN', { exact: true }).fill('10.001')
-    await page.getByRole('button', { name: 'Guardar producto' }).click()
-    await expect(page.getByRole('alert')).toContainText('2 decimales')
-    await page.getByLabel('Precio MXN', { exact: true }).fill('10,01')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('1234.56')
+    await expect(page.getByLabel('Precio final MXN', { exact: true })).toHaveValue('$1,234.56')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('10.01')
     await page.getByLabel('Categoría (opcional)').fill('Fríos')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
@@ -106,7 +106,7 @@ test('catalog creates/edits/searches/filters/deactivates and restores a product'
     await expect(page.getByRole('button', { name: 'Editar Café frío' })).toBeVisible()
     await page.getByRole('button', { name: 'Fríos', exact: true }).click()
     await page.getByRole('button', { name: 'Editar Café frío' }).click()
-    await page.getByLabel('Precio MXN', { exact: true }).fill('12.34')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('12.34')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await expect(page.locator('.product-list')).toContainText('$12.34')
     await page.getByRole('button', { name: 'Desactivar Café frío' }).click()
@@ -255,7 +255,6 @@ test('a recovered unaccepted sale preserves its draft when the server rejects ch
     await page.getByRole('button', { name: 'Reintentar registro' }).click()
     await expect(page.getByText(/La venta no se registró/)).toBeVisible()
     await expect(page.getByLabel('Cantidad de Latte')).toHaveText('1')
-    await page.getByRole('button', { name: 'Actualizar venta' }).click()
     await expect(page.getByRole('button', { name: 'Cobrar $60.01' })).toBeEnabled()
     expect((await backend.sales()).sales).toHaveLength(0)
     expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pos-mexico-pending-sale')))).toEqual([])
@@ -272,9 +271,8 @@ test('stale cart cannot charge until the operator reviews prices and availabilit
     await backend.execute({ command: 'save_product', operationId: crypto.randomUUID(), productId: latte.id, expectedVersion: latte.version, name: latte.name, category: latte.category, priceCents: 6001 })
     await backend.execute({ command: 'set_product_active', operationId: crypto.randomUUID(), productId: croissant.id, expectedVersion: croissant.version, active: false })
     await openCart(page)
-    await page.getByRole('button', { name: 'Actualizar catálogo' }).click()
-    await expect(page.getByRole('button', { name: 'Cobrar $106.00' })).toBeDisabled()
-    await page.getByRole('button', { name: 'Actualizar venta' }).click()
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.locator('.current-sale').getByText(/El catálogo cambió/)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Cobrar $60.01' })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Quitar Croissant' })).not.toBeVisible()
   } finally { await backend.db.close() }
@@ -290,7 +288,7 @@ test('catalog and product persistence failures show retries without fake empty s
     await page.getByRole('button', { name: 'Ver productos' }).click()
     await page.getByRole('button', { name: 'Agregar producto' }).click()
     await page.getByLabel('Nombre', { exact: true }).fill('Producto sintético')
-    await page.getByLabel('Precio MXN', { exact: true }).fill('0.10')
+    await page.getByLabel('Precio final MXN', { exact: true }).fill('0.10')
     await page.getByRole('button', { name: 'Guardar producto' }).click()
     await page.getByRole('button', { name: 'Reintentar guardado' }).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
@@ -326,6 +324,197 @@ test('phone/tablet layout and draft survive navigation without horizontal overfl
       await navigate(page, 'Más')
       await page.screenshot({ path: `artifacts/qa/${info.project.name}-mas-${width}.png`, fullPage: true })
       await navigate(page, 'Venta')
+    }
+  } finally { await backend.db.close() }
+})
+
+test('expanded product editor persists a photo, variants, extras and stock, then recovers a selected sale', async ({ page },info) => {
+  const backend = await mockPos(page,{empty:true,saleResponseLosses:1})
+  try {
+    await unlock(page); await navigate(page,'Productos')
+    await page.getByRole('button',{name:'Agregar producto',exact:true}).click()
+    await page.getByLabel('Nombre',{exact:true}).fill('Latte sintético')
+    await page.getByLabel('Precio final MXN',{exact:true}).fill('58.01')
+    await page.getByLabel('Descripción',{exact:true}).fill('Café de prueba con leche')
+    await page.getByLabel('Imagen del producto',{exact:true}).setInputFiles('public/icons/icon-192.png')
+    await expect(page.getByRole('img',{name:'Imagen del producto',exact:true})).toBeVisible()
+    await page.getByRole('button',{name:'Añadir variante',exact:true}).click()
+    await page.getByLabel('Variante 1',{exact:true}).fill('Chico')
+    await page.getByRole('button',{name:'Añadir variante',exact:true}).click()
+    await page.getByLabel('Variante 2',{exact:true}).fill('Grande')
+    await page.getByLabel('Precio de variante 2',{exact:true}).fill('62.02')
+    await page.getByRole('button',{name:'Añadir grupo de modificadores',exact:true}).click()
+    await page.getByLabel('Grupo 1',{exact:true}).fill('Leche')
+    await page.getByLabel('Opción 1 de grupo 1',{exact:true}).fill('Avena')
+    await page.getByLabel('Precio extra 1',{exact:true}).fill('0.11')
+    await page.getByLabel('Selecciones mínimas',{exact:true}).fill('1')
+    await page.getByLabel('Controlar existencias',{exact:false}).check()
+    await page.getByLabel('Existencias actuales',{exact:true}).fill('4')
+    await page.getByLabel('Mostrar en favoritos',{exact:true}).check()
+    await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
+    await page.screenshot({path:`artifacts/qa/${info.project.name}-expanded-editor.png`,fullPage:true})
+    await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    const product = (await backend.catalog()).products[0]
+    expect(product.image).toMatch(/^data:image\/jpeg;base64,/)
+    expect(product.details?.variations).toHaveLength(2)
+    expect(product.details?.stock).toBe(4)
+    await navigate(page,'Venta')
+    await expect(page.getByRole('button',{name:'Actualizar catálogo',exact:true})).toHaveCount(0)
+    await page.getByRole('button',{name:'Favoritos',exact:true}).click()
+    await add(page,'Latte sintético')
+    await page.getByRole('radio',{name:/Grande/}).check()
+    await page.getByRole('radio',{name:/Avena/}).check()
+    await page.getByRole('button',{name:'Agregar · $62.13',exact:true}).click()
+    await openCart(page)
+    await page.getByRole('button',{name:'Cobrar $62.13',exact:true}).click()
+    await page.getByRole('button',{name:'Confirmar venta',exact:true}).click()
+    await expect(page.getByRole('button',{name:'Reintentar registro',exact:true})).toBeEnabled()
+    await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button',{name:'Entrar',exact:true}).click()
+    await page.getByRole('button',{name:'Reintentar registro',exact:true}).click()
+    await expect(page.getByRole('heading',{name:'Venta registrada',exact:true})).toBeVisible()
+    await expect(page.locator('.sale-detail')).toContainText('Grande, Avena')
+    expect((await backend.catalog()).products[0].details?.stock).toBe(3)
+    expect((await backend.sales()).sales).toHaveLength(1)
+    const attempts=backend.calls.filter(c=>c.command==='complete_sale')
+    expect(attempts).toHaveLength(2); expect(attempts[1]).toEqual(attempts[0])
+  } finally {await backend.db.close()}
+})
+
+test('sold out is a direct checkout action and persists after catalog reload', async ({page},info) => {
+  const backend=await mockPos(page)
+  try {
+    await unlock(page)
+    await page.getByRole('button',{name:'Disponibilidad de Latte',exact:true}).click()
+    await page.getByRole('button',{name:'Marcar agotado',exact:true}).click()
+    await expect(page.getByRole('button',{name:/^Agregar Latte,/})).toBeDisabled()
+    await page.screenshot({path:`artifacts/qa/${info.project.name}-square-sale.png`,fullPage:true})
+    await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button',{name:'Entrar',exact:true}).click()
+    await expect(page.getByRole('button',{name:/^Agregar Latte,/})).toBeDisabled()
+    await page.getByRole('button',{name:'Disponibilidad de Latte',exact:true}).click()
+    await page.getByRole('button',{name:'Marcar disponible',exact:true}).click()
+    await expect(page.getByRole('button',{name:/^Agregar Latte,/})).toBeEnabled()
+  } finally {await backend.db.close()}
+})
+
+test('MVP mobile product fields persist distinct Mexican IVA treatments and keep the advertised total', async ({page},info) => {
+  const backend=await mockPos(page,{empty:true})
+  try {
+    await unlock(page); await navigate(page,'Productos')
+    const cases=[['Café preparado','vat_16','116',1600],['Producto tasa cero','vat_0','25',0],['Producto exento','exempt','30',0],['Café frontera','border_8','108',800]] as const
+    for(const [name,treatment,price,taxBps] of cases){
+      await page.getByRole('button',{name:'Agregar producto',exact:true}).click()
+      await page.getByLabel('Nombre',{exact:true}).fill(name)
+      await page.getByLabel('Precio final MXN',{exact:true}).fill(price)
+      await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('vat_16')
+      for(const label of ['Tipo de producto','Costo por unidad (opcional)','Nombre para el cliente','Nombre para cocina','Calorías (opcional)','Preferencias alimentarias','SKU','Código de barras / GTIN','Etiqueta de la cuadrícula'])
+        await expect(page.getByLabel(label,{exact:true})).toHaveCount(0)
+      await expect(page.getByRole('button',{name:'Crear variantes',exact:true})).toHaveCount(0)
+      await page.getByLabel('IVA del producto',{exact:true}).selectOption(treatment)
+      if(treatment==='vat_16') await expect(page.getByRole('definition')).toHaveText(['$100.00','$16.00','$116.00'])
+      if(treatment==='border_8'){
+        await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+        await expect(page.getByRole('dialog')).toBeVisible()
+        await page.getByLabel('El negocio aplica el estímulo fronterizo del IVA para esta operación.',{exact:true}).check()
+        await expect(page.getByRole('definition')).toHaveText(['$100.00','$8.00','$108.00'])
+      }
+      if(treatment==='vat_16') {
+        await page.locator('#product-pricing').scrollIntoViewIfNeeded()
+        await page.screenshot({path:`artifacts/qa/${info.project.name}-mvp-iva-editor.png`})
+      }
+      await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+      await expect(page.getByRole('dialog')).not.toBeVisible()
+      const saved=(await backend.catalog()).products.find(product=>product.name===name)!
+      expect(saved.details).toMatchObject({taxTreatment:treatment,taxBps})
+    }
+    await navigate(page,'Venta')
+    for(const [name] of cases) await add(page,name)
+    await openCart(page)
+    const totals=page.locator('.current-sale .sale-totals')
+    await expect(totals).toContainText('Subtotal sin IVA')
+    await expect(totals).toContainText('$255.00')
+    await expect(totals).toContainText('IVA tasa 0 %')
+    await expect(totals).toContainText('Exento de IVA')
+    await expect(totals).toContainText('$279.00')
+    await page.getByRole('button',{name:'Cobrar $279.00',exact:true}).click()
+    await page.getByRole('button',{name:'Confirmar venta',exact:true}).click()
+    await expect(page.getByRole('heading',{name:'Venta registrada',exact:true})).toBeVisible()
+    await expect(page.locator('.sale-detail')).toContainText('Subtotal sin IVA')
+    await page.screenshot({path:`artifacts/qa/${info.project.name}-mvp-iva-sale.png`})
+    const records=(await backend.sales()).sales
+    expect(records).toHaveLength(1)
+    const receipt=await backend.execute<Sale>({command:'sale',saleId:records[0].id})
+    expect(receipt.items.reduce((sum,item)=>sum+(item.taxCents??0),0)).toBe(2400)
+    expect(receipt.totalCents).toBe(27900)
+  } finally {await backend.db.close()}
+})
+
+test('old unclassified IVA and variable-price products need an explicit choice before editing', async ({page}) => {
+  const backend=await mockPos(page,{empty:true})
+  try {
+    const {emptyDetails}=await import('../../src/lib/product-details')
+    const old=await backend.execute<Product>({command:'save_product',operationId:crypto.randomUUID(),productId:crypto.randomUUID(),expectedVersion:null,name:'Anterior',category:'',priceCents:0,details:{...emptyDetails(),variablePrice:true,sku:'KEEP',kitchenName:'Etiqueta anterior'}})
+    await unlock(page); await navigate(page,'Productos')
+    await page.getByRole('button',{name:'Editar Anterior',exact:true}).click()
+    await expect(page.getByLabel('Precio final MXN',{exact:true})).toHaveValue('')
+    await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('')
+    await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByLabel('Precio final MXN',{exact:true}).fill('58')
+    await page.getByLabel('Alérgenos (opcional)',{exact:true}).fill('Leche')
+    await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
+    await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    const saved=(await backend.catalog()).products.find(product=>product.id===old.id)!
+    expect(saved.priceCents).toBe(5800)
+    expect(saved.details).toMatchObject({variablePrice:false,taxTreatment:'vat_16',taxBps:1600,sku:'KEEP',kitchenName:'Etiqueta anterior'})
+    await navigate(page,'Venta'); await add(page,'Anterior')
+    await expect(page.getByRole('dialog')).toContainText('Alérgenos: Leche')
+    await page.getByRole('button',{name:'Agregar · $58.00',exact:true}).click()
+  } finally {await backend.db.close()}
+})
+
+test('catalog keeps two phone columns, readable selections and touch targets across breakpoints', async ({ page }, info) => {
+  const backend = await mockPos(page)
+  try {
+    await unlock(page)
+    await add(page, 'Latte')
+    for (const width of [320, 390, 600, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 940 })
+      const columns = await page.locator('.touch-catalog').evaluate(element => getComputedStyle(element).gridTemplateColumns.split(' ').length)
+      expect(columns).toBe(width < 960 ? 2 : width < 1200 ? 3 : 4)
+      for (const button of await page.locator('.tile-menu, .catalog-category, .pos-nav-item').all()) {
+        const box = await button.boundingBox()
+        expect(box?.height).toBeGreaterThanOrEqual(48)
+        expect(box?.width).toBeGreaterThanOrEqual(48)
+      }
+      const notifications = await page.getByRole('button', { name: /^Notificaciones/ }).boundingBox()
+      const lock = await page.getByRole('button', { name: 'Bloquear', exact: true }).boundingBox()
+      expect(notifications).not.toBeNull()
+      expect(lock).not.toBeNull()
+      expect(lock!.x - (notifications!.x + notifications!.width)).toBeGreaterThanOrEqual(0)
+      expect(lock!.x - (notifications!.x + notifications!.width)).toBeLessThanOrEqual(20)
+      const selected = page.getByRole('navigation').getByRole('button', { name: 'Venta', exact: true })
+      const contrast = await selected.evaluate(element => {
+        const style = getComputedStyle(element)
+        const luminance = (value: string) => {
+          const [r, g, b] = value.match(/\d+/g)!.slice(0, 3).map(v => { const n = Number(v) / 255; return n <= .04045 ? n / 12.92 : ((n + .055) / 1.055) ** 2.4 })
+          return .2126 * r + .7152 * g + .0722 * b
+        }
+        let surface: Element | null = element
+        let background = 'rgb(255, 255, 255)'
+        while (surface) {
+          const color = getComputedStyle(surface).backgroundColor
+          if (color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') { background = color; break }
+          surface = surface.parentElement
+        }
+        const a = luminance(style.color), b = luminance(background)
+        return (Math.max(a, b) + .05) / (Math.min(a, b) + .05)
+      })
+      expect(contrast).toBeGreaterThanOrEqual(4.5)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.screenshot({ path: `artifacts/qa/${info.project.name}-tailwind-venta-${width}.png` })
     }
   } finally { await backend.db.close() }
 })

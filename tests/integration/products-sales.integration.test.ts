@@ -1,3 +1,4 @@
+import { emptyDetails } from '../../src/lib/product-details'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
@@ -82,6 +83,23 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect((await pos(cashier, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Forbidden', category: '', priceCents: 100 }, employee)).body.error!.code).toBe('PERMISSION_DENIED')
   })
 
+  it('rejects an erased employee sale replay after a fresh invitation while preserving financial history', async () => {
+    const operator = await business()
+    const original = await cashierFor(operator)
+    const product = await save(operator)
+    const command = sale(product)
+    const receipt = data(await pos<Sale>(original, command, employee))
+    data(await call(owner, { action: 'delete_employee', ...args(operator), employeeId: original.business.employee.id, operationId: randomUUID() }))
+    expect(sql(`select actor_id is null from app_private.pos_operations where business_id=${uuid(operator.business.id)} and operation_id=${uuid(command.operationId)};`).trim()).toBe('t')
+    expect((await pos(original, command, employee)).status).toBeGreaterThanOrEqual(400)
+    const current = await cashierFor(operator)
+    expect(current.business.employee.id).not.toBe(original.business.employee.id)
+    expect((await pos(current, command, employee)).body.error?.code).toBe('OPERATION_CONFLICT')
+    expect((await pos(operator, command)).body.error?.code).toBe('OPERATION_CONFLICT')
+    expect(data(await pos<Sale>(operator, { command: 'sale', saleId: receipt.id }))).toEqual(receipt)
+    expect(count('sales', operator)).toBe(1)
+  })
+
   it('keeps a cashier sale consistent when product deactivation races registration', async () => {
     const operator = await business(); const cashier = await cashierFor(operator); const product = await save(operator)
     const [registration, deactivation] = await Promise.all([
@@ -120,6 +138,51 @@ describe.skipIf(!config)('products and sales through real local Auth, signed Edg
     expect(data(await pos<Sale>(operator, command)).totalCents).toBe(1001)
     expect(count('sales', operator)).toBe(1)
   })
+  it('persists expanded details and exact selections through Edge and serializes limited inventory', async () => {
+    const operator = await business(), variationId = randomUUID(), modifierId = randomUUID()
+    const details = { ...emptyDetails(), trackStock:true,stock:2,taxBps:1600,taxTreatment:'vat_16' as const,description:'Producto sintético',variations:[{id:variationId,name:'Grande',priceCents:5801,sku:'TEST-G',barcode:'',soldOut:false}],modifierSets:[{id:randomUUID(),name:'Leche',min:1,max:1,options:[{id:modifierId,name:'Avena',priceCents:101}]}] }
+    const imageId = randomUUID()
+    const upload = { command:'upload_product_image' as const, operationId:randomUUID(),imageId,part:0,parts:1,data:'/9j/2f/Z' }
+    expect(data(await pos(operator,upload))).toMatchObject({imageId,complete:true})
+    const product = data(await pos<Product>(operator,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Latte de prueba',category:'Café',priceCents:5801,details:{...details,imageId}}))
+    expect(product.details?.description).toBe(details.description)
+    expect(product.image).toBe('data:image/jpeg;base64,/9j/2f/Z')
+    const selection = {variationId,modifierIds:[modifierId],variablePriceCents:null}
+    const command = {...sale(product,2),items:[{productId:product.id,quantity:2,unitPriceCents:5902,version:product.version,selection}],totalCents:11804}
+    const competing = {...command,operationId:randomUUID()}
+    const replies = await Promise.all([pos<Sale>(operator,command),pos<Sale>(operator,competing)])
+    expect(replies.map(r=>r.status).sort()).toEqual([200,409])
+    const accepted = replies.find(r=>r.status===200)!
+    expect(accepted.body.data?.items[0]).toMatchObject({selectionLabel:'Grande, Avena',unitPriceCents:5902,taxCents:1628,taxTreatment:'vat_16',taxBps:1600})
+    expect(count('sales',operator)).toBe(1)
+    const stock = data(await pos<{products:Product[]}>(operator,{command:'catalog'})).products.find(p=>p.id===product.id)!
+    expect(stock.details?.stock).toBe(0)
+    expect(stock.version).toBe(product.version+1)
+    const retryCommand = replies[0].status===200 ? command : competing
+    expect(data(await pos<Sale>(operator,retryCommand))).toEqual(accepted.body.data)
+    const availability = {command:'set_product_sold_out' as const,operationId:randomUUID(),productId:stock.id,expectedVersion:stock.version,soldOut:true}
+    const unavailable = data(await pos<Product>(operator,availability))
+    expect(unavailable.details?.soldOut).toBe(true)
+    expect(data(await pos(operator,availability))).toEqual(unavailable)
+  },30000)
+
+
+  it('validates and retains mixed IVA classifications through real Edge and immutable history', async () => {
+    const operator=await business()
+    const products:Product[]=[]
+    const rates=[['vat_16',1600,11600],['vat_0',0,2500],['exempt',0,3000],['border_8',800,10800]] as const
+    for(const [taxTreatment,taxBps,priceCents] of rates) products.push(data(await pos<Product>(operator,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'IVA sintético',category:'',priceCents,details:{...emptyDetails(),taxTreatment,taxBps}})))
+    const command={command:'complete_sale' as const,operationId:randomUUID(),paymentMethod:'cash' as const,totalCents:27900,items:products.map(p=>({productId:p.id,quantity:1,unitPriceCents:p.priceCents,version:p.version}))}
+    const receipt=data(await pos<Sale>(operator,command))
+    expect(receipt.items.reduce((sum,item)=>sum+(item.taxCents??0),0)).toBe(2400)
+    expect(new Set(receipt.items.map(item=>item.taxTreatment))).toEqual(new Set(rates.map(row=>row[0])))
+    expect((await pos(operator,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Invalid tax',category:'',priceCents:11600,details:{...emptyDetails(),taxTreatment:'exempt',taxBps:1600}})).body.error?.code).toBe('VALIDATION_ERROR')
+    const p=products[0]
+    data(await pos(operator,{command:'save_product',operationId:randomUUID(),productId:p.id,expectedVersion:p.version,name:p.name,category:'',priceCents:p.priceCents,details:{...emptyDetails(),taxTreatment:'exempt',taxBps:0}}))
+    expect(data(await pos<Sale>(operator,command))).toEqual(receipt)
+    expect(data(await pos<Sale>(operator,{command:'sale',saleId:receipt.id}))).toEqual(receipt)
+  })
+
 })
 
 function localConfig() {

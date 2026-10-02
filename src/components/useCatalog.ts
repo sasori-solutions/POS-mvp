@@ -47,15 +47,17 @@ export function useCatalog(access: PosAccess, enabled: boolean, onSessionError?:
 
   useEffect(() => {
     void refresh()
-    const focus = () => { void refresh() }
+    const focus = () => { if (document.visibilityState !== 'hidden') void refresh() }
     window.addEventListener('focus', focus)
     window.addEventListener('online', focus)
-    const interval = window.setInterval(focus, 60_000)
+    document.addEventListener('visibilitychange', focus)
+    const interval = window.setInterval(focus, 15_000)
     return () => {
       // An access change must start its own request rather than reuse the old operator's response.
       sequence.current += 1
       window.removeEventListener('focus', focus)
       window.removeEventListener('online', focus)
+      document.removeEventListener('visibilitychange', focus)
       window.clearInterval(interval)
     }
   }, [refresh])

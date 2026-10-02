@@ -1,3 +1,4 @@
+import { emptyDetails } from '../../src/lib/product-details'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { PGlite } from '@electric-sql/pglite'
@@ -9,6 +10,8 @@ let db: PGlite
 type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string; keyHash: string }
 let legacyActor: Actor
 let legacyPinHash: string
+let legacyTaxSale: Sale
+let legacyTaxCommand: PosCommand
 
 describe('real PostgreSQL migrations and financial transactions (embedded, synthetic Auth rows)', () => {
   beforeAll(async () => {
@@ -23,7 +26,12 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     legacyActor = await newActor()
     const credential = await db.query<{ pin_hash: string }>(`insert into app_private.operator_credentials(business_id,user_id,pin_hash,failed_attempts) values($1,$2,extensions.crypt('024680',extensions.gen_salt('bf',4)),2) returning pin_hash`, [legacyActor.businessId, legacyActor.userId])
     legacyPinHash = credential.rows[0].pin_hash
-    for (const file of migrations.filter(name => name >= posMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    const vatMigration = '20261002001400_mvp_mexican_vat.sql'
+    for (const file of migrations.filter(name => name >= posMigration && name < vatMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    const legacyProduct = await execute<Product>(legacyActor,{...newProduct(),priceCents:11600,details:{...emptyDetails(),taxBps:1600,customerName:'Alias anterior'}})
+    legacyTaxCommand = saleCommand(legacyProduct,1)
+    legacyTaxSale = await execute<Sale>(legacyActor,legacyTaxCommand)
+    for (const file of migrations.filter(name => name >= vatMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
   }, 60_000)
   afterAll(async () => { await db?.close() })
 
@@ -33,6 +41,49 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     const context = await db.query<{ result: { data: { business: { id: string; role: string } } } }>("select public.account_secure($1,$2,'context',$3::jsonb) as result", [legacyActor.userId, legacyActor.sessionId, JSON.stringify({ businessId: legacyActor.businessId, operatorToken: legacyActor.token })])
     expect(context.rows[0].result.data.business).toMatchObject({ id: legacyActor.businessId, role: 'owner' })
     expect(await execute(legacyActor, { command: 'catalog' })).toHaveProperty('products')
+  })
+
+
+  it('upgrades recorded IVA without reconstructing rates from current products or changing accepted replay', async () => {
+    const sale = await execute<Sale>(legacyActor,{command:'sale',saleId:legacyTaxSale.id})
+    expect(sale.totalCents).toBe(11600)
+    expect(sale.items[0]).toMatchObject({name:'Alias anterior',taxCents:1600,taxTreatment:'legacy',taxBps:null})
+    expect(await execute(legacyActor,legacyTaxCommand)).toEqual(legacyTaxSale)
+    const rows=await db.query<{tax_treatment:null;tax_bps:null}>('select tax_treatment,tax_bps from app_private.sale_items where sale_id=$1',[legacyTaxSale.id])
+    expect(rows.rows[0]).toEqual({tax_treatment:null,tax_bps:null})
+  })
+  it('validates explicit Mexican IVA and stores mixed-rate snapshots atomically through later edits/retries', async () => {
+    const actor=await newActor()
+    const settings=[['vat_16',1600,11600,1600],['border_8',800,10800,800],['vat_0',0,2500,0],['exempt',0,3000,0]] as const
+    const products=[] as Product[]
+    for(const [taxTreatment,taxBps,priceCents] of settings) products.push(await execute<Product>(actor,{...newProduct(),priceCents,details:{...emptyDetails(),taxTreatment,taxBps,customerName:'Unused customer display'}}))
+    const command={command:'complete_sale' as const,operationId:randomUUID(),paymentMethod:'cash' as const,totalCents:27900,items:products.map(p=>({productId:p.id,quantity:1,unitPriceCents:p.priceCents,version:p.version}))}
+    const receipt=await execute<Sale>(actor,command)
+    for(const [i,p] of products.entries()) expect(receipt.items.find(item=>item.productId===p.id)).toMatchObject({name:p.name,taxTreatment:settings[i][0],taxBps:settings[i][1],taxCents:settings[i][3]})
+    expect(receipt.items.reduce((sum,item)=>sum+(item.taxCents??0),0)).toBe(2400)
+    const p=products[0]
+    await execute(actor,{...newProduct(),productId:p.id,expectedVersion:p.version,operationId:randomUUID(),details:{...emptyDetails(),taxTreatment:'exempt',taxBps:0}})
+    expect(await execute(actor,command)).toEqual(receipt)
+    expect(await execute(actor,{command:'sale',saleId:receipt.id})).toEqual(receipt)
+    for(const details of [{...emptyDetails(),taxTreatment:'vat_16' as const,taxBps:0},{...emptyDetails(),taxTreatment:'exempt' as const,taxBps:800}])
+      await expect(execute(actor,{...newProduct(),details})).rejects.toThrow('VALIDATION_ERROR')
+    for (const role of ['anon','authenticated']) for (const fn of ['app_private.product_tax_treatment(jsonb)','app_private.included_vat_cents(bigint,integer)'])
+      expect((await db.query<{allowed:boolean}>("select has_function_privilege($1,$2,'EXECUTE') as allowed",[role,fn])).rows[0].allowed).toBe(false)
+  })
+
+  it('rejects replay by another actor after the original employee is permanently removed', async () => {
+    const owner = await newActor()
+    const original = await newActor('cashier', owner.businessId)
+    const current = await newActor('cashier', owner.businessId)
+    const product = await execute<Product>(owner, newProduct())
+    const command = saleCommand(product)
+    const receipt = await execute<Sale>(original, command)
+    await db.query('delete from app_private.employees where id=$1', [original.employeeId])
+    expect((await db.query<{ actor_id: null }>('select actor_id from app_private.pos_operations where operation_id=$1', [command.operationId])).rows[0].actor_id).toBeNull()
+    await expect(execute(current, command)).rejects.toThrow('OPERATION_CONFLICT')
+    await expect(execute(original, command)).rejects.toThrow()
+    expect(await execute(owner, { command: 'sale', saleId: receipt.id })).toEqual(receipt)
+    expect(await count('sales', owner.businessId)).toBe(1)
   })
 
   it('applies migrations with RLS and grants only the service entry points', async () => {
@@ -203,6 +254,72 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     expect(second.sales).toHaveLength(2); expect(second.nextCursor).toBeNull()
     expect(new Set([...first.sales, ...second.sales].map(sale => sale.id)).size).toBe(32)
   })
+  it('persists the expanded editor and restricts images, fields and availability by tenant and role', async () => {
+    const owner = await newActor(), cashier = await newActor('cashier', owner.businessId), kitchen = await newActor('kitchen', owner.businessId), other = await newActor()
+    const details = { ...emptyDetails(), description: 'Café con leche', sku: 'CAFE-01', barcode: '7501234567890', calories: 120, allergens: 'Leche', costCents: 100 }
+    const command = { ...newProduct(), details }
+    const product = await execute<Product>(owner, command)
+    expect(product.details).toEqual(details)
+    await expect(execute(cashier, { ...command, productId: randomUUID(), operationId: randomUUID() })).rejects.toThrow('PERMISSION_DENIED')
+    await expect(execute(owner, { ...command, operationId: randomUUID(), productId: randomUUID(), details: { ...details, stock: 1.5 } })).rejects.toThrow('VALIDATION_ERROR')
+    const toggle: PosCommand = { command: 'set_product_sold_out', productId: product.id, expectedVersion: product.version, soldOut: true, operationId: randomUUID() }
+    const unavailable = await execute<Product>(cashier, toggle)
+    expect(unavailable.details?.soldOut).toBe(true)
+    expect(await execute(cashier, toggle)).toEqual(unavailable)
+    await expect(execute(other, toggle)).rejects.toThrow('PRODUCT_CHANGED')
+    await expect(execute(kitchen, toggle)).rejects.toThrow('PERMISSION_DENIED')
+    await expect(execute(owner, saleCommand(unavailable))).rejects.toThrow('PRODUCT_UNAVAILABLE')
+  })
+
+  it('prices variations and required extras on the server, stores distinct lines and preserves tax snapshots on replay', async () => {
+    const actor = await newActor(), variationId = randomUUID(), modifierId = randomUUID()
+    const details = { ...emptyDetails(), taxBps: 1600, variations: [{ id: variationId, name: 'Grande', priceCents: 5801, sku: '', barcode: '', soldOut: false }], modifierSets: [{ id: randomUUID(), name: 'Leche', min: 1, max: 1, options: [{ id: modifierId, name: 'Avena', priceCents: 101 }] }] }
+    const input = { ...newProduct(), details }, product = await execute<Product>(actor, input)
+    const selection = { variationId, modifierIds: [modifierId], variablePriceCents: null }
+    const command: Extract<PosCommand,{command:'complete_sale'}> = { ...saleCommand(product), items: [{ productId: product.id, version: product.version, quantity: 3, unitPriceCents: 5902, selection }], totalCents: 17706 }
+    await expect(execute(actor, { ...command, items: [{ ...command.items[0], selection: { ...selection, modifierIds: [] } }] })).rejects.toThrow('VALIDATION_ERROR')
+    await expect(execute(actor, { ...command, items: [{ ...command.items[0], unitPriceCents: 5901 }], totalCents: 17703 })).rejects.toThrow('PRODUCT_CHANGED')
+    const sale = await execute<Sale>(actor, command)
+    expect(sale.items[0]).toMatchObject({ unitPriceCents: 5902, totalCents: 17706, taxCents: 2442, selectionLabel: 'Grande, Avena' })
+    await execute(actor, { ...input, expectedVersion: product.version, operationId: randomUUID(), details: { ...details, variations: [] } })
+    expect(await execute(actor, command)).toEqual(sale)
+    expect(await execute(actor, { command: 'sale', saleId: sale.id })).toEqual(sale)
+    const variable = await execute<Product>(actor, { ...newProduct(), details: { ...emptyDetails(), variablePrice: true } })
+    const variableLine = { productId: variable.id, version: variable.version, quantity: 2, unitPriceCents: 1001, selection: { variationId: null, modifierIds: [], variablePriceCents: 1001 } }
+    expect((await execute<Sale>(actor, { ...saleCommand(variable), items: [variableLine], totalCents: 2002 })).totalCents).toBe(2002)
+  })
+
+  it('deducts inventory once, rejects overselling atomically and prevents a stale editor from overwriting sold stock', async () => {
+    const actor = await newActor(), details = { ...emptyDetails(), trackStock: true, stock: 3 }
+    const input = { ...newProduct(), details }, product = await execute<Product>(actor, input), command = saleCommand(product,2)
+    await expect(execute(actor, saleCommand(product,4))).rejects.toThrow('PRODUCT_UNAVAILABLE')
+    expect(await count('sales',actor.businessId)).toBe(0)
+    const sale = await execute<Sale>(actor,command)
+    expect(await execute(actor,command)).toEqual(sale)
+    const catalog = await execute<{products:Product[]}>(actor,{command:'catalog'})
+    expect(catalog.products[0].details?.stock).toBe(1)
+    expect(catalog.products[0].version).toBe(product.version+1)
+    await expect(execute(actor,{...input,expectedVersion:product.version,operationId:randomUUID()})).rejects.toThrow('PRODUCT_CHANGED')
+    await expect(execute(actor,saleCommand(catalog.products[0],2))).rejects.toThrow('PRODUCT_UNAVAILABLE')
+    expect(await count('sales',actor.businessId)).toBe(1)
+  })
+
+  it('assembles private bounded JPEG chunks with authorized retries and rejects foreign image attachment', async () => {
+    const owner = await newActor(), other = await newActor(), cashier = await newActor('cashier',owner.businessId)
+    const upload: Extract<PosCommand,{command:'upload_product_image'}> = {command:'upload_product_image',operationId:randomUUID(),imageId:randomUUID(),part:0,parts:2,data:'/9j/'}
+    expect(await execute(owner,upload)).toMatchObject({complete:false})
+    expect(await execute(owner,upload)).toMatchObject({complete:false})
+    await expect(execute(cashier,{...upload,operationId:randomUUID()})).rejects.toThrow('PERMISSION_DENIED')
+    await expect(execute(owner,{...upload,operationId:randomUUID(),data:'AAAA'})).rejects.toThrow('OPERATION_CONFLICT')
+    await execute(owner,{...upload,operationId:randomUUID(),part:1,data:'2f/Z'})
+    const input = {...newProduct(),details:{...emptyDetails(),imageId:upload.imageId}}
+    expect((await execute<Product>(owner,input)).image).toBe('data:image/jpeg;base64,/9j/2f/Z')
+    await expect(execute(other,{...input,productId:randomUUID(),operationId:randomUUID()})).rejects.toThrow('VALIDATION_ERROR')
+    for(const role of ['anon','authenticated']) {
+      expect((await db.query<{allowed:boolean}>("select has_table_privilege($1,'app_private.product_images','SELECT') allowed",[role])).rows[0].allowed).toBe(false)
+    }
+  })
+
 })
 
 async function newActor(role = 'owner', existingBusiness?: string): Promise<Actor> {
