@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeftRight, ChevronRight, ClipboardList, KeyRound, LayoutGrid, LockKeyhole, LogOut, Menu, Package, ReceiptText, ShieldCheck, Store, Tablet, Users, type LucideIcon } from 'lucide-react'
 import type { BusinessContext } from '../lib/contracts'
+import { roleSections } from '../lib/navigation'
 import './home-screen.css'
 
 interface HomeScreenProps {
@@ -58,7 +59,7 @@ export default function HomeScreen({ business, onLock, onLogout, busy, error, no
       {navigates && <ChevronRight size={18} strokeWidth={1.6} aria-hidden="true" />}
     </button>
   }
-  const allowedDestinations = destinations.filter(({ name }) => business.role === 'kitchen' ? name === 'Comandas' || name === 'Más' : business.role === 'cashier' ? name !== 'Ventas' : true)
+  const allowedDestinations = destinations.filter(({ name }) => name === 'Más' || roleSections[business.role].includes(name))
   const active = allowedDestinations.some(({ name }) => name === destination) ? destination : business.role === 'kitchen' ? 'Comandas' : 'Venta'
   const upcomingSection = active === 'Comandas' || active === 'Ventas' || active === 'Productos' ? upcoming[active] : null
   const SectionIcon = upcomingSection?.icon

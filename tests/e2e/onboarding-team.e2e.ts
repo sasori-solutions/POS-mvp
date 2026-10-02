@@ -129,11 +129,14 @@ test('an invitation link survives Google redirect and is consumed after joining'
   await page.goto(`/login#invite=${fixtureInvitation}`);
   await page.route('http://127.0.0.1:54321/auth/v1/authorize**', (route) => route.fulfill({ contentType: 'text/plain', body: 'OAuth captured' }));
   await page.route('http://127.0.0.1:54321/auth/v1/token?grant_type=pkce', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(fixtureAuthSession()) }));
+  await expect(page.getByRole('heading', { name: 'Acepta tu invitación' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Entrar como empleado', exact: true })).toHaveCount(0);
   const authorization = page.waitForRequest((request) => request.url().includes('/auth/v1/authorize'));
   await page.getByRole('button', { name: 'Continuar con Google', exact: true }).click();
   await authorization;
   await page.goto('/auth/callback?code=fixture-code');
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
+  await expect(page.getByLabel('PIN', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveCount(0);
   await expect(page).not.toHaveURL(/fixture-code|#invite=/);
   await expect(page.getByLabel('Tu nombre', { exact: true })).not.toBeVisible();
   await page.getByLabel('PIN', { exact: true }).fill(fixturePin);
@@ -363,7 +366,7 @@ for (const entry of [
   });
 }
 
-test('a pending Google employee can be authorized to choose a PIN without recreating the person', async ({ page }) => {
+test('a pending invited employee keeps one setup path without a second PIN flow', async ({ page }) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true, employees: [{ ...fixtureCashier, pinReady: false }], invitations: [{
     id: '89b9ec5a-ad1e-4dde-9564-38a3bc0ee1a4', employeeId: fixtureCashier.id, name: fixtureCashier.name, role: 'cashier',
     active: true, expiresAt: new Date(Date.now() + 3_600_000).toISOString(), status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null,
@@ -373,10 +376,13 @@ test('a pending Google employee can be authorized to choose a PIN without recrea
   await openMore(page);
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
-  await page.getByRole('button', { name: 'Crear código para PIN', exact: true }).click();
-  await expect(page.getByLabel('Código para PIN', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Crear código para PIN', exact: true })).toHaveCount(0);
+  await expect(page.getByText('Lo creará al aceptar la invitación.')).toBeVisible();
+  await page.getByRole('button', { name: 'Renovar invitación', exact: true }).click();
+  await expect(page.getByLabel('Enlace de invitación')).toBeVisible();
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
-  expect(calls.find((call) => call.action === 'create_pin_setup')).toMatchObject({ employeeId: fixtureCashier.id });
+  expect(calls.filter((call) => call.action === 'create_pin_setup')).toHaveLength(0);
+  expect(calls.find((call) => call.action === 'create_invitation')).toMatchObject({ employeeId: fixtureCashier.id });
   expect(calls.filter((call) => call.action === 'update_employee')).toHaveLength(0);
   expect(calls.filter((call) => call.action === 'create_employee')).toHaveLength(0);
 });
@@ -403,13 +409,13 @@ test('returning to employee details refreshes an invitation accepted elsewhere',
   await openMore(page);
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
-  await page.getByRole('button', { name: 'Invitar a usar Google', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
   fixture.acceptLatestInvitation(fixtureCashier.id);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByText('Invitación aceptada', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Invitar a usar Google', exact: true })).not.toBeVisible();
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).not.toBeVisible();
 });
 
 test('a created invitation remains shareable when refreshing the employee list fails', async ({ page }) => {
@@ -427,10 +433,9 @@ test('a created invitation remains shareable when refreshing the employee list f
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Enlace conservado');
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).check();
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   await expect(page.getByRole('button', { name: 'Copiar enlace', exact: true })).toBeEnabled();
 });
 
@@ -484,23 +489,21 @@ test('a person removed elsewhere cannot remain in an editable employee detail', 
   await expect(page.getByRole('button', { name: `Restaurar ${fixtureCashier.name}`, exact: true })).toBeVisible();
 });
 
-test('employee creation uses one form with optional Google access', async ({ page }) => {
+test('employee creation has one invitation method and keeps PIN entry with the employee', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
   await openMore(page);
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
-  const google = page.getByLabel('Permitir acceso con Google', { exact: true });
-  await expect(google).not.toBeChecked();
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
+  await expect(page.getByRole('combobox')).toHaveCount(0);
+  await expect(page.getByRole('radio')).toHaveCount(3);
+  await expect(page.getByRole('radio', { name: 'Cajero', exact: true })).toBeChecked();
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
-  await google.check();
-  await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
-  await expect(page.getByLabel('Confirmar PIN del empleado', { exact: true })).not.toBeVisible();
-  await google.uncheck();
-  await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
+  await expect(page.getByText('Recibirás un enlace para compartir. El empleado entrará con Google y creará su PIN.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).toHaveCount(1);
 });
 
 test('Google employee creation saves one pending person without requesting their PIN', async ({ page }, testInfo) => {
@@ -511,12 +514,12 @@ test('Google employee creation saves one pending person without requesting their
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cocina invitada');
-  await page.getByLabel('Puesto', { exact: true }).selectOption('kitchen');
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).check();
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
+  await page.getByRole('radio', { name: 'Cocina', exact: true }).check();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
-  await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveValue('Cocina invitada');
+  await expect(page.getByRole('region', { name: 'Compartir invitación' })).toContainText('Cocina invitada');
+  await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('list', { name: 'Empleados' })).not.toBeVisible();
   expect(calls.filter((call) => call.action === 'create_employee')).toHaveLength(1);
   expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Cocina invitada', role: 'kitchen', pin: null, inviteWithGoogle: true });
@@ -542,11 +545,11 @@ test('Google linking targets the existing employee and retries a lost response w
   await openMore(page);
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
-  await page.getByRole('button', { name: 'Invitar a usar Google', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveValue(fixtureCashier.name);
-  await page.getByRole('button', { name: 'Invitar a usar Google', exact: true }).click();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   expect(attempts).toHaveLength(2);
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
   expect(attempts[1]).toMatchObject({ employeeId: fixtureCashier.id });
@@ -565,14 +568,12 @@ test('a lost Google employee response retries the same atomic creation without a
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado con reintento');
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).check();
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
-  await expect(page.getByLabel('Permitir acceso con Google', { exact: true })).toBeChecked();
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
-  await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveValue('Empleado con reintento');
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
+  await expect(page.getByRole('region', { name: 'Compartir invitación' })).toContainText('Empleado con reintento');
   const attempts = calls.filter((call) => call.action === 'create_employee');
   expect(attempts).toHaveLength(2);
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
@@ -582,7 +583,7 @@ test('a lost Google employee response retries the same atomic creation without a
   await expect(page.getByRole('button', { name: 'Administrar Empleado con reintento', exact: true })).toHaveCount(1);
 });
 
-test('changing optional Google access keeps PIN ownership with the employee', async ({ page }, testInfo) => {
+test('all role choices keep the same invitation method and employee-owned PIN', async ({ page }, testInfo) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
@@ -590,14 +591,13 @@ test('changing optional Google access keeps PIN ownership with the employee', as
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado sin PIN oculto');
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).check();
+  await page.getByRole('radio', { name: 'Cocina', exact: true }).check();
+  await page.getByRole('radio', { name: 'Encargado', exact: true }).check();
   await capture(page, testInfo.project.name, 'unified-google-form');
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).uncheck();
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
   await expect(page.getByLabel('Confirmar PIN del empleado', { exact: true })).not.toBeVisible();
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).check();
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ pin: null, inviteWithGoogle: true });
   await assertNoOperatorSecrets(page);
 });
@@ -613,27 +613,28 @@ test('the owner creates employee access and invitations with assigned roles', as
   await capture(page, testInfo.project.name, 'team-management');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cajera');
-  await page.getByLabel('Puesto', { exact: true }).selectOption('cashier');
-  await expect(page.getByLabel('Puesto', { exact: true }).getByRole('option', { name: /dueño/i })).toHaveCount(0);
+  await page.getByRole('radio', { name: 'Cajero', exact: true }).check();
+  await expect(page.getByRole('radio', { name: /dueño/i })).toHaveCount(0);
   await page.getByLabel('Nombre del empleado', { exact: true }).fill(' ');
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
   expect(calls.filter((call) => call.action === 'create_employee')).toHaveLength(0);
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cajera');
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+  await page.getByRole('button', { name: 'Administrar empleado', exact: true }).click();
   await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveValue('Nueva cajera');
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cajera actualizada');
-  await page.getByLabel('Puesto', { exact: true }).selectOption('manager');
+  await page.getByRole('radio', { name: 'Encargado', exact: true }).check();
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Administrar Cajera actualizada', exact: true })).toBeVisible();
-  await expect(page.getByText('Encargado. Pendiente de crear PIN', { exact: true })).toBeVisible();
+  await expect(page.getByText('Encargado. Invitación pendiente', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cocina');
-  await page.getByLabel('Puesto', { exact: true }).selectOption('kitchen');
-  await page.getByLabel('Permitir acceso con Google', { exact: true }).check();
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click();
-  await expect(page.getByLabel('Código de invitación', { exact: true })).toHaveValue(fixtureInvitation);
+  await page.getByRole('radio', { name: 'Cocina', exact: true }).check();
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
+  await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
+  await page.getByRole('button', { name: 'Administrar empleado', exact: true }).click();
   await page.getByRole('button', { name: 'Cancelar invitación', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Cancelar invitación', exact: true })).not.toBeVisible();
   await expect(page.getByText('Invitación cancelada', { exact: true })).toBeVisible();

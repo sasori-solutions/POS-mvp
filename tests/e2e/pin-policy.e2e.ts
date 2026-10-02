@@ -13,9 +13,9 @@ test('the owner authorizes employee access without choosing or seeing their PIN'
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0)
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado autorizado')
-  await page.getByRole('button', { name: 'Guardar empleado', exact: true }).click()
-  await expect(page.getByLabel('Código para PIN')).toBeVisible()
-  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Empleado autorizado', pin: null, inviteWithGoogle: false })
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click()
+  await expect(page.getByLabel('Enlace de invitación')).toBeVisible()
+  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Empleado autorizado', pin: null, inviteWithGoogle: true })
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0)
 })
 

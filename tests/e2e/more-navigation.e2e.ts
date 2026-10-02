@@ -44,7 +44,7 @@ test('More and its subpages have readable task groups and fit the viewport', asy
       await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-employee-new.png`, fullPage: true })
       await page.getByRole('button', { name: 'Volver a empleados' }).click()
       await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}` }).click()
-      await expect(page.getByRole('heading', { name: 'Acceso con Google' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Invitación' })).toBeVisible()
       await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-employee-detail.png`, fullPage: true })
       await page.getByRole('button', { name: 'Volver a empleados' }).click()
     }
@@ -68,7 +68,7 @@ test('device removal requires confirmation and pairing explains where to use the
   expect(calls.filter((call) => call.action === 'revoke_device')).toHaveLength(0)
   await page.getByRole('button', { name: 'Desvincular Tablet de prueba' }).click()
   await page.getByRole('button', { name: 'Confirmar desvinculación' }).click()
-  await expect(page.getByRole('status')).toHaveText('Dispositivo desvinculado. Ya no permite entrar al negocio.')
+  await expect(page.getByRole('status').filter({ hasText: 'Dispositivo desvinculado.' })).toHaveText('Dispositivo desvinculado. Ya no permite entrar al negocio.')
   await expect(page.getByRole('button', { name: 'Desvincular Tablet de prueba' })).toHaveCount(0)
   expect(calls.filter((call) => call.action === 'revoke_device')).toHaveLength(1)
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()

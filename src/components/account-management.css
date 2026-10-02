@@ -19,3 +19,40 @@
 @media(max-width:600px) { .management-main { margin-top: 16px; padding: 0 24px; } }
 
 .management-detail, .management-danger, .management-confirmation, .management-code { max-width: 560px; }
+
+.employee-role-fields legend { font-size: 16px; margin-bottom: 12px; }
+.employee-role-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.employee-role-choices label { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 52px; padding: 12px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; cursor: pointer; }
+.employee-role-choices label:has(:checked) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); background: var(--surface); }
+.employee-role-choices label:has(:focus-visible) { outline: 2px solid var(--ink); outline-offset: 3px; }
+.employee-role-choices input { width: 16px; height: 16px; margin: 0; accent-color: var(--ink); flex-shrink: 0; }
+.employee-role-fields:disabled label { opacity: .6; cursor: wait; }
+.employee-permissions { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; padding: 20px 0 0; }
+.employee-permissions h2 { font-size: 14px; font-weight: 500; margin: 0 0 12px; }
+.employee-permissions ul { list-style: none; padding: 0; margin: 0; }
+.employee-permissions li { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.4; }
+.employee-permissions li + li { margin-top: 10px; }
+.employee-permissions svg { flex-shrink: 0; margin-top: 2px; }
+.employee-permissions section:last-child { color: var(--secondary); }
+.employee-invite-explanation { display: flex; align-items: flex-start; gap: 12px; padding-top: 24px; border-top: 1px solid var(--border); }
+.employee-invite-explanation svg { flex-shrink: 0; margin-top: 2px; }
+.employee-invite-explanation p { font-size: 14px; line-height: 1.5; margin: 0; max-width: 420px; }
+.employee-invitation-ready { max-width: 560px; }
+.employee-invited-person { display: flex; align-items: center; gap: 16px; margin: 0 0 24px; }
+.employee-invited-person strong, .employee-invited-person span { display: block; overflow-wrap: anywhere; }
+.employee-invited-person strong { font-size: 20px; font-weight: 500; }
+.employee-invited-person span { color: var(--secondary); font-size: 14px; margin-top: 4px; }
+.employee-invitation-ready > p { font-size: 16px; }
+.employee-invitation-ready > .field-help { font-size: 14px; margin-bottom: 8px; }
+.employee-invitation-link { margin-top: 24px; }
+.employee-invitation-link label { display: block; font-size: 14px; margin-bottom: 8px; }
+.employee-invitation-link input { width: 100%; min-height: 48px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 14px; color: var(--secondary); background: var(--surface); }
+.employee-invitation-link > .button { margin-top: 12px; display: flex; justify-content: center; align-items: center; gap: 10px; }
+.employee-invitation-link > p { font-size: 13px; margin-top: 12px; }
+.employee-invitation-next { margin: 28px 0; padding-top: 24px; border-top: 1px solid var(--border); }
+.employee-invitation-next h2 { font-size: 16px; font-weight: 500; margin: 0 0 12px; }
+.employee-invitation-next ol { padding-left: 20px; margin: 0; color: var(--secondary); font-size: 14px; }
+.employee-invitation-next li + li { margin-top: 12px; }
+.employee-invitation-footer { display: flex; align-items: center; gap: 24px; margin-top: 24px; }
+.employee-invitation-footer > .button { width: auto; min-width: 140px; }
+@media(max-width:359px) { .employee-role-choices label { flex-direction: column; gap: 6px; } .employee-permissions { grid-template-columns: 1fr; } .employee-invitation-footer { flex-direction: column; align-items: stretch; gap: 8px; } }

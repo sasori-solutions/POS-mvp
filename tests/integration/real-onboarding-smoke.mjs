@@ -14,7 +14,7 @@ assert(['localhost', '127.0.0.1', '[::1]'].includes(new URL(config.API_URL).host
 const origin = 'http://127.0.0.1:5175'
 const admin = createClient(config.API_URL, config.SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
 const credentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
-let userId, employeeUserId, businessId, browser, server
+let userId, employeeUserId, invitedUserId, businessId, browser, server
 let stage = 'prepare'
 const accountResponse = (page, action) => page.waitForResponse(response => response.url().endsWith('/functions/v1/account') && JSON.parse(response.request().postData() ?? '{}').action === action)
 function staffSnapshot() {
@@ -72,34 +72,37 @@ try {
   await ownerPage.getByRole('button', { name: 'Ir al inicio', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Más', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Empleados', exact: true }).click()
-  stage = 'create employee'
-  await ownerPage.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
-  await ownerPage.getByLabel('Nombre del empleado', { exact: true }).fill('Cajero smoke')
-  assert.equal(await ownerPage.locator('.management-shell input[type="password"]').count(), 0, 'Only the employee chooses the PIN')
-  const employeeResponse = accountResponse(ownerPage, 'create_employee')
-  await ownerPage.getByRole('button', { name: 'Guardar empleado', exact: true }).click()
-  const employee = (await (await employeeResponse).json()).data
+  stage = 'seed an existing PIN-only employee for compatibility'
+  const legacyResponse = await fetch(`${config.API_URL}/functions/v1/account`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, apikey: config.ANON_KEY, Authorization: `Bearer ${signed.data.session.access_token}` },
+    body: JSON.stringify({ action: 'create_employee', businessId, operatorToken: creation.data.operatorToken, name: 'Cajero smoke', role: 'cashier', pin: null, inviteWithGoogle: false, operationId: randomUUID() }),
+  })
+  assert.equal(legacyResponse.status, 200)
+  const employee = (await legacyResponse.json()).data
   assert(employee.id && !employee.pinReady && !employee.googleLinked && employee.pinSetup)
   assert.match(employee.pinSetup.setupCode, /^[a-f0-9]{64}$/)
+  await ownerPage.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await ownerPage.getByRole('button', { name: 'Administrar Cajero smoke', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Eliminar empleado', exact: true }).waitFor()
-  assert.equal(await ownerPage.getByRole('button', { name: 'Agregar empleado', exact: true }).count(), 0, 'Details replace the list')
-  assert.equal(await ownerPage.locator('.management-shell input[type="password"]').count(), 0, 'Editing does not ask for another PIN')
+  assert.equal(await ownerPage.locator('.management-shell input[type="password"]').count(), 0, 'Only the employee chooses the PIN')
   await ownerPage.getByRole('button', { name: 'Volver a empleados', exact: true }).click()
   stage = 'single Google employee form'
   assert.equal(await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).count(), 0)
   await ownerPage.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
   await ownerPage.getByLabel('Nombre del empleado', { exact: true }).fill('Pendiente Google smoke')
-  await ownerPage.getByLabel('Permitir acceso con Google', { exact: true }).check()
+  assert.equal(await ownerPage.getByRole('checkbox').count(), 0, 'One invitation method')
   assert.equal(await ownerPage.locator('.management-shell input[type="password"]').count(), 0)
   await ownerPage.setViewportSize({ width: 393, height: 851 })
   await ownerPage.screenshot({ path: '/tmp/pos-mexico-lifecycle-employee-form.png', fullPage: false })
   const googleResponse = accountResponse(ownerPage, 'create_employee')
-  await ownerPage.getByRole('button', { name: 'Guardar empleado', exact: true }).click()
+  await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).click()
   const pendingEmployee = (await (await googleResponse).json()).data
   assert(pendingEmployee.id && !pendingEmployee.pinReady && pendingEmployee.invitation)
   assert.match(pendingEmployee.invitation.invitationCode, /^[a-f0-9]{64}$/)
   await ownerPage.getByText('Pendiente de aceptar', { exact: true }).waitFor()
-  await expect(ownerPage.getByLabel('Código de invitación', { exact: true })).toHaveValue(pendingEmployee.invitation.invitationCode)
+  await expect(ownerPage.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`${origin}/#invite=${pendingEmployee.invitation.invitationCode}`)
+  await expect(ownerPage.getByRole('heading', { name: 'Invitación lista' })).toBeVisible()
+  assert.equal(await ownerPage.getByLabel('Nombre del empleado', { exact: true }).count(), 0)
   await ownerPage.screenshot({ path: '/tmp/pos-mexico-lifecycle-pending-employee.png', fullPage: true })
   await ownerPage.getByRole('button', { name: 'Volver a empleados', exact: true }).click()
   assert.equal(await ownerPage.getByRole('heading', { name: 'Invitaciones', exact: true }).count(), 0, 'No duplicate invitation list')
@@ -136,12 +139,12 @@ try {
   await ownerPage.getByRole('button', { name: 'Empleados', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Administrar Cajero smoke', exact: true }).click()
   const linkResponse = accountResponse(ownerPage, 'create_invitation')
-  await ownerPage.getByRole('button', { name: 'Invitar a usar Google', exact: true }).click()
+  await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).click()
   const linkResult = await linkResponse
   assert.equal(JSON.parse(linkResult.request().postData()).employeeId, employee.id)
   assert.equal(linkResult.status(), 200)
   const invitationCode = (await linkResult.json()).data.invitationCode
-  await expect(ownerPage.getByLabel('Código de invitación', { exact: true })).toHaveValue(invitationCode)
+  await expect(ownerPage.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`${origin}/#invite=${invitationCode}`)
   assert.match(invitationCode, /^[a-f0-9]{64}$/)
   const employeeCredentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
   const employeeCreated = await admin.auth.admin.createUser({ ...employeeCredentials, email_confirm: true })
@@ -198,7 +201,7 @@ try {
   await ownerPage.getByRole('button', { name: 'Administrar Cajero smoke', exact: true }).click()
   await ownerPage.getByText('Invitación aceptada', { exact: true }).waitFor()
   assert.equal(await ownerPage.getByText(/revocada o utilizada/).count(), 0)
-  assert.equal(await ownerPage.getByRole('button', { name: 'Invitar a usar Google', exact: true }).count(), 0)
+  assert.equal(await ownerPage.getByRole('button', { name: 'Crear invitación', exact: true }).count(), 0)
   await ownerPage.getByRole('button', { name: 'Eliminar empleado', exact: true }).click()
   await ownerPage.setViewportSize({ width: 393, height: 851 })
   await ownerPage.screenshot({ path: '/tmp/pos-mexico-lifecycle-delete-confirmation.png', fullPage: true })
@@ -244,7 +247,9 @@ try {
   await ownerPage.getByText('Invitación cancelada', { exact: true }).waitFor()
   const renewInvitation = accountResponse(ownerPage, 'create_invitation')
   await ownerPage.getByRole('button', { name: 'Renovar invitación', exact: true }).click()
-  assert.equal((await renewInvitation).status(), 200)
+  const renewedResponse = await renewInvitation
+  assert.equal(renewedResponse.status(), 200)
+  const renewed = (await renewedResponse.json()).data
   await ownerPage.getByText('Pendiente de aceptar', { exact: true }).waitFor()
   assert.equal(staffSnapshot().length, 2, 'Renewing never duplicates the person')
   await ownerPage.getByRole('button', { name: 'Volver a empleados', exact: true }).click()
@@ -262,6 +267,29 @@ try {
   await devicePage.evaluate(() => window.dispatchEvent(new Event('focus')))
   await devicePage.getByRole('heading', { name: 'Entrar como empleado', exact: true }).waitFor({ timeout: 15_000 })
   assert.equal(await devicePage.evaluate(() => localStorage.getItem('pos-mexico-device')), null)
+  stage = 'new invitation recipient chooses their PIN'
+  const invitedCredentials = { email: `smoke-${randomUUID()}@example.test`, password: `local-only-${randomUUID()}-Aa9!` }
+  const invitedCreated = await admin.auth.admin.createUser({ ...invitedCredentials, email_confirm: true })
+  if (invitedCreated.error) throw new Error('Synthetic invitee creation failed')
+  invitedUserId = invitedCreated.data.user.id
+  const invitedClient = createClient(config.API_URL, config.ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+  const invitedSigned = await invitedClient.auth.signInWithPassword(invitedCredentials)
+  if (invitedSigned.error) throw new Error('Synthetic invitee local sign-in failed')
+  const invitedContext = await browser.newContext({ serviceWorkers: 'block' })
+  await invitedContext.route('**/*', route => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort())
+  await invitedContext.addInitScript(session => localStorage.setItem('pos-mexico-auth', JSON.stringify(session)), invitedSigned.data.session)
+  const invitedPage = await invitedContext.newPage()
+  await invitedPage.goto(`${origin}/#invite=${renewed.invitationCode}`)
+  await invitedPage.getByTestId('pin-confirm-input').waitFor()
+  assert.equal(await invitedPage.getByLabel('Código de invitación', { exact: true }).count(), 0, 'The link fills the invitation without manual code entry')
+  await invitedPage.getByTestId('pin-input').fill('024682')
+  await invitedPage.getByTestId('pin-confirm-input').fill('024682')
+  const invitedAcceptance = accountResponse(invitedPage, 'accept_invitation')
+  await invitedPage.getByRole('button', { name: 'Unirme', exact: true }).click()
+  assert.equal((await (await invitedAcceptance).json()).data.business.employee.id, pendingEmployee.id)
+  await invitedPage.getByRole('heading', { name: 'Venta', exact: true }).waitFor()
+  assert.equal(staffSnapshot().length, 2, 'Accepting reuses the invited person')
+  await invitedContext.close()
   stage = 'known owner PIN change without OAuth'
   await ownerPage.getByRole('button', { name: 'Volver a Más', exact: true }).click()
   await ownerPage.getByRole('button', { name: 'Más', exact: true }).click()
@@ -302,12 +330,13 @@ try {
   assert.equal(await recoveryPage.evaluate(code => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }).includes(code), recovered.recoveryCode), false, 'Replacement recovery code never persists')
   await recoveryPage.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click()
   await recoveryPage.getByRole('button', { name: 'Más', exact: true }).waitFor()
-  console.log('PASS real loopback browser: owner recovery enrollment/current-PIN change/code-backed reset and replacement, employee-owned one-use setup on paired device, same-PIN Google linking, invitations and deletion/restoration/session revocation. Synthetic local Auth handoff only; no Google OAuth consent claim.')
+  console.log('PASS real loopback browser: owner recovery enrollment/current-PIN change/code-backed reset and replacement, employee-owned one-use setup on paired device, same-PIN Google linking, single invitation creation/acceptance with employee-selected PIN, invitations and deletion/restoration/session revocation. Synthetic local Auth handoff only; no Google OAuth consent claim.')
 } catch {
   throw new Error(`Real loopback onboarding smoke failed at: ${stage}. Credentials and response payloads omitted.`)
 } finally {
   await browser?.close()
   server?.kill('SIGTERM')
+  if (invitedUserId) { const result = await admin.auth.admin.deleteUser(invitedUserId); if (result.error) throw new Error('Synthetic invitee cleanup failed') }
   if (employeeUserId) { const result = await admin.auth.admin.deleteUser(employeeUserId); if (result.error) throw new Error('Synthetic employee cleanup failed') }
   if (userId) { const result = await admin.auth.admin.deleteUser(userId); if (result.error) throw new Error('Synthetic user cleanup failed') }
   if (businessId) {

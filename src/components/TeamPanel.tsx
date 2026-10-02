@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, Link, UserRound } from 'lucide-react'
+import EmployeeRoleFields from './EmployeeRoleFields'
 import { accountRequest, AccountClientError } from '../lib/account'
 import type { BusinessContext, BusinessRole, EmployeeSummary, EmployeeCreation, InvitationSummary, AccountResponses } from '../lib/contracts'
 import './account-management.css'
@@ -27,7 +28,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
   const tab = section
   const [form, setForm] = useState(false)
   const [editing, setEditing] = useState<EmployeeSummary | null>(null)
-  const [inviteWithGoogle, setInviteWithGoogle] = useState(false)
+  const [invitationReady, setInvitationReady] = useState(false)
   const [deviceToRemove, setDeviceToRemove] = useState<{ id: string; name: string } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [name, setName] = useState('')
@@ -49,7 +50,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     return () => { mounted.current = false; operation.current = null }
   }, [])
 
-  useEffect(() => { heading.current?.focus() }, [form, editing?.id, confirmDelete])
+  useEffect(() => { heading.current?.focus() }, [form, editing?.id, confirmDelete, invitationReady])
 
   function showError(caught: unknown) {
     if (!mounted.current) return
@@ -95,6 +96,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     selectedEmployee.current = null
     setCode(null)
     setForm(false)
+    setInvitationReady(false)
     setError('')
     setNotice('')
     setDenied(business.role !== 'owner')
@@ -140,7 +142,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     setForm(true)
     setEditing(employee ?? null)
     selectedEmployee.current = employee?.id ?? null
-    setInviteWithGoogle(false)
+    setInvitationReady(false)
     setConfirmDelete(false)
     setName(employee?.name ?? '')
     setRole(employee && employee.role !== 'owner' ? employee.role : 'cashier')
@@ -152,6 +154,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
 
   function closeForm() {
     setForm(false)
+    setInvitationReady(false)
     setEditing(null)
     selectedEmployee.current = null
     setConfirmDelete(false)
@@ -183,8 +186,8 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
         ? await accountRequest({ action: 'update_employee', businessId: business.id, operatorToken, employeeId: editing.id,
           name: employeeName, role, active: editing.active, pin: null })
         : await accountRequest({ action: 'create_employee', businessId: business.id, operatorToken,
-          name: employeeName, role, pin: null, inviteWithGoogle,
-          operationId: operationId({ action: 'create_employee', name: employeeName, role, pin: null, inviteWithGoogle }) })
+          name: employeeName, role, pin: null, inviteWithGoogle: true,
+          operationId: operationId({ action: 'create_employee', name: employeeName, role, pin: null, inviteWithGoogle: true }) })
       if (!mounted.current || current !== generation.current) return
       setEditing(employee)
       selectedEmployee.current = employee.id
@@ -196,7 +199,8 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
         setCode({ value: invitation.invitationCode, label: 'Código de invitación', expiresAt: invitation.expiresAt, path: '/', parameter: 'invite', employeeId: employee.id, invitationId: invitation.invitationId })
       }
       operation.current = null
-      setNotice(editing ? 'Cambios guardados.' : inviteWithGoogle ? 'Empleado agregado.' : 'Empleado agregado. Comparte el código para que cree su PIN.')
+      setInvitationReady(!editing)
+      setNotice(editing ? 'Cambios guardados.' : '')
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -217,7 +221,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
       rememberInvitation(employee, result)
       setCode({ value: result.invitationCode, label: 'Código de invitación', expiresAt: result.expiresAt, path: '/', parameter: 'invite', employeeId: employee.id, invitationId: result.invitationId })
       operation.current = null
-      setNotice('Enlace creado.')
+      setNotice('Invitación creada.')
       await load()
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -312,12 +316,16 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
   }
 
+  function codeLink(value: Code) {
+    return `${window.location.origin}${value.path}#${value.parameter}=${encodeURIComponent(value.value)}`
+  }
+
   async function copyCode() {
     if (!code) return
     try {
-      await navigator.clipboard.writeText(code.parameter === 'setup' ? code.value : `${window.location.origin}${code.path}#${code.parameter}=${encodeURIComponent(code.value)}`)
+      await navigator.clipboard.writeText(code.parameter === 'setup' ? code.value : codeLink(code))
       setNotice(code.parameter === 'setup' ? 'Código copiado.' : 'Enlace copiado.')
-    } catch { setError('No pudimos copiar el enlace. Puedes copiar el código del campo.') }
+    } catch { setError(code.parameter === 'setup' ? 'No pudimos copiar el código. Selecciónalo y cópialo del campo.' : 'No pudimos copiar el enlace. Selecciónalo y cópialo del campo.') }
   }
 
   function latestInvitation(employee: EmployeeSummary) {
@@ -371,6 +379,12 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
 
   function codeCard() {
     if (!currentCode) return null
+    if (currentCode.parameter === 'invite') return <div className="employee-invitation-link">
+      <label htmlFor="invitation-link">Enlace de invitación</label>
+      <input id="invitation-link" value={codeLink(currentCode)} readOnly onFocus={(event) => event.target.select()} />
+      <button type="button" className="button primary" disabled={busy} onClick={() => void copyCode()}><Link size={18} aria-hidden="true" />Copiar enlace</button>
+      <p>Vence el {date(currentCode.expiresAt)}. Sólo se puede usar una vez.</p>
+    </div>
     return <div className="management-code">
       <label htmlFor="management-code">{currentCode.label}</label>
       <input id="management-code" value={currentCode.value} readOnly onFocus={(event) => event.target.select()} />
@@ -383,7 +397,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
 
   return <div className="management-shell" onKeyDown={(event) => { if (event.key === 'Escape' && form && !busy) { event.preventDefault(); if (confirmDelete) setConfirmDelete(false); else closeForm() } }}>
     <button type="button" className="back-button" disabled={busy} onClick={form ? closeForm : onBack}><ArrowLeft size={18} aria-hidden="true" />{form ? 'Volver a empleados' : 'Volver a Más'}</button>
-    <div className="management-heading"><h1 ref={heading} tabIndex={-1}>{confirmDelete && editing ? `¿Eliminar a ${editing.name}?` : form ? editing ? 'Administrar empleado' : 'Agregar empleado' : tab === 'devices' ? 'Dispositivos de caja' : 'Empleados'}</h1>{!form && <p>{business.name}</p>}</div>
+    <div className="management-heading"><h1 ref={heading} tabIndex={-1}>{confirmDelete && editing ? `¿Eliminar a ${editing.name}?` : invitationReady ? currentCode ? 'Invitación lista' : 'Invitación del empleado' : form ? editing ? 'Administrar empleado' : 'Agregar empleado' : tab === 'devices' ? 'Dispositivos de caja' : 'Empleados'}</h1>{!form && <p>{business.name}</p>}</div>
     {error && <p className="error-message" role="alert">{error}</p>}
     {notice && <p className="management-success" role="status">{notice}</p>}
     {denied ? <p className="management-warning">Sólo el dueño puede administrar el personal y las cajas.</p> : <>
@@ -393,27 +407,35 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
         <p>Se cerrarán sus sesiones y sus invitaciones. Dejará de aparecer en las cajas.</p>
         <p className="field-help">Sus registros se conservan y podrás restaurarlo desde Empleados eliminados.</p>
         <div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void employeeLifecycle(editing, 'delete_employee')}>Confirmar eliminación</button><button type="button" className="button secondary" disabled={busy} onClick={() => setConfirmDelete(false)}>Cancelar eliminación</button></div>
+      </section> : invitationReady && editing ? <section className="employee-invitation-ready" aria-label="Compartir invitación">
+        <div className="employee-invited-person"><UserRound size={24} aria-hidden="true" /><div><strong>{editing.name}</strong><span>{roles[editing.role]}</span></div></div>
+        {currentCode ? <>
+          <p className="field-help">Pendiente de aceptar</p>
+          <p>Comparte el enlace con {editing.name} por el medio que prefieras.</p>
+          {codeCard()}
+          <div className="employee-invitation-next"><h2>¿Qué hará el empleado?</h2><ol><li>Abrir el enlace y entrar con su cuenta de Google.</li><li>Crear su PIN de 6 dígitos para usar la caja.</li></ol></div>
+        </> : <>
+          {invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
+          {editing.active && !editing.googleLinked && <button type="button" className="button primary" disabled={busy} onClick={() => void linkGoogle(editing)}>Renovar invitación</button>}
+        </>}
+        <div className="employee-invitation-footer"><button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Listo</button><button type="button" className="management-text-button" disabled={busy} onClick={() => { setInvitationReady(false); setNotice('') }}>Administrar empleado</button></div>
       </section> : <>
         <form className="management-form" onSubmit={saveEmployee}>
           <div className="field"><label htmlFor="employee-name">Nombre del empleado</label><input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={busy} /></div>
-          <div className="field"><label htmlFor="employee-role">Puesto</label><select aria-describedby="employee-role-help" id="employee-role" value={role} onChange={(event) => setRole(event.target.value as EmployeeRole)} disabled={busy}><option value="manager">Encargado</option><option value="cashier">Cajero</option><option value="kitchen">Cocina</option></select><p id="employee-role-help" className="field-help">{role === 'kitchen' ? 'Acceso a Comandas.' : role === 'cashier' ? 'Acceso a Venta, Comandas y Productos.' : 'Acceso a Venta, Comandas, Ventas y Productos.'}</p></div>
-          {!editing && <fieldset>
-            <legend>Cómo entrará</legend>
-            <label className="management-checkbox"><input type="checkbox" checked={inviteWithGoogle} disabled={busy} aria-describedby="employee-access-help" onChange={(event) => { setInviteWithGoogle(event.target.checked); operation.current = null }} />Permitir acceso con Google</label>
-            <p id="employee-access-help" className="field-help">{inviteWithGoogle ? 'Al guardarlo, recibirás un enlace para compartir. Entrará con Google y elegirá su PIN.' : 'En la caja entrará con su PIN. Al guardarlo, recibirás un código para que él lo cree. Google es opcional y le permite entrar desde otro dispositivo.'}</p>
-          </fieldset>}
-          <div className="management-actions"><button className="button primary" disabled={busy || Boolean(editing && !employeeDirty)} aria-busy={busy}>{busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Guardar empleado'}</button>{!editing && <button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Cancelar</button>}</div>
+          <EmployeeRoleFields role={role} onChange={setRole} disabled={busy} />
+          {!editing && <div className="employee-invite-explanation"><Link size={20} aria-hidden="true" /><p>Recibirás un enlace para compartir. El empleado entrará con Google y creará su PIN.</p></div>}
+          <div className="management-actions"><button className="button primary" disabled={busy || Boolean(editing && !employeeDirty)} aria-busy={busy}>{busy ? editing ? 'Guardando…' : 'Creando invitación…' : editing ? 'Guardar cambios' : 'Crear invitación'}</button>{!editing && <button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Cancelar</button>}</div>
         </form>
         {editing && <>
-          <section className="management-detail" aria-labelledby="access-title"><h2 id="access-title">PIN del empleado</h2><p className="field-help">El empleado elige su PIN. Si necesita uno nuevo, crea un código y compártelo con él.</p>{editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void authorizePin(editing)}>{editing.pinReady ? 'Crear código para restablecer PIN' : 'Crear código para PIN'}</button>}{(editing.pinReady || editing.googleLinked || invitation?.status !== 'pending' || !editing.active) && <p>{editing.pinReady && !editing.googleLinked && editing.active ? 'PIN en caja' : accessLabel(editing)}</p>}
+          <section className="management-detail" aria-labelledby="access-title"><h2 id="access-title">PIN del empleado</h2><p className="field-help">{!editing.pinReady && invitation?.status === 'pending' ? 'Lo creará al aceptar la invitación.' : 'El empleado elige su PIN. Si necesita uno nuevo, crea un código y compártelo con él.'}</p>{editing.active && (editing.pinReady || invitation?.status !== 'pending') && <button type="button" className="button secondary" disabled={busy} onClick={() => void authorizePin(editing)}>{editing.pinReady ? 'Crear código para restablecer PIN' : 'Crear código para PIN'}</button>}{(editing.pinReady || editing.googleLinked || invitation?.status !== 'pending' || !editing.active) && <p>{editing.pinReady && !editing.googleLinked && editing.active ? 'PIN en caja' : accessLabel(editing)}</p>}
             {!editing.active && <button type="button" className="button secondary" disabled={busy} onClick={() => void reactivateEmployee(editing)}>Reactivar empleado</button>}
             {currentCode?.parameter === 'setup' && codeCard()}
-            </section><section className="management-detail management-google" aria-labelledby="google-title"><h2 id="google-title">Acceso con Google</h2>{editing.googleLinked && <p>Cuenta vinculada.</p>}{!editing.googleLinked && !invitation && <p>Opcional. Comparte una invitación para que entre desde su propio dispositivo.</p>}{invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
+            </section><section className="management-detail management-google" aria-labelledby="google-title"><h2 id="google-title">{editing.googleLinked ? 'Cuenta de Google' : 'Invitación'}</h2>{editing.googleLinked && <p>Cuenta vinculada.</p>}{!editing.googleLinked && !invitation && <p>Comparte una invitación para vincular su cuenta de Google. Conservará el PIN que ya usa.</p>}{invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
             {currentCode?.parameter === 'invite' && <p className="field-help">Comparte este enlace con {editing.name}. No se envía por correo automáticamente.</p>}
             {currentCode?.parameter === 'invite' && codeCard()}
             {editing.active && !editing.googleLinked && <>
               {invitation?.status === 'pending' && currentCode?.parameter !== 'invite' && <p className="field-help">El enlace sólo se muestra al crearlo. Renueva la invitación para obtener uno nuevo.</p>}
-              <div className="management-actions">{(currentCode?.parameter !== 'invite' || invitation?.status !== 'pending') && <button type="button" className="button secondary" disabled={busy} onClick={() => void linkGoogle(editing)}>{invitation ? 'Renovar invitación' : 'Invitar a usar Google'}</button>}{invitation?.status === 'pending' && <button type="button" className="button secondary" disabled={busy} onClick={() => void revoke('invitation', invitation.id)}>Cancelar invitación</button>}</div>
+              <div className="management-actions">{(currentCode?.parameter !== 'invite' || invitation?.status !== 'pending') && <button type="button" className="button secondary" disabled={busy} onClick={() => void linkGoogle(editing)}>{invitation ? 'Renovar invitación' : 'Crear invitación'}</button>}{invitation?.status === 'pending' && <button type="button" className="button secondary" disabled={busy} onClick={() => void revoke('invitation', invitation.id)}>Cancelar invitación</button>}</div>
             </>}
           </section>
           <div className="management-danger"><button type="button" className="management-text-button" disabled={busy} onClick={() => { setConfirmDelete(true); setError(''); setNotice(''); operation.current = null }}>Eliminar empleado</button></div>
