@@ -27,6 +27,13 @@ export default function ProductsScreen({
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [message, setMessage] = useState("");
   const screen = useRef<HTMLDivElement>(null);
+  const focusAfterDeletion = useRef(false);
+  useEffect(() => {
+    if (!deleting && focusAfterDeletion.current) {
+      focusAfterDeletion.current = false;
+      screen.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+    }
+  }, [deleting]);
   const products = catalog.products.filter(
     (product) => status === "all" || product.active === (status === "active"),
   );
@@ -222,10 +229,10 @@ export default function ProductsScreen({
           onClose={() => setDeleting(null)}
           onDeleted={(id) => {
             catalog.remove(id);
+            focusAfterDeletion.current = true;
             setDeleting(null);
             if (category && !catalog.products.some(product => product.id !== id && product.category === category)) setCategory("");
             setMessage("Producto eliminado.");
-            requestAnimationFrame(() => screen.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus());
           }}
           onRefresh={() => { setDeleting(null); void catalog.refresh(); }}
           onSessionError={onSessionError}
