@@ -1,6 +1,6 @@
-## Email recovery — verified locally
+## Email recovery — local and production verification
 
-Agente de Larios, 1 October 2026. Final results: 54/54 real integration, 170/170 desktop/mobile browser cases, 18/18 Deno, build/typechecks, full browser/Auth/Edge/Postgres/Mailpit smoke and real 0006→0007 compatibility (44/48/27/23/29/21/16 statements). Final email UI text also passed 16/16 focused browser cases. Obsolete code-flow assertions were replaced; one run during Edge reload had three HTTP 502s, followed by the successful stable full suite. Hosted delivery remains pending. Details: docs/pin-email-recovery.md.
+Agente de Larios, 1 October 2026. Final results: 54/54 real integration, 170/170 desktop/mobile browser cases, 18/18 Deno, build/typechecks, full browser/Auth/Edge/Postgres/Mailpit smoke and real 0006→0007 compatibility (44/48/27/23/29/21/16 statements). Final email UI text also passed 16/16 focused browser cases. Obsolete code-flow assertions were replaced; one run during Edge reload had three HTTP 502s, followed by the successful stable full suite. Production: 52 SQL source hashes match, 19 private tables/RPC grants pass, deployed Edge bytes match, 26/26 anonymous API probes and 28/28 public route/asset checks passed. Deployment: 9cbb112c-668d-4274-b411-3e592720e695. Real inbox delivery and authenticated cloud PIN reset remain unverified. Details: docs/pin-email-recovery.md.
 
 ## Employee invitation UX — 1 October 2026
 
