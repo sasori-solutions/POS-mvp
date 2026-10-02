@@ -67,7 +67,12 @@ export function useCatalog(access: PosAccess, enabled: boolean, onSessionError?:
     setLoading(false)
     setProducts(previous => [...previous.filter(item => item.id !== product.id), product].sort((a, b) => a.name.localeCompare(b.name, 'es')))
   }
-  return { products, paymentMethods, loading, loaded, error, refresh, upsert }
+  function remove(id: string) {
+    sequence.current += 1
+    setLoading(false)
+    setProducts(previous => previous.filter(product => product.id !== id))
+  }
+  return { products, paymentMethods, loading, loaded, error, refresh, upsert, remove }
 }
 
 export type CatalogState = ReturnType<typeof useCatalog>

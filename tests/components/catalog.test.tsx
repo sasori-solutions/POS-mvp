@@ -65,6 +65,19 @@ test('background refresh still reports revoked operator access', async () => {
   expect(onSessionError).toHaveBeenCalledWith(error)
 })
 
+test('a late refresh cannot restore a product that was just deleted', async () => {
+  vi.mocked(posRequest).mockResolvedValueOnce(catalog)
+  const { result } = renderHook(() => useCatalog(access, true))
+  await waitFor(() => expect(result.current.loaded).toBe(true))
+  const refresh = deferred<PosResponses['catalog']>()
+  vi.mocked(posRequest).mockReturnValueOnce(refresh.promise)
+  act(() => { void result.current.refresh() })
+  act(() => result.current.remove('latte'))
+  expect(result.current.products).toEqual([])
+  await act(async () => refresh.resolve(catalog))
+  expect(result.current.products).toEqual([])
+})
+
 test('an operator change cannot reuse an outstanding request from the previous operator', async () => {
   const previous = deferred<PosResponses['catalog']>()
   vi.mocked(posRequest).mockReturnValueOnce(previous.promise).mockResolvedValueOnce({ ...catalog, products: [] })
