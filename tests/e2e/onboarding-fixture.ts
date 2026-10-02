@@ -56,7 +56,7 @@ export async function mockOnboarding(page: Page, options: {
     currentDeviceOperator = '';
   }
   const expiresAt = () => new Date(Date.now() + 8 * 3_600_000).toISOString();
-  const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType, canRecoverPin: googleRole === 'owner', recoveryReady: options.recoveryReady ?? true });
+  const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType, role: googleRole, canRecoverPin: googleRole === 'owner', recoveryReady: options.recoveryReady ?? true });
   const projection = (role = googleRole, employee: EmployeeSummary = role === 'kitchen' ? fixtureKitchen : fixtureCashier): BusinessContext => role === 'owner'
     ? { ...business, role, canRecoverPin: undefined, recoveryReady: undefined }
     : { ...business, role, canRecoverPin: undefined, recoveryReady: undefined, employee: { id: employee.id, name: employee.name, role }, profile: {

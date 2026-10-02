@@ -11,6 +11,7 @@ import {
   Menu,
   Package,
   ReceiptText,
+  RefreshCw,
   Store,
   Tablet,
   Users,
@@ -196,12 +197,27 @@ export default function HomeScreen({
         className="pos-content mt-6 flex min-w-0 flex-1 flex-col tablet:mt-8"
         aria-labelledby="pos-section-title"
       >
-        <h1
-          id="pos-section-title"
-          className="pos-section-title text-[26px] leading-tight font-medium tracking-tight"
-        >
-          {active}
-        </h1>
+        <div className="flex items-center justify-between gap-4">
+          <h1
+            id="pos-section-title"
+            className="pos-section-title text-[26px] leading-tight font-medium tracking-tight"
+          >
+            {active}
+          </h1>
+          {(active === "Venta" || active === "Productos") && (
+            <button
+              className="pos-icon-button"
+              type="button"
+              aria-label="Actualizar productos"
+              title="Actualizar productos"
+              onClick={() => void catalog.refresh()}
+              disabled={busy || catalog.loading}
+              aria-busy={catalog.loading}
+            >
+              <RefreshCw size={21} strokeWidth={1.6} aria-hidden="true" />
+            </button>
+          )}
+        </div>
         {notice && (
           <p className="pos-notice mt-4 text-sm text-ink" role="status">
             {notice}

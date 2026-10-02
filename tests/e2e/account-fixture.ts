@@ -154,7 +154,7 @@ export async function mockAccount(page: Page, options: {
         return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');
       case 'notifications': return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { notifications: [], unreadCount: 0 } }) });
       case 'status':
-        return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType }] : [] });
+        return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType, role: fixtureBusiness.role }] : [] });
       case 'create_business':
         hasBusiness = true;
         locked = false;

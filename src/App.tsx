@@ -35,6 +35,14 @@ import {
   supabase,
 } from "./lib/supabase";
 import { developmentLoginEnabled } from "./lib/development";
+import {
+  employeeEntryKey,
+  invitationFromLink,
+  preferredBusiness,
+  rememberBusiness,
+  roleLabels,
+} from "./lib/business-access";
+const InvitationScanner = lazy(() => import("./components/InvitationScanner"));
 import type { Destination } from "./components/HomeScreen";
 const HomeScreen = lazy(() => import("./components/HomeScreen"));
 import PinField from "./components/PinField";
@@ -129,12 +137,16 @@ function entryIntent() {
     sessionStorage.setItem(invitationKey, invitation);
     window.history.replaceState({}, "", "/join");
   }
+  if (url.pathname === "/employee")
+    sessionStorage.setItem(employeeEntryKey, "true");
   return {
     device:
       url.pathname === "/register" ||
       (url.pathname === "/employee" &&
         new URLSearchParams(url.hash.slice(1)).has("pair")),
-    employee: url.pathname === "/employee",
+    employee:
+      url.pathname === "/employee" ||
+      sessionStorage.getItem(employeeEntryKey) === "true",
     create: url.pathname === "/business/new",
     join: url.pathname === "/join" || Boolean(invitation),
   };
@@ -265,6 +277,7 @@ function AccountApp() {
   const channel = useRef<BroadcastChannel | null>(null);
   const operatorRef = useRef(operator);
   const selectedRef = useRef(selected);
+  const initialEntry = useRef(true);
   const businessesRef = useRef(businesses);
   const sessionRef = useRef(session);
   operatorRef.current = operator;
@@ -443,7 +456,7 @@ function AccountApp() {
     showFailure(problem);
   }
 
-  async function loadBusinesses() {
+  async function loadBusinesses(choose = false) {
     const requestEpoch = epoch.current;
     const identity = sessionRef.current;
     if (!identity) return;
@@ -456,12 +469,25 @@ function AccountApp() {
       );
       if (requestEpoch !== epoch.current) return;
       setBusinesses(data.businesses);
-      if (sessionStorage.getItem(invitationKey) || intent.join)
+      const employeeEntry = sessionStorage.getItem(employeeEntryKey) === "true";
+      const firstEntry = initialEntry.current;
+      initialEntry.current = false;
+      sessionStorage.removeItem(employeeEntryKey);
+      const preferred = preferredBusiness(
+        data.businesses,
+        identity.user.id,
+        employeeEntry,
+      );
+      if (choose) navigate("choose");
+      else if (
+        sessionStorage.getItem(invitationKey) ||
+        (firstEntry && intent.join)
+      )
         navigate("join");
-      else if (intent.create) navigate("business");
+      else if (firstEntry && intent.create) navigate("business");
       else if (!data.businesses.length) navigate("choice");
-      else if (data.businesses.length === 1) {
-        setSelected(data.businesses[0]);
+      else if (preferred) {
+        setSelected(preferred);
         navigate("unlock");
       } else navigate("choose");
     } catch (problem) {
@@ -743,27 +769,20 @@ function AccountApp() {
     };
   }, [screen === "join", invitationCode, identitySessionKey(session)]);
 
-  function useInvitationLink() {
-    try {
-      const url = new URL(invitationLink.trim());
-      const code = new URLSearchParams(url.hash.slice(1)).get("invite");
-      if (
-        url.origin !== window.location.origin ||
-        !code ||
-        !/^[a-f0-9]{64}$/i.test(code)
-      )
-        throw new Error();
-      sessionStorage.setItem(invitationKey, code);
-      setInvitationCode(code);
-      setError("");
-      setInvitationLink("");
-      setInvitationConflict(false);
-      navigate(session ? "join" : "login");
-    } catch {
+  function useInvitationLink(link = invitationLink) {
+    const code = invitationFromLink(link);
+    if (!code) {
       setError(
         "Pega el enlace de invitación de POS México que te compartió el dueño.",
       );
+      return;
     }
+    sessionStorage.setItem(invitationKey, code);
+    setInvitationCode(code);
+    setError("");
+    setInvitationLink("");
+    setInvitationConflict(false);
+    navigate(session ? "join" : "login");
   }
 
   async function googleLogin() {
@@ -899,6 +918,7 @@ function AccountApp() {
         return;
       }
       sessionStorage.removeItem(invitationKey);
+      rememberBusiness(identity.user.id, data.business.id);
       setOperator(data);
       setSelected(summaryForContext(data.business));
       setBusinesses((current) =>
@@ -1022,6 +1042,7 @@ function AccountApp() {
         ).catch(() => undefined);
         return;
       }
+      rememberBusiness(identity.user.id, data.business.id);
       setOperator(data);
       setSelected(summaryForContext(data.business));
       setPin("");
@@ -1047,7 +1068,8 @@ function AccountApp() {
     }
     clearSensitive();
     setError("");
-    navigate("choose");
+    setSelected(null);
+    void loadBusinesses(true);
   }
 
   async function switchBusiness() {
@@ -1055,6 +1077,7 @@ function AccountApp() {
     if (!current || busy) return;
     const requestEpoch = ++epoch.current;
     clearSensitive();
+    setSelected(null);
     setBusy(true);
     setError("");
     navigate("choose");
@@ -1065,6 +1088,14 @@ function AccountApp() {
         businessId: current.business.id,
         operatorToken: current.operatorToken,
       });
+      const identity = sessionRef.current;
+      if (identity && requestEpoch === epoch.current) {
+        const status = await accountRequest(
+          { action: "status" },
+          identity.access_token,
+        );
+        if (requestEpoch === epoch.current) setBusinesses(status.businesses);
+      }
     } catch (problem) {
       if (requestEpoch === epoch.current) showFailure(problem);
     } finally {
@@ -1133,6 +1164,7 @@ function AccountApp() {
         ).catch(() => undefined);
         return;
       }
+      rememberBusiness(identity.user.id, data.business.id);
       setOperator(data);
       setSelected(summaryForContext(data.business));
       setBusinesses((current) =>
@@ -1420,7 +1452,10 @@ function AccountApp() {
             <section className="screen flex flex-col max-compact:flex-1">
               <button
                 className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-                onClick={() => navigate("login")}
+                onClick={() => {
+                  sessionStorage.removeItem(employeeEntryKey);
+                  navigate("login");
+                }}
               >
                 <ArrowLeft size={20} />
                 Volver
@@ -1429,7 +1464,7 @@ function AccountApp() {
               <p>
                 {developmentLoginEnabled
                   ? "Usa la cuenta local de empleado para aceptar una invitación y elegir tu PIN."
-                  : "Si ya aceptaste tu invitación, entra con Google desde tu dispositivo vinculado."}
+                  : "Entra con tu cuenta de Google y elige un negocio."}
               </p>
               {error && (
                 <p
@@ -1459,11 +1494,12 @@ function AccountApp() {
                   useInvitationLink();
                 }}
               >
-                <h2>¿Es tu primera vez?</h2>
-                <p>
-                  Escanea el QR del dueño con la cámara de este dispositivo o
-                  pega su enlace de invitación.
-                </p>
+                <h2>Unirme como empleado</h2>
+                <p>Escanea el QR o pega el enlace de invitación.</p>
+                <InvitationScanner
+                  onInvitation={useInvitationLink}
+                  disabled={busy}
+                />
                 <div className="field">
                   <label htmlFor="employee-invitation-link">
                     Enlace de invitación
@@ -1547,33 +1583,39 @@ function AccountApp() {
                   ? "Tu invitación sigue disponible. Puedes continuar con otra cuenta de Google."
                   : joinDetails
                     ? `Invitación para ${joinDetails.employee.name} en ${joinDetails.business.name}.`
-                    : "Escanea el QR del dueño con la cámara de este dispositivo o pega su enlace de invitación."}
+                    : "Escanea el QR o pega el enlace de invitación."}
               </p>
               <form onSubmit={(event) => void joinBusiness(event)}>
                 {!joinDetails && !invitationConflict && (
-                  <div className="field">
-                    <label htmlFor="invitation-link">
-                      Enlace de invitación
-                    </label>
-                    <input
-                      id="invitation-link"
-                      type="url"
+                  <>
+                    <InvitationScanner
+                      onInvitation={useInvitationLink}
                       disabled={busy}
-                      autoComplete="off"
-                      value={invitationLink}
-                      onChange={(event) =>
-                        setInvitationLink(event.target.value)
-                      }
                     />
-                    <button
-                      className="button secondary"
-                      type="button"
-                      disabled={busy || !invitationLink.trim()}
-                      onClick={useInvitationLink}
-                    >
-                      Abrir invitación
-                    </button>
-                  </div>
+                    <div className="field">
+                      <label htmlFor="invitation-link">
+                        Enlace de invitación
+                      </label>
+                      <input
+                        id="invitation-link"
+                        type="url"
+                        disabled={busy}
+                        autoComplete="off"
+                        value={invitationLink}
+                        onChange={(event) =>
+                          setInvitationLink(event.target.value)
+                        }
+                      />
+                      <button
+                        className="button secondary"
+                        type="button"
+                        disabled={busy || !invitationLink.trim()}
+                        onClick={() => useInvitationLink()}
+                      >
+                        Abrir invitación
+                      </button>
+                    </div>
+                  </>
                 )}
                 {joinLoading && <p role="status">Revisando invitación…</p>}
                 {joinDetails && (
@@ -1876,7 +1918,7 @@ function AccountApp() {
                 <p id="pin-help" className="field-help text-sm text-muted">
                   Usa 6 dígitos.
                 </p>
-                {!createPin && selected?.canRecoverPin === false && (
+                {!createPin && selected?.role && selected.role !== "owner" && (
                   <>
                     <p>
                       Tu acceso está vinculado a un navegador. Si usas otro, el
@@ -1979,26 +2021,57 @@ function AccountApp() {
                   {error}
                 </p>
               )}
-              <div className="business-list mt-8 mb-6 flex flex-col border-t border-line">
-                {businesses.map((business) => (
-                  <button
-                    className="business-choice flex min-h-21 w-full items-center gap-3.5 border-0 border-b border-line bg-white py-4 text-left font-medium hover:bg-surface [&>svg]:ml-auto"
-                    disabled={busy}
-                    key={business.id}
-                    onClick={() => {
-                      setSelected(business);
-                      setError("");
-                      setPin("");
-                      navigate("unlock");
-                    }}
-                  >
-                    <span className="business-icon grid size-12 shrink-0 place-items-center rounded-xl bg-surface">
-                      <Coffee size={22} strokeWidth={1.5} aria-hidden="true" />
-                    </span>
-                    <span>{business.name}</span>
-                    <ChevronRight size={20} aria-hidden="true" />
-                  </button>
+              <div className="mt-8 mb-6 flex flex-col gap-6">
+                {[
+                  {
+                    title: "Mis negocios",
+                    entries: businesses.filter(business => business.role === "owner"),
+                  },
+                  {
+                    title: "Como empleado",
+                    entries: businesses.filter(business => business.role && business.role !== "owner"),
+                  },
+                  {
+                    title: "Negocios disponibles",
+                    entries: businesses.filter(business => !business.role),
+                  },
+                ].filter(group => group.entries.length).map(group => (
+                  <section key={group.title} aria-label={group.title}>
+                    <h2 className="mb-2 text-sm text-muted">{group.title}</h2>
+                    <div className="business-list flex flex-col border-t border-line">
+                      {group.entries.map(business => (
+                        <button
+                          className="business-choice flex min-h-21 w-full items-center gap-3.5 border-0 border-b border-line bg-white py-4 text-left hover:bg-surface"
+                          disabled={busy}
+                          key={business.id}
+                          onClick={() => {
+                            setSelected(business);
+                            setError("");
+                            setPin("");
+                            setRetryAt(0);
+                            navigate("unlock");
+                          }}
+                        >
+                          <span className="business-icon grid size-12 shrink-0 place-items-center rounded-xl bg-surface">
+                            <Coffee size={22} strokeWidth={1.5} aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                            <span className="block font-medium">{business.name}</span>
+                            {business.role && (
+                              <span className="block text-sm text-muted">
+                                {roleLabels[business.role]}
+                              </span>
+                            )}
+                          </span>
+                          <ChevronRight size={20} aria-hidden="true" />
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 ))}
+                {!businesses.length && (
+                  <p>No tienes negocios vinculados. Crea uno o abre una invitación.</p>
+                )}
               </div>
               <button
                 className="button secondary"
