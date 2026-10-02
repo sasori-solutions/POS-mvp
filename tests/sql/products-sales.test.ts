@@ -115,6 +115,62 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     expect(await count('products', actor.businessId)).toBe(1)
   })
 
+  it('deletes sold products from every catalog while preserving receipts and accepted retries', async () => {
+    const owner = await newActor()
+    const cashier = await newActor('cashier', owner.businessId)
+    const product = await execute<Product>(owner, newProduct())
+    const saleRequest = saleCommand(product)
+    const receipt = await execute<Sale>(cashier, saleRequest)
+    const command = { command: 'delete_product' as const, operationId: randomUUID(), productId: product.id, expectedVersion: product.version }
+    expect(await execute(owner, command)).toEqual({ id: product.id, deleted: true })
+    expect(await execute(owner, command)).toEqual({ id: product.id, deleted: true })
+    for (const actor of [owner, cashier]) expect((await execute<{ products: Product[] }>(actor, { command: 'catalog' })).products).toEqual([])
+    expect(await execute(cashier, { command: 'sale', saleId: receipt.id })).toEqual(receipt)
+    expect(await execute(cashier, saleRequest)).toEqual(receipt)
+    await expect(execute(cashier, saleCommand(product))).rejects.toThrow('PRODUCT_UNAVAILABLE')
+    for (const update of [
+      { ...newProduct(), productId: product.id, expectedVersion: product.version + 1 },
+      { command: 'set_product_active' as const, productId: product.id, expectedVersion: product.version + 1, active: true, operationId: randomUUID() },
+      { command: 'set_product_sold_out' as const, productId: product.id, expectedVersion: product.version + 1, soldOut: false, operationId: randomUUID() },
+    ]) await expect(execute(owner, update)).rejects.toThrow('PRODUCT_CHANGED')
+    expect(await count('products', owner.businessId)).toBe(1)
+    expect(await count('sales', owner.businessId)).toBe(1)
+  })
+
+  it('authorizes deletion by current tenant/role and checks versions before retiring a product', async () => {
+    const owner = await newActor()
+    const other = await newActor()
+    const cashier = await newActor('cashier', owner.businessId)
+    const manager = await newActor('manager', owner.businessId)
+    const kitchen = await newActor('kitchen', owner.businessId)
+    const product = await execute<Product>(owner, newProduct())
+    const command = { command: 'delete_product' as const, operationId: randomUUID(), productId: product.id, expectedVersion: product.version }
+    for (const actor of [cashier, kitchen]) await expect(execute(actor, command)).rejects.toThrow('PERMISSION_DENIED')
+    await expect(execute(other, command)).rejects.toThrow('PRODUCT_CHANGED')
+    await expect(execute(owner, { ...command, expectedVersion: product.version + 1 })).rejects.toThrow('PRODUCT_CHANGED')
+    expect((await execute<{ products: Product[] }>(owner, { command: 'catalog' })).products).toEqual([product])
+    expect(await execute(manager, command)).toEqual({ id: product.id, deleted: true })
+    await expect(execute(owner, command)).rejects.toThrow('OPERATION_CONFLICT')
+    await expect(execute(manager, { ...command, expectedVersion: 2 })).rejects.toThrow('OPERATION_CONFLICT')
+    await db.query('update app_private.employees set active=false where id=$1', [manager.employeeId])
+    await expect(execute(manager, command)).rejects.toThrow('BUSINESS_ACCESS_DENIED')
+  })
+
+  it('rolls back deletion if its operation result cannot be persisted', async () => {
+    const owner = await newActor()
+    const product = await execute<Product>(owner, newProduct())
+    const command = { command: 'delete_product' as const, operationId: randomUUID(), productId: product.id, expectedVersion: product.version }
+    await db.exec(`create function app_private.fail_product_deletion() returns trigger language plpgsql set search_path='' as $$
+      begin if new.result->>'deleted'='true' then raise exception 'synthetic deletion failure'; end if; return new; end; $$;
+      create trigger fail_product_deletion before insert on app_private.pos_operations for each row execute function app_private.fail_product_deletion();`)
+    try {
+      await expect(execute(owner, command)).rejects.toThrow('synthetic deletion failure')
+      expect((await execute<{ products: Product[] }>(owner, { command: 'catalog' })).products).toEqual([product])
+      expect((await db.query<{ count: number }>('select count(*)::integer as count from app_private.pos_operations where operation_id=$1', [command.operationId])).rows[0].count).toBe(0)
+    } finally { await db.exec('drop trigger fail_product_deletion on app_private.pos_operations; drop function app_private.fail_product_deletion();') }
+    expect(await execute(owner, command)).toEqual({ id: product.id, deleted: true })
+  })
+
   it('registers exact MXN, immutable snapshots and authorized replay after catalog/payment changes', async () => {
     const actor = await newActor()
     const productCommand = newProduct()
