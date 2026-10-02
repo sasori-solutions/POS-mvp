@@ -4,6 +4,8 @@ The owner now adds a person through one invitation flow. Job choices show includ
 
 Final validation: **170/170 desktop/mobile browser cases**, production build/typecheck and `git diff --check` passed. New coverage includes role lists, keyboard choice, 320px overflow/targets, focused sharing, copy-failure fallback and no duplicate creation. Existing retry, expiry, deletion/restoration and permission coverage passed with updated labels. The real loopback browser/Auth/Edge/Postgres smoke passed for creation and acceptance of the new invitation plus compatibility with existing PIN-only staff, Google linking, device revocation and owner recovery. Synthetic fixtures were cleaned. Local Auth handoff does not claim a fresh Google consent test or physical-device installation. Screenshots use synthetic data under `/tmp/pos-employee-*`.
 
+Hosted verification: Cloudflare production `174c4310-c35b-4c74-87cd-cde2be13dd6a` passed 27/27 route/asset checks matching the final build (`index-BQvTqgkV.js`).
+
 ## Más navigation correction — 1 October 2026
 
 The published correction groups Más into Negocio, Mi acceso and Sesión, with direct employee/device entries and focus-preserving returns. Business profile saves stay in the form; employee PIN setup, optional Google access and device pairing have separate instructions. Device removal requires confirmation. The API and SQL are unchanged.

@@ -6,7 +6,13 @@ The frontend is a static Vite PWA. Supabase project `sdisalomdxgejyhpxtri` remai
 
 The current public host is **[pos-mexico-mvp.pages.dev](https://pos-mexico-mvp.pages.dev)**. The Pages project uses Direct Upload; upload the verified build for each release. Pushing the repository alone does not update this deployment.
 
-Current Más navigation correction, 1 October 2026, Agente de Larios: user-approved Cloudflare production **`c45a4597-3627-4f1b-a96a-830d0f58b45a`** publishes the verified **20-file** build, including `index-BfEQlhb1.js`. Release ZIP: 308,566 bytes, SHA-256 `833763b1722a276f5585e0bcbc304ad971131fa771769164e2dfecf415ebc69f`. Public route/asset checks passed **27/27**, matching local `dist` exactly.
+Current employee invitation correction, 1 October 2026, Agente de Larios: production **`174c4310-c35b-4c74-87cd-cde2be13dd6a`** publishes the verified 20-file frontend with `index-BQvTqgkV.js`. Release ZIP: 309,851 bytes, SHA-256 `99054725a86958f3060a93c182fc67d84a3be02f5933ebaae0ba0f6bb0b01b47`. The public route/asset gate passed **27/27** against local `dist`.
+
+Adding an employee now uses one Google invitation flow. Native role choices show included and restricted navigation sections; the Google checkbox is removed. Creation leads to a focused share screen with Copiar enlace. Recipients see an invitation-specific login and do not re-enter the invitation code once its details load. Existing PIN-only employees, PIN ownership and backend policies remain supported. No backend/schema deployment was needed.
+
+Validation: **170/170 desktop/mobile browser cases**, production build/typecheck and the real local browser/Auth/Edge/Postgres smoke passed. The smoke covers new invitation creation/acceptance with employee-selected PIN and legacy PIN-only compatibility; synthetic identities were cleaned. This does not claim physical-phone installation, fresh Google consent or authenticated production employee mutations. Existing app windows may need to close/reopen to adopt the current worker.
+
+Historical Más navigation correction, 1 October 2026, Agente de Larios: user-approved Cloudflare production **`c45a4597-3627-4f1b-a96a-830d0f58b45a`** publishes the verified **20-file** build, including `index-BfEQlhb1.js`. Release ZIP: 308,566 bytes, SHA-256 `833763b1722a276f5585e0bcbc304ad971131fa771769164e2dfecf415ebc69f`. Public route/asset checks passed **27/27**, matching local `dist` exactly.
 
 Más now groups Negocio, Mi acceso and Sesión in navigation rows. Employee and register-device management open directly; returning restores Más and its focused entry. Business settings use labelled groups and preserve the form after saving. Employee PIN authorization, optional Google access and device pairing use specific labels and separate instructions. Unlinking a register device requires confirmation. Existing backend, migrations and access policies remain unchanged.
 
