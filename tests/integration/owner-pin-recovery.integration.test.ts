@@ -1,3 +1,4 @@
+import { signedRequest } from './device-proof-fixture'
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -181,7 +182,7 @@ async function pairedOwner(session: Session) {
   return { deviceToken: paired.body.data!.deviceToken, operatorToken: unlocked.body.data!.operatorToken };
 }
 async function account<T = unknown>(identity: Identity | null, request: Record<string, unknown>): Promise<Reply<T>> {
-  const response = await fetch(`${config!.url}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: config!.anonKey, ...(identity ? { authorization: `Bearer ${identity.token}` } : {}) }, body: JSON.stringify(request) });
+  const response = await fetch(`${config!.url}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: config!.anonKey, ...(identity ? { authorization: `Bearer ${identity.token}` } : {}) }, body: JSON.stringify(await signedRequest(identity?.userId, request)) });
   return { status: response.status, body: await response.json() };
 }
 function sql(statement: string) { return execFileSync('docker', ['exec', '-i', config!.dbContainer, 'psql', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-At', '-q', '-c', statement], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); }
@@ -192,10 +193,12 @@ async function requestMail(business: Session, identity = owner, request?: Record
   sql(`update app_private.pin_email_recoveries set created_at=now()-interval '2 hours' where user_id=${uuid(identity.userId)};`);
   const response = await account(request ? null : identity, request ?? { action: 'request_pin_email', businessId: business.business.id });
   expect(response.status, JSON.stringify(response.body)).toBe(200);
-  const inbox = await (await fetch('http://127.0.0.1:54324/api/v1/messages')).json();
+  const mailpitUrl = process.env.TEST_MAILPIT_URL ?? 'http://127.0.0.1:54324';
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(new URL(mailpitUrl).hostname)) throw new Error('Local inbox only');
+  const inbox = await (await fetch(`${mailpitUrl}/api/v1/messages`)).json();
   const found = inbox.messages.find((message: { To: { Address: string }[] }) => message.To.some(to => to.Address===identity.email));
   expect(found).toBeTruthy();
-  const mail = await (await fetch(`http://127.0.0.1:54324/api/v1/message/${found.ID}`)).json();
+  const mail = await (await fetch(`${mailpitUrl}/api/v1/message/${found.ID}`)).json();
   const token = mail.Text.match(/#recovery=([a-f0-9]{64})/)?.[1]; expect(token).toBeTruthy();
   return { response, mail, token: token as string };
 }

@@ -60,7 +60,7 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   await page.screenshot({ path: `/tmp/pos-mexico-${testInfo.project.name}-home.png`, fullPage: true });
   await page.getByRole('button', { name: 'Bloquear', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
-  expect(calls.some((call) => call.action === 'lock')).toBe(true);
+  await expect.poll(() => calls.some((call) => call.action === 'lock')).toBe(true);
   await page.getByTestId('pin-input').fill('111111');
   await page.getByRole('button', { name: 'Entrar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/PIN/i);
@@ -149,7 +149,7 @@ test('business creation exposes the home transition only after the API succeeds'
     await assertNoPersistedOperatorSecrets(page);
     await page.getByRole('button', { name: 'Bloquear', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
-    expect(calls.find((call) => call.action === 'lock')).toMatchObject({
+    await expect.poll(() => calls.find((call) => call.action === 'lock')).toMatchObject({
       businessId: fixtureBusiness.id, operatorToken: fixtureOperatorToken,
     });
   } finally {
@@ -213,7 +213,7 @@ test('home navigation is keyboard-accessible and preserves the unlocked business
   await page.getByRole('button', { name: 'Bloquear app', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await expect(navigation).not.toBeVisible();
-  expect(calls.find((call) => call.action === 'lock')).toMatchObject({
+  await expect.poll(() => calls.find((call) => call.action === 'lock')).toMatchObject({
     businessId: fixtureBusiness.id, operatorToken: fixtureOperatorToken,
   });
 });

@@ -1,3 +1,4 @@
+import { DeviceProofError, verifiedDeviceRequest } from './device-proof.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2'
 import type { AccountError, AccountErrorCode, AccountRequest } from '../../../src/lib/contracts.ts'
 import { isUuid, parseAccountRequest, RequestValidationError } from './validation.ts'
@@ -21,6 +22,9 @@ const errorDefinitions: Record<AccountErrorCode, { status: number; message: stri
   PERMISSION_DENIED: { status: 403, message: 'Only the owner can manage this business.' },
   INVITATION_INVALID: { status: 400, message: 'The invitation is unavailable or expired.' },
   PAIRING_INVALID: { status: 400, message: 'The pairing code is unavailable or expired.' },
+  DEVICE_LINK_REQUIRED: { status: 403, message: 'Use the employee personal login and link this browser.' },
+  DEVICE_APPROVAL_REQUIRED: { status: 403, message: 'This device is not authorized. Ask the owner to review device notifications. Rejected requests can be retried after ten minutes.' },
+  DEVICE_PROOF_INVALID: { status: 403, message: 'The device verification expired or is invalid. Try again.' },
   DEVICE_REVOKED: { status: 403, message: 'This device is no longer authorized.' },
   REAUTH_REQUIRED: { status: 401, message: 'Sign in again with Google before changing the PIN.' },
   EMPLOYEE_INACTIVE: { status: 403, message: 'This employee is unavailable.' },
@@ -167,7 +171,8 @@ Deno.serve(async (request: Request) => {
     if (request.method !== 'POST') return errorResponse('METHOD_NOT_ALLOWED', headers)
 
     // Restricted device commands validate their own credential in SQL; the public API key grants no tenant access.
-    const action = parseAccountRequest(await boundedJson(request))
+    const verifiedDevice = await verifiedDeviceRequest(await boundedJson(request))
+    const action = parseAccountRequest(verifiedDevice.request)
     const deviceAction = action.action.startsWith('device_')
     const emailConfirmation = action.action === 'pin_email_details' || action.action === 'confirm_pin_email'
     const publicCredentialAction = deviceAction || emailConfirmation
@@ -180,7 +185,9 @@ Deno.serve(async (request: Request) => {
     const admin = createClient(url, key, { auth: {
       persistSession: false, autoRefreshToken: false, detectSessionInUrl: false,
     } })
-    const rpc = rpcFor(action)
+    const rpc = publicCredentialAction ? rpcFor(action) : { name: 'account_secure', args: {
+      p_action: action.action, p_payload: action, p_device_key_hash: verifiedDevice.keyHash, p_proof_nonce: verifiedDevice.nonce,
+    } }
     let identityArgs: Record<string, string> = {}
     if (!publicCredentialAction) {
       // An API key or caller-supplied user ID never establishes identity.
@@ -220,6 +227,7 @@ Deno.serve(async (request: Request) => {
     }
     return new Response(JSON.stringify(data), { status: 200, headers })
   } catch (error) {
+    if (error instanceof DeviceProofError) return errorResponse('DEVICE_PROOF_INVALID', headers)
     if (error instanceof RequestValidationError) return errorResponse('VALIDATION_ERROR', headers)
     if (error instanceof BodyTooLargeError) return errorResponse('PAYLOAD_TOO_LARGE', headers)
     console.error(JSON.stringify({ event: 'account_request_failed', code: 'SERVER_ERROR' }))

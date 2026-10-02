@@ -1,3 +1,4 @@
+import { signedRequest } from './device-proof-fixture'
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -148,9 +149,9 @@ describe.skipIf(!config)('employee lifecycle and truthful invitation status', ()
     const locker=await lockPersonalCredential(business.business.id,employee.userId);
     try{
       const unlocking=account<BusinessSession>(employee,{action:'unlock',businessId:business.business.id,pin:'086420'});
-      await waitForBlockedRpc('account_unlock',locker.pinLockName);
+      await waitForBlockedRpc(1,locker.pinLockName);
       const deleting=account(owner,{action:'delete_employee',...args,employeeId:person.id,operationId:randomUUID()});
-      await waitForBlockedRpc('account_manage',locker.pinLockName);
+      await waitForBlockedRpc(2,locker.pinLockName);
       const restoring=account(owner,{action:'restore_employee',...args,employeeId:person.id,operationId:randomUUID()});
       locker.stdin.end('commit;\n');
       const [unlocked,removed,restored]=await Promise.all([unlocking,deleting,restoring]);
@@ -208,10 +209,10 @@ async function lockPersonalCredential(businessId:string,userId:string){
   child.stdin.write(`set application_name='${pinLockName}';\nbegin;\nselect 1 from app_private.operator_credentials where business_id=${sqlUuid(businessId)} and user_id=${sqlUuid(userId)} for update;\nselect 'credential_locked';\n`);
   await ready;return Object.assign(child,{pinLockName});
 }
-async function waitForBlockedRpc(name:'account_unlock'|'account_manage',pinLockName:string){
+async function waitForBlockedRpc(expectedCount:number,pinLockName:string){
   const deadline=Date.now()+5_000;
   while(Date.now()<deadline){
-    if(Number(sql(`with recursive blocked(pid) as (select pid from pg_stat_activity where application_name='${pinLockName}' union select a.pid from pg_stat_activity a join blocked b on b.pid=any(pg_blocking_pids(a.pid))) select count(*) from blocked join pg_stat_activity using(pid) where wait_event_type='Lock' and query like '%"${name}"%';`).trim())>0)return;
+    if(Number(sql(`with recursive blocked(pid) as (select pid from pg_stat_activity where application_name='${pinLockName}' union select a.pid from pg_stat_activity a join blocked b on b.pid=any(pg_blocking_pids(a.pid))) select count(*) from blocked join pg_stat_activity using(pid) where wait_event_type='Lock' and query like '%"account_secure"%';`).trim())>=expectedCount)return;
     await new Promise(resolve=>setTimeout(resolve,25));
   }
   throw new Error('Expected local account request to wait on a lifecycle lock.');
@@ -298,7 +299,7 @@ async function account<T = unknown>(identity: TestAccount | null, request: Recor
       apikey: config!.anonKey,
       ...(identity ? { authorization: `Bearer ${identity.token}` } : {}),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify(await signedRequest(identity?.userId, request)),
   });
   return { status: response.status, body: await response.json() };
 }

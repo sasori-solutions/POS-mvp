@@ -110,14 +110,15 @@ test('a new Google session for the same user cancels a pending PIN change', asyn
 test('a PIN-ready employee linking Google verifies the current PIN without choosing another', async ({ page }) => {
   await mockOnboarding(page, { invitations: [{ id: '78941fc2-cc3f-4e4b-988a-d033ee8f464b', employeeId: fixtureCashier.id, name: fixtureCashier.name, role: 'cashier', active: true, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }] })
   await page.goto('/join')
-  await page.getByLabel('Código de invitación').fill(fixtureInvitation)
+  await page.getByLabel('Enlace de invitación', { exact: true }).fill(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`)
+  await page.getByRole('button', { name: 'Abrir invitación', exact: true }).click()
   await expect(page.getByLabel('PIN actual', { exact: true })).toBeVisible()
   await expect(page.getByTestId('pin-confirm-input')).not.toBeVisible()
 })
 
 test('a paired register lets the employee choose a PIN after validating an owner code', async ({ page }) => {
   const fixture = await mockOnboarding(page, { authenticated: false })
-  await page.goto('/employee')
+  await page.goto('/register')
   await page.getByLabel('Código para vincular dispositivo').fill('b2'.repeat(32))
   await page.getByLabel('Nombre del dispositivo').fill('Caja de autorización')
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
@@ -187,7 +188,7 @@ test('a shared register lock cancels PIN setup and revokes its late operator res
     await route.fallback()
   })
   try {
-    await page.goto('/employee')
+    await page.goto('/register')
     await page.getByLabel('Código para vincular dispositivo').fill('b2'.repeat(32))
     await page.getByLabel('Nombre del dispositivo').fill('Caja de autorización')
     await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()

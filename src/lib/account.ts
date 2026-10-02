@@ -1,3 +1,4 @@
+import { signEmployeeDeviceRequest } from './employee-device'
 import type { AccountEnvelope, AccountErrorCode, AccountRequest, AccountResponses } from './contracts'
 import { supabase, supabasePublishableKey, supabaseUrl } from './supabase'
 
@@ -7,6 +8,9 @@ const messages: Record<AccountErrorCode, string> = {
   PERMISSION_DENIED: 'Tu rol no permite esta acción. Solicita ayuda al dueño.',
   INVITATION_INVALID: 'La invitación venció, fue revocada o ya no es válida. Pide una nueva al dueño.',
   PAIRING_INVALID: 'El código de conexión venció o ya no es válido. Pide uno nuevo al dueño.',
+  DEVICE_LINK_REQUIRED: 'Usa tu acceso personal con Google desde Entrar como empleado. Permite el almacenamiento del navegador para vincularlo.',
+  DEVICE_APPROVAL_REQUIRED: 'Este dispositivo no está autorizado. Revisa la solicitud con el dueño. Si fue rechazada, espera 10 minutos antes de intentar de nuevo.',
+  DEVICE_PROOF_INVALID: 'No pudimos verificar este dispositivo. Revisa la fecha y hora del equipo.',
   DEVICE_REVOKED: 'Este dispositivo fue revocado. Vuelve a conectarlo con el dueño.',
   EMPLOYEE_INACTIVE: 'Tu acceso fue desactivado. Contacta al dueño.',
   REAUTH_REQUIRED: 'Vuelve a verificar tu cuenta con Google para cambiar el PIN.',
@@ -48,7 +52,13 @@ export async function accountRequest<A extends AccountRequest['action']>(
     accessToken = identity.session.access_token
   }
 
-  return sendRequest(request, accessToken)
+  let deviceProof
+  try { deviceProof = await signEmployeeDeviceRequest(request) }
+  catch {
+    // Owners remain able to sign in when persistent storage is unavailable.
+    // The server rejects all employee access without a verified device proof.
+  }
+  return sendRequest<A>({ ...request, ...(deviceProof ? { deviceProof } : {}) } as Extract<AccountRequest, { action: A }>, accessToken)
 }
 
 /** Device credentials are independently checked by the server; no owner identity is forwarded. */

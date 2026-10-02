@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
+import jsQR from 'jsqr'
 import { fixturePin } from './account-fixture'
-import { fixtureInvitation, mockOnboarding } from './onboarding-fixture'
+import { fixtureInvitation, fixturePairingCode, mockOnboarding } from './onboarding-fixture'
 
 async function openCreation(page: Page) {
   await page.goto('/')
@@ -9,6 +10,24 @@ async function openCreation(page: Page) {
   await page.getByRole('button', { name: 'Más', exact: true }).click()
   await page.getByRole('button', { name: 'Empleados', exact: true }).click()
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
+}
+
+async function readQr(page: Page, name: string) {
+  const pixels = await page.getByRole('img', { name }).evaluate(async (svg) => {
+    const image = new Image()
+    const source = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }))
+    try {
+      image.src = source
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = 384
+      canvas.height = 384
+      const context = canvas.getContext('2d')!
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      return { data: Array.from(context.getImageData(0, 0, canvas.width, canvas.height).data), width: canvas.width, height: canvas.height }
+    } finally { URL.revokeObjectURL(source) }
+  })
+  return jsQR(new Uint8ClampedArray(pixels.data), pixels.width, pixels.height)?.data
 }
 
 test.beforeEach(async ({ page }) => {
@@ -68,4 +87,67 @@ test('creation leads to sharing one invitation and copy failure leaves a selecta
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toBeFocused()
   await expect(page.getByRole('button', { name: 'Administrar Ana de prueba', exact: true })).toHaveCount(1)
   expect(await page.evaluate(() => JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }))).not.toContain(fixtureInvitation)
+})
+
+test('the invitation QR decodes to the same link and disappears once cancelled', async ({ page }, info) => {
+  await mockOnboarding(page, { existingBusiness: true })
+  await openCreation(page)
+  await page.getByLabel('Nombre del empleado', { exact: true }).fill('Ana de prueba')
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click()
+  const qr = page.getByRole('img', { name: 'QR de la invitación' })
+  await expect(qr).toBeVisible()
+  const decoded = await readQr(page, 'QR de la invitación')
+  expect(decoded).toBe(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`)
+  await expect(page.getByLabel('Enlace de invitación')).toHaveValue(decoded!)
+  if (info.project.name === 'mobile') {
+    await page.setViewportSize({ width: 320, height: 640 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  await page.screenshot({ path: `/tmp/pos-employee-${info.project.name}-invitation-qr.png`, fullPage: true })
+  await page.getByRole('button', { name: 'Administrar empleado', exact: true }).click()
+  await page.getByRole('button', { name: 'Cancelar invitación', exact: true }).click()
+  await expect(qr).toHaveCount(0)
+  await expect(page.getByLabel('Enlace de invitación')).toHaveCount(0)
+  await expect(page.getByText('Invitación cancelada', { exact: true })).toBeVisible()
+})
+
+test('native sharing uses the invitation link and cancelling keeps the invitation usable', async ({ page }) => {
+  await mockOnboarding(page, { existingBusiness: true })
+  await page.addInitScript(() => {
+    let attempts = 0
+    Object.defineProperty(navigator, 'share', { configurable: true, value: async (data: ShareData) => {
+      attempts += 1
+      if (attempts === 1) throw new DOMException('Cancelled', 'AbortError')
+      ;(window as typeof window & { sharedInvitation?: ShareData }).sharedInvitation = data
+    } })
+  })
+  await openCreation(page)
+  await page.getByLabel('Nombre del empleado', { exact: true }).fill('Ana de prueba')
+  await page.getByRole('button', { name: 'Crear invitación', exact: true }).click()
+  await page.getByRole('button', { name: 'Compartir enlace', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByRole('img', { name: 'QR de la invitación' })).toBeVisible()
+  await page.getByRole('button', { name: 'Compartir enlace', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('Enlace compartido.')
+  expect(await page.evaluate(() => (window as typeof window & { sharedInvitation?: ShareData }).sharedInvitation?.url)).toBe(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`)
+})
+
+test('shared-register QR opens pairing and stops being shown when it expires', async ({ page }) => {
+  await mockOnboarding(page, { existingBusiness: true })
+  await page.clock.install()
+  await page.route('http://127.0.0.1:54321/functions/v1/account', async (route) => {
+    if (route.request().postDataJSON()?.action !== 'create_pairing_code') return route.fallback()
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { pairingCode: fixturePairingCode, expiresAt: new Date(Date.now() + 60_000).toISOString() } }) })
+  })
+  await page.goto('/')
+  await page.getByTestId('pin-input').fill(fixturePin)
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await page.getByRole('button', { name: 'Más', exact: true }).click()
+  await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click()
+  await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
+  await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()
+  expect(await readQr(page, 'QR para vincular la caja')).toBe(`http://127.0.0.1:5174/register#pair=${fixturePairingCode}`)
+  await page.clock.fastForward(61_000)
+  await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Copiar enlace', exact: true })).toHaveCount(0)
 })

@@ -77,6 +77,7 @@ export async function mockOnboarding(page: Page, options: {
       return reject(401, 'DEVICE_REVOKED', 'El dispositivo fue revocado.');
     }
     switch (body.action) {
+      case 'notifications': return reply({ notifications: [], unreadCount: 0 });
       case 'status': return reply({ businesses: hasBusiness ? [summary()] : [] });
       case 'create_business':
         if (!body.profile?.branchName || !body.profile.registerName) return reject(400, 'VALIDATION_ERROR', 'Completa sucursal y caja.');

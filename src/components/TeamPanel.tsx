@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Link, UserRound } from 'lucide-react'
+import { ArrowLeft, Link, Share2, UserRound } from 'lucide-react'
 import EmployeeRoleFields from './EmployeeRoleFields'
+import InvitationQr from './InvitationQr'
 import { accountRequest, AccountClientError } from '../lib/account'
 import type { BusinessContext, BusinessRole, EmployeeSummary, EmployeeCreation, InvitationSummary, AccountResponses } from '../lib/contracts'
 import './account-management.css'
@@ -290,7 +291,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
     try {
       const result = await accountRequest({ action: 'create_pairing_code', businessId: business.id, operatorToken, operationId: operationId({ action: 'create_pairing_code' }) })
       if (!mounted.current || current !== generation.current) return
-      setCode({ value: result.pairingCode, label: 'Código para vincular dispositivo', expiresAt: result.expiresAt, path: '/employee', parameter: 'pair' })
+      setCode({ value: result.pairingCode, label: 'Código para vincular dispositivo', expiresAt: result.expiresAt, path: '/register', parameter: 'pair' })
       operation.current = null
     } catch (caught) { if (current === generation.current) showError(caught) }
     finally { if (mounted.current && current === generation.current) { mutationBusy.current = false; setBusy(false) } }
@@ -326,6 +327,20 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
       await navigator.clipboard.writeText(code.parameter === 'setup' ? code.value : codeLink(code))
       setNotice(code.parameter === 'setup' ? 'Código copiado.' : 'Enlace copiado.')
     } catch { setError(code.parameter === 'setup' ? 'No pudimos copiar el código. Selecciónalo y cópialo del campo.' : 'No pudimos copiar el enlace. Selecciónalo y cópialo del campo.') }
+  }
+
+  async function shareInvitation() {
+    if (!currentCode || currentCode.parameter !== 'invite' || new Date(currentCode.expiresAt).getTime() <= Date.now()) return
+    setError('')
+    setNotice('')
+    const current = generation.current
+    try {
+      await navigator.share({ title: 'Invitación a POS México', url: codeLink(currentCode) })
+      if (mounted.current && current === generation.current) setNotice('Enlace compartido.')
+    } catch (caught) {
+      if (caught instanceof Error && caught.name === 'AbortError') return
+      if (mounted.current && current === generation.current) setError('No pudimos compartir el enlace. Usa Copiar enlace o escanea el QR.')
+    }
   }
 
   function latestInvitation(employee: EmployeeSummary) {
@@ -372,7 +387,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
   }
 
   const invitation = editing ? latestInvitation(editing) : undefined
-  const currentCode = code && (form ? code.employeeId === editing?.id && (code.parameter === 'setup' ? new Date(code.expiresAt).getTime() > now : invitation?.id === code.invitationId && invitation?.status === 'pending') : tab === 'devices' && code.parameter === 'pair') ? code : null
+  const currentCode = code && new Date(code.expiresAt).getTime() > now && (form ? code.employeeId === editing?.id && (code.parameter === 'setup' || invitation?.id === code.invitationId && invitation?.status === 'pending') : tab === 'devices' && code.parameter === 'pair') ? code : null
   const employees = team?.employees.filter((employee) => employee.role !== 'owner' && !employee.deletedAt) ?? []
   const deletedEmployees = team?.deletedEmployees?.filter((employee) => employee.role !== 'owner') ?? []
   const employeeDirty = Boolean(editing && (name.trim().replace(/\s+/g, ' ') !== editing.name || role !== editing.role))
@@ -380,15 +395,20 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
   function codeCard() {
     if (!currentCode) return null
     if (currentCode.parameter === 'invite') return <div className="employee-invitation-link">
+      <InvitationQr link={codeLink(currentCode)} label="QR de la invitación" instruction="El empleado puede escanearlo con la cámara del dispositivo que usará para trabajar." />
       <label htmlFor="invitation-link">Enlace de invitación</label>
       <input id="invitation-link" value={codeLink(currentCode)} readOnly onFocus={(event) => event.target.select()} />
-      <button type="button" className="button primary" disabled={busy} onClick={() => void copyCode()}><Link size={18} aria-hidden="true" />Copiar enlace</button>
+      <div className="invitation-share-actions">
+        <button type="button" className="button primary" disabled={busy} onClick={() => void copyCode()}><Link size={18} aria-hidden="true" />Copiar enlace</button>
+        {typeof navigator.share === 'function' && <button type="button" className="button secondary" disabled={busy} onClick={() => void shareInvitation()}><Share2 size={18} aria-hidden="true" />Compartir enlace</button>}
+      </div>
       <p>Vence el {date(currentCode.expiresAt)}. Sólo se puede usar una vez.</p>
     </div>
     return <div className="management-code">
+      {currentCode.parameter === 'pair' && <InvitationQr link={codeLink(currentCode)} label="QR para vincular la caja" instruction="Escanea este QR desde el dispositivo de caja, o abre allí el enlace que copies." />}
       <label htmlFor="management-code">{currentCode.label}</label>
       <input id="management-code" value={currentCode.value} readOnly onFocus={(event) => event.target.select()} />
-      {currentCode.parameter === 'pair' && <ol className="management-steps"><li>Abre POS México en el dispositivo de caja.</li><li>Elige «Entrar como empleado» e ingresa este código, o abre allí el enlace que copies.</li><li>Asigna un nombre para identificar el dispositivo.</li></ol>}
+      {currentCode.parameter === 'pair' && <ol className="management-steps"><li>Abre el enlace o escanea el QR en el dispositivo de caja.</li><li>Si prefieres ingresar el código, elige «Vincular caja compartida».</li><li>Asigna un nombre para identificar el dispositivo.</li></ol>}
       {currentCode.parameter === 'setup' && <p>En una caja vinculada, el empleado debe pulsar «Crear o restablecer mi PIN».</p>}
       <p>{currentCode.parameter !== 'invite' && <>Vence el {date(currentCode.expiresAt)}. </>}Sólo se puede usar una vez.</p>
       <button type="button" className="button secondary" disabled={busy} onClick={() => void copyCode()}>{currentCode.parameter === 'setup' ? 'Copiar código' : 'Copiar enlace'}</button>
@@ -411,9 +431,9 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
         <div className="employee-invited-person"><UserRound size={24} aria-hidden="true" /><div><strong>{editing.name}</strong><span>{roles[editing.role]}</span></div></div>
         {currentCode ? <>
           <p className="field-help">Pendiente de aceptar</p>
-          <p>Comparte el enlace con {editing.name} por el medio que prefieras.</p>
+          <p>Comparte el enlace con {editing.name} o pídele que escanee el QR desde su dispositivo.</p>
           {codeCard()}
-          <div className="employee-invitation-next"><h2>¿Qué hará el empleado?</h2><ol><li>Abrir el enlace y entrar con su cuenta de Google.</li><li>Crear su PIN de 6 dígitos para usar la caja.</li></ol></div>
+          <div className="employee-invitation-next"><h2>¿Qué hará el empleado?</h2><ol><li>Abrir la invitación en el dispositivo que usará y entrar con su cuenta de Google.</li><li>Crear su PIN de 6 dígitos y vincular ese dispositivo.</li><li>Necesitará tu autorización para cambiar de dispositivo.</li></ol></div>
         </> : <>
           {invitation && <div className="management-invitation"><strong>{invitationLabel(invitation)}</strong><p>{invitationDetail(invitation)}</p></div>}
           {editing.active && !editing.googleLinked && <button type="button" className="button primary" disabled={busy} onClick={() => void linkGoogle(editing)}>Renovar invitación</button>}
@@ -423,7 +443,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
         <form className="management-form" onSubmit={saveEmployee}>
           <div className="field"><label htmlFor="employee-name">Nombre del empleado</label><input id="employee-name" value={name} onChange={(event) => setName(event.target.value)} maxLength={100} required disabled={busy} /></div>
           <EmployeeRoleFields role={role} onChange={setRole} disabled={busy} />
-          {!editing && <div className="employee-invite-explanation"><Link size={20} aria-hidden="true" /><p>Recibirás un enlace para compartir. El empleado entrará con Google y creará su PIN.</p></div>}
+          {!editing && <div className="employee-invite-explanation"><Link size={20} aria-hidden="true" /><p>Recibirás un enlace y un QR para compartir. El empleado entrará con Google, creará su PIN y vinculará su dispositivo.</p></div>}
           <div className="management-actions"><button className="button primary" disabled={busy || Boolean(editing && !employeeDirty)} aria-busy={busy}>{busy ? editing ? 'Guardando…' : 'Creando invitación…' : editing ? 'Guardar cambios' : 'Crear invitación'}</button>{!editing && <button type="button" className="button secondary" disabled={busy} onClick={closeForm}>Cancelar</button>}</div>
         </form>
         {editing && <>
@@ -446,7 +466,7 @@ export default function TeamPanel({ business, operatorToken, section, onBack, on
           <ul className="management-list" aria-label="Empleados">{employees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}. {accessLabel(employee)}</p></div><button type="button" className="button secondary" aria-label={`Administrar ${employee.name}`} disabled={busy} onClick={() => openForm(employee)}>Administrar</button></li>)}</ul>
           {!employees.length && <p className="management-empty">Aún no has agregado empleados.</p>}
           {deletedEmployees.length > 0 && <details className="management-deleted"><summary>Empleados eliminados</summary><p>Restaurar devuelve el acceso por PIN o Google que ya tenía. Los enlaces y las sesiones anteriores no se reactivan.</p><ul className="management-list" aria-label="Empleados eliminados">{deletedEmployees.map((employee) => <li key={employee.id}><div><strong>{employee.name}</strong><p>{roles[employee.role]}{employee.deletedAt ? `. Eliminado el ${date(employee.deletedAt)}` : ''}</p></div><button type="button" className="button secondary" aria-label={`Restaurar ${employee.name}`} disabled={busy} onClick={() => void employeeLifecycle(employee, 'restore_employee')}>Restaurar</button></li>)}</ul></details>}
-        </section><section hidden={tab !== 'devices'} id="management-devices-panel" aria-label="Dispositivos de caja" className="management-section"><p>Vincula la tablet o computadora de la caja. Los empleados podrán entrar allí con su PIN.</p>
+        </section><section hidden={tab !== 'devices'} id="management-devices-panel" aria-label="Dispositivos de caja" className="management-section"><p>Vincula una tablet o computadora para empleados que tienen acceso de caja con PIN. Quienes usan Google deben entrar desde su dispositivo vinculado.</p>
           {codeCard()}
           {deviceToRemove && <div className="management-device-confirm" role="region" aria-labelledby="remove-device-title" aria-describedby="remove-device-help"><h2 id="remove-device-title">¿Desvincular {deviceToRemove.name}?</h2><p id="remove-device-help">Se cerrarán las sesiones en ese dispositivo. Necesitarás vincularlo de nuevo para usarlo como caja.</p><div className="management-actions"><button type="button" className="button primary" disabled={busy} onClick={() => void revoke('device', deviceToRemove.id)}>Confirmar desvinculación</button><button type="button" className="button secondary" disabled={busy} onClick={() => setDeviceToRemove(null)}>Cancelar</button></div></div>}
           <ul className="management-list" aria-label="Dispositivos">{team.devices.map((device) => <li key={device.id}><div><strong>{device.name}</strong><p>{device.registerName}{device.active ? '' : '. Sin acceso'}</p></div>{device.active && <button type="button" className="button secondary" aria-label={`Desvincular ${device.name}`} disabled={busy} onClick={() => { setDeviceToRemove({ id: device.id, name: device.name }); setError(''); setNotice('') }}>Desvincular</button>}</li>)}</ul>

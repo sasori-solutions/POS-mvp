@@ -73,5 +73,6 @@ test('device removal requires confirmation and pairing explains where to use the
   expect(calls.filter((call) => call.action === 'revoke_device')).toHaveLength(1)
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   await expect(page.getByLabel('Código para vincular dispositivo')).toHaveValue(fixturePairingCode)
-  await expect(page.getByText('Abre POS México en el dispositivo de caja.')).toBeVisible()
+  await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()
+  await expect(page.getByText('Abre el enlace o escanea el QR en el dispositivo de caja.')).toBeVisible()
 })

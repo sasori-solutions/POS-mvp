@@ -39,5 +39,5 @@ jobs:
           node-version: '22.12.0'
           cache: npm
       - run: npm ci
-      - run: deno test supabase/functions/account/validation.deno.ts
+      - run: deno test supabase/functions/account/*.deno.ts
       - run: deno check supabase/functions/account/index.ts
