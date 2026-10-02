@@ -262,9 +262,6 @@ export default function BusinessSettings({
           </fieldset>
           <fieldset className="settings-group">
             <legend>Sucursal y caja</legend>
-            <p className="field-help text-sm text-muted">
-              Usa nombres que reconozcas, como Centro y Mostrador.
-            </p>
             <div className="management-fields-row grid grid-cols-2 gap-4 max-compact:grid-cols-1">
               <div className="field">
                 <label htmlFor="settings-branch">Sucursal</label>

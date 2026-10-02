@@ -73,13 +73,9 @@ export default function SalesScreen({
   return (
     <div className="sales-screen">
       <div className="catalog-toolbar my-6 flex items-center justify-between gap-4 [&_p]:text-[15px] max-tablet:flex-wrap">
-        <p>
-          {ownOnly
-            ? "Las ventas que registraste."
-            : "Ventas registradas de tu negocio."}
-        </p>
+        {ownOnly && <p>Tus ventas</p>}
         <button
-          className="pos-button pos-secondary compact"
+          className="pos-button pos-secondary compact ml-auto"
           onClick={() => void load(false)}
           disabled={loading}
         >

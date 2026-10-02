@@ -333,7 +333,7 @@ export default function ProductEditor({
                 onChange={(e) => change("description", e.target.value)}
                 maxLength={1000}
                 rows={3}
-                placeholder="Ingredientes, preparación y lo que hace especial a este producto"
+                placeholder="Ej. Café con leche"
               />
             </div>
             <div className="field">
@@ -345,9 +345,6 @@ export default function ProductEditor({
                 onChange={(e) => change("allergens", e.target.value)}
                 placeholder="Ej. Leche, nueces"
               />
-              <p className="text-sm text-muted">
-                Se muestran al tomar el pedido.
-              </p>
             </div>
           </section>
           <section
@@ -372,8 +369,7 @@ export default function ProductEditor({
                   placeholder="$0.00"
                 />
                 <p className="product-help text-sm">
-                  Es el precio que cobras. El IVA está incluido y no se suma al
-                  pagar.
+                  IVA incluido.
                 </p>
               </div>
             </div>
@@ -396,10 +392,6 @@ export default function ProductEditor({
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Tamaños y presentaciones</h3>
-            <p className="product-help text-sm">
-              Chico, grande o la presentación que vendes, cada una con su precio
-              final.
-            </p>
 
             {details.variations.map((v, index) => (
               <div
@@ -414,6 +406,7 @@ export default function ProductEditor({
                     <input
                       id={`variation-${v.id}`}
                       value={v.name}
+                      placeholder="Ej. Chico"
                       maxLength={60}
                       required
                       onChange={(e) =>
@@ -511,9 +504,6 @@ export default function ProductEditor({
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Modificadores</h3>
-            <p className="product-help text-sm">
-              Leche, acompañamientos o extras que la persona elige al pedir.
-            </p>
             {details.modifierSets.map((set, index) => (
               <div
                 className="editor-option-row flex flex-col gap-4 rounded-lg border border-line p-5 max-tablet:p-4"
@@ -526,6 +516,7 @@ export default function ProductEditor({
                   <input
                     id={`modifier-set-${set.id}`}
                     value={set.name}
+                    placeholder="Ej. Leche"
                     maxLength={60}
                     required
                     onChange={(e) =>
@@ -727,18 +718,15 @@ export default function ProductEditor({
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Disponibilidad</h3>
-            <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
+            <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5">
               <input
                 type="checkbox"
                 checked={details.soldOut}
                 onChange={(e) => change("soldOut", e.target.checked)}
               />
-              <span>
-                Marcar como agotado
-                <small>También puedes hacerlo directamente desde Venta.</small>
-              </span>
+              <span>Marcar como agotado</span>
             </label>
-            <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
+            <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5">
               <input
                 type="checkbox"
                 checked={details.favorite}
@@ -755,8 +743,7 @@ export default function ProductEditor({
               <span>
                 Controlar existencias
                 <small>
-                  Se descuenta una unidad por artículo vendido, incluidas sus
-                  variantes.
+                  Cada unidad vendida descuenta existencias compartidas entre variantes.
                 </small>
               </span>
             </label>
