@@ -13,9 +13,10 @@ const messages: Record<AccountErrorCode, string> = {
   PIN_INVALID: 'PIN incorrecto. Intenta de nuevo.', PIN_LOCKED: 'Demasiados intentos. Espera antes de volver a ingresar tu PIN.',
   PIN_SETUP_INVALID: 'El código de PIN venció o ya no está disponible. Pide uno nuevo al dueño.',
   PIN_SETUP_ACCOUNT_MISMATCH: 'Entra con la cuenta Google del empleado a quien pertenece este código.',
-  RECOVERY_INVALID: 'El código de recuperación no es válido o ya fue utilizado.',
+  RECOVERY_INVALID: 'El enlace venció o ya fue utilizado. Solicita uno nuevo.',
   RECOVERY_LOCKED: 'Demasiados intentos de recuperación. Espera antes de volver a intentar.',
-  RECOVERY_UNAVAILABLE: 'Este negocio no tiene un código de recuperación preparado. Se genera al entrar con el PIN del dueño.',
+  RECOVERY_UNAVAILABLE: 'Esta persona aún no tiene un correo vinculado. Pide al dueño que vincule su cuenta desde Empleados.',
+  EMAIL_UNAVAILABLE: 'No pudimos enviar el correo. Intenta de nuevo más tarde.',
   SESSION_INVALID: 'La app está bloqueada. Ingresa tu PIN para continuar.', SESSION_EXPIRED: 'Tu sesión de trabajo venció. Ingresa tu PIN para continuar.',
   OPERATION_CONFLICT: 'Esta solicitud cambió. Revisa los datos e intenta de nuevo.',
   ORIGIN_FORBIDDEN: 'Abre el enlace oficial de POS México para entrar.',
@@ -52,6 +53,14 @@ export async function accountRequest<A extends AccountRequest['action']>(
 
 /** Device credentials are independently checked by the server; no owner identity is forwarded. */
 export async function deviceRequest<A extends Extract<AccountRequest, { action: `device_${string}` }>['action']>(
+  request: Extract<AccountRequest, { action: A }>,
+): Promise<AccountResponses[A]> {
+  if (!supabase) throw new AccountClientError('SERVER_ERROR', 'La aplicación aún no está configurada.')
+  return sendRequest(request)
+}
+
+/** An email link authorizes only this PIN reset, without an identity or operator session. */
+export async function recoveryRequest<A extends 'pin_email_details' | 'confirm_pin_email'>(
   request: Extract<AccountRequest, { action: A }>,
 ): Promise<AccountResponses[A]> {
   if (!supabase) throw new AccountClientError('SERVER_ERROR', 'La aplicación aún no está configurada.')

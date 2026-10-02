@@ -1,3 +1,7 @@
+## PIN email recovery — prepared, not deployed
+
+Agente de Larios, 1 October 2026. Migration 0007, standalone Edge and frontend are verified locally. Sender configuration for the user-supplied larioscow.dev is pending. Do not describe production as running this feature until sender, migration, account and frontend are activated together. See docs/pin-email-recovery.md.
+
 # Public PWA deployment on Cloudflare Pages
 
 Agente de Larios · 1 October 2026.

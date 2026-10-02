@@ -25,11 +25,11 @@ test('More and its subpages have readable task groups and fit the viewport', asy
   await expect(page.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
   await noOverflow(page)
   await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-menu.png` })
-  for (const task of ['Datos del negocio', 'Empleados', 'Dispositivos de caja', 'Cambiar mi PIN', 'Código de recuperación']) {
+  for (const task of ['Datos del negocio', 'Empleados', 'Dispositivos de caja', 'Cambiar mi PIN']) {
     await page.getByRole('button', { name: task, exact: true }).click()
     await expect(page.getByRole('heading', { name: task, exact: true })).toBeVisible()
     await noOverflow(page)
-    await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-${['Datos del negocio', 'Empleados', 'Dispositivos de caja', 'Cambiar mi PIN', 'Código de recuperación'].indexOf(task)}.png`, fullPage: true })
+    await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-${['Datos del negocio', 'Empleados', 'Dispositivos de caja', 'Cambiar mi PIN'].indexOf(task)}.png`, fullPage: true })
     if (task === 'Datos del negocio') {
       await expect(page.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
       for (const y of [0, 500, 1000]) {

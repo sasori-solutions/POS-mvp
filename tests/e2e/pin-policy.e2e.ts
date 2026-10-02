@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { fixtureAuthSession, fixtureBusiness, fixturePin } from './account-fixture'
-import { fixtureCashier, fixtureInvitation, fixturePinSetup, fixtureRecoveryCode, mockOnboarding } from './onboarding-fixture'
+import { fixtureCashier, fixtureInvitation, fixturePinSetup, mockOnboarding } from './onboarding-fixture'
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', (route) => ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort('blockedbyclient'))
@@ -29,21 +29,6 @@ test('employee PIN recovery produces an authorization code instead of an owner P
   await expect(page.getByLabel('Código para PIN')).toBeVisible()
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0)
   expect(calls.find((call) => call.action === 'create_pin_setup')).toMatchObject({ employeeId: fixtureCashier.id })
-})
-
-test('a recovery callback with another Google account cannot open the new PIN form', async ({ page }) => {
-  await mockOnboarding(page, { existingBusiness: true })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Olvidé mi PIN', exact: true }).click()
-  const otherSession = fixtureAuthSession({ user: { ...fixtureAuthSession().user, id: '57f5b3cc-7898-4e0a-b971-635337a993bc' } }, 'bd4d0b64-00d7-4b86-8c80-bdf0d0e8bfda')
-  await page.route('http://127.0.0.1:54321/auth/v1/authorize**', (route) => route.fulfill({ contentType: 'text/plain', body: 'OAuth captured' }))
-  await page.route('http://127.0.0.1:54321/auth/v1/token?grant_type=pkce', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(otherSession) }))
-  const navigation = page.waitForRequest((request) => request.url().includes('/auth/v1/authorize'))
-  await page.getByRole('button', { name: 'Volver a verificar con Google', exact: true }).click()
-  await navigation
-  await page.goto('/auth/callback?code=other-user')
-  await expect(page.getByRole('heading', { name: 'Crea un nuevo PIN', exact: true })).not.toBeVisible()
-  await expect(page.getByRole('alert')).toContainText(/misma cuenta de Google/i)
 })
 
 test('changing an unlocked personal PIN asks for the current PIN and does not redirect to Google', async ({ page }) => {
@@ -122,18 +107,6 @@ test('a new Google session for the same user cancels a pending PIN change', asyn
   } finally { release?.() }
 })
 
-test('a new Google session cannot inherit a recovery code shown after PIN verification', async ({ page }) => {
-  await mockOnboarding(page, { existingBusiness: true })
-  await owner(page)
-  await page.getByRole('button', { name: 'Código de recuperación', exact: true }).click()
-  await page.getByLabel('PIN actual', { exact: true }).fill(fixturePin)
-  await page.getByRole('button', { name: 'Generar código de recuperación', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Guarda tu código de recuperación', exact: true })).toBeVisible()
-  await replaceIdentity(page)
-  await expect(page.getByLabel('Código de recuperación', { exact: true })).not.toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Ingresa tu PIN', exact: true })).toBeVisible()
-})
-
 test('a PIN-ready employee linking Google verifies the current PIN without choosing another', async ({ page }) => {
   await mockOnboarding(page, { invitations: [{ id: '78941fc2-cc3f-4e4b-988a-d033ee8f464b', employeeId: fixtureCashier.id, name: fixtureCashier.name, role: 'cashier', active: true, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null, expiresAt: new Date(Date.now() + 3_600_000).toISOString() }] })
   await page.goto('/join')
@@ -168,76 +141,10 @@ for (const role of ['owner', 'cashier'] as const) {
     await owner(page)
     await page.getByRole('button', { name: 'Bloquear', exact: true }).click()
     await page.getByRole('button', { name: 'Olvidé mi PIN', exact: true }).click()
-    await expect(page.getByRole('heading', { name: role === 'owner' ? 'Recupera tu PIN' : 'Crear o restablecer mi PIN', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Volver a verificar con Google', exact: true })).toHaveCount(role === 'owner' ? 1 : 0)
+    await expect(page.getByRole('heading', { name: 'Recupera tu PIN', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Volver a verificar con Google', exact: true })).toHaveCount(0)
   })
 }
-
-test('recovery generation failure retries the created business without creating it again', async ({ page }) => {
-  const { calls } = await mockOnboarding(page)
-  let attempts = 0
-  await page.route('http://127.0.0.1:54321/functions/v1/account', async (route) => {
-    if (route.request().postDataJSON()?.action === 'create_recovery_code' && ++attempts === 1) return route.abort('failed')
-    await route.fallback()
-  })
-  await page.goto('/business/new')
-  await page.getByLabel('Nombre del negocio', { exact: true }).fill('Negocio con recuperación')
-  await page.getByRole('button', { name: 'Continuar', exact: true }).click()
-  await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByTestId('pin-confirm-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Crear PIN', exact: true }).click()
-  await expect(page.getByText('Tu negocio ya está creado. Falta generar el código para recuperar tu PIN.', { exact: true })).toBeVisible()
-  await expect(page.getByLabel('PIN actual', { exact: true })).toHaveValue(fixturePin)
-  await page.getByRole('button', { name: 'Generar código de recuperación', exact: true }).click()
-  await expect(page.getByLabel('Código de recuperación', { exact: true })).toHaveValue(fixtureRecoveryCode)
-  expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(1)
-  await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Cuenta creada', exact: true })).toBeVisible()
-  const stored = await page.evaluate(() => JSON.stringify([Object.entries(localStorage), Object.entries(sessionStorage)]))
-  expect(stored).not.toContain(fixtureRecoveryCode)
-  expect(stored).not.toContain(fixturePin)
-})
-
-test('a copied recovery code is cleared after acknowledgement even if the copy completed late', async ({ page }) => {
-  await mockOnboarding(page, { existingBusiness: true })
-  await owner(page)
-  await page.evaluate(() => {
-    const writes: string[] = []
-    let release: (() => void) | undefined
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (text: string) => { writes.push(text); if (text) await new Promise<void>((resolve) => { release = resolve }) } } })
-    Object.assign(window, { testClipboardWrites: writes, releaseClipboardCopy: () => release?.() })
-  })
-  await page.getByRole('button', { name: 'Código de recuperación', exact: true }).click()
-  await page.getByLabel('PIN actual', { exact: true }).fill(fixturePin)
-  await page.getByRole('button', { name: 'Generar código de recuperación', exact: true }).click()
-  await page.getByRole('button', { name: 'Copiar código', exact: true }).click()
-  await page.getByRole('button', { name: 'Ya guardé mi código', exact: true }).click()
-  await page.evaluate(() => (window as unknown as { releaseClipboardCopy: () => void }).releaseClipboardCopy())
-  await expect.poll(() => page.evaluate(() => (window as unknown as { testClipboardWrites: string[] }).testClipboardWrites)).toEqual([fixtureRecoveryCode, ''])
-})
-
-test('editing a business profile preserves its enrolled owner recovery route after locking', async ({ page }) => {
-  await mockOnboarding(page, { existingBusiness: true })
-  await owner(page)
-  await page.getByRole('button', { name: 'Datos del negocio', exact: true }).click()
-  await page.getByLabel('Caja', { exact: true }).fill('Barra actualizada')
-  await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click()
-  await expect(page.getByRole('status')).toHaveText('Cambios guardados.')
-  await page.getByRole('button', { name: 'Volver a Más', exact: true }).click()
-  await page.getByRole('button', { name: 'Bloquear', exact: true }).click()
-  await page.getByRole('button', { name: 'Olvidé mi PIN', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Volver a verificar con Google', exact: true })).toBeVisible()
-})
-
-test('an existing owner without a prepared recovery code gets no Google reset bypass', async ({ page }) => {
-  const { calls } = await mockOnboarding(page, { existingBusiness: true, recoveryReady: false })
-  await page.goto('/')
-  await page.getByRole('button', { name: 'Olvidé mi PIN', exact: true }).click()
-  await expect(page.getByText(/Google por sí solo no restablece el PIN/)).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Volver a verificar con Google', exact: true })).not.toBeVisible()
-  await expect(page.getByTestId('pin-input')).not.toBeVisible()
-  expect(calls.filter((call) => call.action === 'reset_pin')).toHaveLength(0)
-})
 
 test('the PIN change cooldown stops another attempt and explains when to retry', async ({ page }) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true })

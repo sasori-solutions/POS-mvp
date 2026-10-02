@@ -79,12 +79,16 @@ export function parseAccountRequest(value: unknown): AccountRequest {
       exactKeys(input, ['action', 'invitationCode', 'pin', 'operationId'], ['name']); return { action: input.action, invitationCode: token(input, 'invitationCode'), ...(Object.hasOwn(input, 'name') ? { name: name(input.name) } : {}), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'invitation_details':
       exactKeys(input, ['action', 'invitationCode']); return { action: input.action, invitationCode: token(input, 'invitationCode') }
-    case 'create_recovery_code':
-      exactKeys(input, [...owner, 'currentPin', 'operationId']); return { action: input.action, ...ownerArgs(), currentPin: pin(input, 'currentPin'), operationId: uuid(input, 'operationId') }
+    case 'device_request_pin_email':
+      exactKeys(input, ['action', 'deviceToken', 'employeeId']); return { action: input.action, deviceToken: token(input, 'deviceToken'), employeeId: uuid(input, 'employeeId') }
+    case 'request_pin_email':
+      exactKeys(input, ['action', 'businessId']); return { action: input.action, businessId: uuid(input, 'businessId') }
+    case 'pin_email_details':
+      exactKeys(input, ['action', 'recoveryToken']); return { action: input.action, recoveryToken: token(input, 'recoveryToken') }
+    case 'confirm_pin_email':
+      exactKeys(input, ['action', 'recoveryToken', 'pin', 'operationId']); return { action: input.action, recoveryToken: token(input, 'recoveryToken'), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'change_pin':
       exactKeys(input, [...owner, 'currentPin', 'pin', 'operationId']); return { action: input.action, ...ownerArgs(), currentPin: pin(input, 'currentPin'), pin: pin(input), operationId: uuid(input, 'operationId') }
-    case 'reset_pin':
-      exactKeys(input, ['action', 'businessId', 'recoveryCode', 'pin', 'operationId']); return { action: input.action, businessId: uuid(input, 'businessId'), recoveryCode: token(input, 'recoveryCode'), pin: pin(input), operationId: uuid(input, 'operationId') }
     case 'create_pairing_code':
       exactKeys(input, [...owner, 'operationId']); return { action: input.action, ...ownerArgs(), operationId: uuid(input, 'operationId') }
     case 'revoke_device':

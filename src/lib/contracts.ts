@@ -127,9 +127,11 @@ export type AccountRequest =
   | { action: 'accept_invitation'; invitationCode: string; name?: string; pin: string; operationId: string }
   | ({ action: 'create_pairing_code'; operationId: string } & OwnerRequest)
   | ({ action: 'revoke_device'; deviceId: string } & OwnerRequest)
-  | ({ action: 'create_recovery_code'; currentPin: string; operationId: string } & OwnerRequest)
+  | { action: 'device_request_pin_email'; deviceToken: string; employeeId: string }
+  | { action: 'request_pin_email'; businessId: string }
+  | { action: 'pin_email_details'; recoveryToken: string }
+  | { action: 'confirm_pin_email'; recoveryToken: string; pin: string; operationId: string }
   | ({ action: 'change_pin'; currentPin: string; pin: string; operationId: string } & OwnerRequest)
-  | { action: 'reset_pin'; businessId: string; recoveryCode: string; pin: string; operationId: string }
   | { action: 'device_pair'; pairingCode: string; deviceName: string; operationId: string }
   | { action: 'device_status'; deviceToken: string }
   | { action: 'device_forget'; deviceToken: string }
@@ -161,9 +163,11 @@ export interface AccountResponses {
   accept_invitation: OperatorSession
   create_pairing_code: { pairingCode: string; expiresAt: string }
   revoke_device: { revoked: true }
-  create_recovery_code: { recoveryCode: string }
+  device_request_pin_email: { sent: true; retryAfterSeconds: number }
+  request_pin_email: { sent: true; retryAfterSeconds: number }
+  pin_email_details: { businessName: string; expiresAt: string }
+  confirm_pin_email: { updated: true }
   change_pin: OperatorSession
-  reset_pin: OperatorSession & { recoveryCode: string }
   device_pair: PairedDevice
   device_status: DeviceStatus
   device_unlock: OperatorSession
@@ -177,7 +181,7 @@ export type AccountErrorCode =
   | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
   | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
   | 'REAUTH_REQUIRED' | 'EMPLOYEE_INACTIVE' | 'PIN_INVALID' | 'PIN_LOCKED'
-  | 'PIN_SETUP_INVALID' | 'PIN_SETUP_ACCOUNT_MISMATCH' | 'RECOVERY_INVALID' | 'RECOVERY_LOCKED' | 'RECOVERY_UNAVAILABLE'
+  | 'PIN_SETUP_INVALID' | 'PIN_SETUP_ACCOUNT_MISMATCH' | 'RECOVERY_INVALID' | 'RECOVERY_LOCKED' | 'RECOVERY_UNAVAILABLE' | 'EMAIL_UNAVAILABLE'
   | 'SESSION_INVALID' | 'SESSION_EXPIRED' | 'OPERATION_CONFLICT' | 'ORIGIN_FORBIDDEN'
   | 'METHOD_NOT_ALLOWED' | 'PAYLOAD_TOO_LARGE' | 'SERVER_ERROR'
 export interface AccountError { code: AccountErrorCode; message: string; retryAfterSeconds?: number }

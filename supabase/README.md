@@ -1,3 +1,7 @@
+## Email recovery — current source, activation pending
+
+Agente de Larios, 1 October 2026. Current source replaces code enrollment/reset and Google reverification with scoped one-use 15-minute email links. Migration 0007 adds private storage and four service-role RPCs. Resend needs APP_ORIGIN, PIN_RECOVERY_FROM and RESEND_API_KEY in Edge secrets; no general email login or Google provider change is introduced. See docs/pin-email-recovery.md. The six-migration deployed release below is historical until this pending release is activated.
+
 # POS México account backend
 
 Agente de Larios · 1 October 2026.

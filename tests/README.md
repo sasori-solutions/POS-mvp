@@ -1,3 +1,7 @@
+## Email recovery — verified locally
+
+Agente de Larios, 1 October 2026. Final results: 54/54 real integration, 170/170 desktop/mobile browser cases, 18/18 Deno, build/typechecks, full browser/Auth/Edge/Postgres/Mailpit smoke and real 0006→0007 compatibility (44/48/27/23/29/21/16 statements). Final email UI text also passed 16/16 focused browser cases. Obsolete code-flow assertions were replaced; one run during Edge reload had three HTTP 502s, followed by the successful stable full suite. Hosted delivery remains pending. Details: docs/pin-email-recovery.md.
+
 ## Employee invitation UX — 1 October 2026
 
 The owner now adds a person through one invitation flow. Job choices show included/restricted navigation sections from the same mapping used by Home; there is no Google checkbox or owner-entered PIN. Creation opens a share screen, and the invitation recipient goes through Google and chooses their own PIN without re-entering the code embedded in the link. Existing PIN-only employees remain supported.
