@@ -24,11 +24,13 @@ Migration `20261002000900_employee_reinvitation.sql` is additive; applied migrat
 
 Local checks completed: **216/216 desktop/mobile browser cases**, production build/typecheck, **75/75 real local integration cases (10 new regressions), without skips**, and the isolated **0008→0009 compatibility smoke**. The latter preserves existing people, PINs and devices, rejects a mismatched prior migration ledger without changes, and verifies **62 functions, 22 private tables, grants, constraints and nine canonical ledger entries** with zero failures. New integration cases include PIN lockout, preserved device approval, concurrent reinvitations, both owner-restoration race orders, stale pre-deletion links and Auth deletion cleanup. The real browser smoke also passed without API mocks: owner UI deletion and fresh QR generation/decoding, same-browser return, a second deletion and reinvitation from a different browser, pending-approval reload, owner inbox approval and successful PIN entry all retain the original employee ID. Synthetic accounts and businesses were removed.
 
-Release order:
+Historical release order (superseded; do not execute against current production):
 
 1. Run `node tests/integration/employee-rejoin-migration-smoke.mjs` on the isolated loopback stack. It creates and removes its own disposable databases, without resetting a shared stack.
 2. Run `node scripts/prepare-employee-rejoin-release.mjs`. It refuses source hashes or canonical ledgers that differ from the tested evidence and emits guarded migration SQL plus a read-only verification query in `/tmp/pos-employee-rejoin-*`.
 3. After PR checks and integration, apply the guarded SQL to the configured Supabase project, then confirm all verification arrays are empty. The canonical statement counts are **44/48/27/23/29/21/16/26/11**.
 4. Publish the merged `main` through **Deploy Cloudflare Pages**, then run the public asset gate. Until publication, restore the original employee under **Empleados eliminados** as a workaround.
+
+For current releases use [permanent employee unlinking](employee-permanent-unlink.md) and [DEPLOYMENT.md](../DEPLOYMENT.md): authorized, compatible backend changes precede the dependent frontend merge, which publishes automatically. The restoration workaround above is retired.
 
 The browser link remains specific to a browser installation, and notifications remain in-app. Physical camera scanning and authenticated operations on human production accounts are separate checks.
