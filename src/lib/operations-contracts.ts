@@ -27,7 +27,7 @@ export interface OperationalOrder {
 export interface KitchenBatch {
   id: string; orderId: string; orderName: string; tableName: string | null; createdAt: string
   revision: number; status: 'queued' | 'preparing' | 'ready' | 'delivered'; kind: 'items' | 'cancellation'
-  reason: string; items: { lineId: string; name: string; selectionLabel: string; note: string; quantity: number }[]
+  reason: string; fullyCancelled: boolean; items: { lineId: string; name: string; selectionLabel: string; note: string; quantity: number; cancelledQuantity?: number }[]
 }
 export type AttemptStatus = 'prepared' | 'collection_started' | 'completed' | 'aborted' | 'uncertain'
 export interface CheckoutSelection { lineId: string; quantity: number }

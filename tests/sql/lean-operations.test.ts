@@ -61,7 +61,7 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     order=await execute(actor,{command:'cancel_order',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,reason:'Cliente cancela antes de preparar'})
     expect(order.status).toBe('cancelled')
     const batches=(await execute<{batches:KitchenBatch[]}>(actor,{command:'kitchen'})).batches
-    expect(batches.find(b=>b.id===first.id)).toEqual(first);expect(batches.find(b=>b.kind==='cancellation')?.items[0].quantity).toBe(2)
+    expect(batches.find(b=>b.id===first.id)).toEqual({...first,revision:first.revision+1,fullyCancelled:true,items:first.items.map(item=>({...item,cancelledQuantity:item.quantity}))});expect(batches.find(b=>b.kind==='cancellation')?.items[0].quantity).toBe(2)
     let prepared=await newOrder(actor,product)
     prepared=await execute(actor,{command:'send_order',operationId:randomUUID(),orderId:prepared.id,expectedRevision:prepared.revision})
     const batch=(await execute<{batches:KitchenBatch[]}>(actor,{command:'kitchen'})).batches.find(b=>b.orderId===prepared.id)!
