@@ -50,11 +50,16 @@ export interface BusinessDayReport {
 export interface OperationsSnapshot { enabled: boolean; shift: CashShift | null; orders: OperationalOrder[]; tables: DiningTable[]; attempts: CheckoutAttempt[]; pendingKitchenCount?: number }
 
 export type ReportPeriod = 'day' | 'week' | 'month'
+export interface ReportSeriesPoint {
+  start: string; end: string; slot: string; label: string
+  salesCents: number; reversalCents: number; netCents: number; saleCount: number; future: boolean
+}
 export interface BusinessPeriodReport {
   period: ReportPeriod; startDate: string; endDate: string; timezone: string; partial: boolean
   comparisonStartDate: string; comparisonEndDate: string; comparisonComparable: boolean; asOf: string
+  cutoff: string; previousCutoff: string
   totals: BusinessDayReport; previous: BusinessDayReport
-  series: { start: string; label: string; salesCents: number; future: boolean }[]
+  series: ReportSeriesPoint[]; previousSeries: ReportSeriesPoint[]
 }
 
 export type OperationsCommand =

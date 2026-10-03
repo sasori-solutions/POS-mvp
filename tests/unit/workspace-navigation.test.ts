@@ -4,8 +4,8 @@ import type { BusinessContext } from '../../src/lib/contracts'
 
 test('the protected owner enters management and can use the same operational workspace', () => {
   expect(initialDestination({ role: 'owner' })).toBe('Inicio')
-  expect(primaryDestinations({ role: 'owner' }, false)).toEqual(['Inicio', 'Ventas', 'Productos', 'Reportes', 'Más'])
-  expect(primaryDestinations({ role: 'owner' }, true)).toEqual(['Venta', 'Comandas', 'Ventas', 'Más'])
+  expect(primaryDestinations({ role: 'owner' }, false)).toEqual(['Inicio', 'Ventas', 'Productos', 'Reportes'])
+  expect(primaryDestinations({ role: 'owner' }, true)).toEqual(['Venta', 'Comandas', 'Ventas'])
 })
 
 test.each([

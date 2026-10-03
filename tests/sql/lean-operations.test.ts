@@ -134,6 +134,101 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     await expect(execute(owner,{command:'report_period',date:'2026-01-01',period:'year'} as unknown as PosCommand)).rejects.toThrow('VALIDATION_ERROR')
   })
 
+  it('keeps chart snapshot sums exact across refunds, discounts and the exclusive asOf cutoff',async()=>{
+    const owner=await newActor();await activate(owner);await open(owner)
+    const product=await newProduct(owner)
+    const prior=await pay(owner,await newOrder(owner,product),'cash')
+    let order=await newOrder(owner,product,2)
+    order=await execute(owner,{command:'set_order_discount',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,discount:{kind:'fixed',value:3,reason:'Descuento sintético'}})
+    const current=await pay(owner,order,'transfer'),boundary=await pay(owner,await newOrder(owner,product),'card_external')
+    for(const [id,time] of [[prior.saleId,'2026-10-02T18:10:00Z'],[current.saleId,'2026-10-03T18:10:00Z'],[boundary.saleId,'2026-10-03T18:30:00Z']]) await db.query('update app_private.sales set created_at=$1 where id=$2',[time,id])
+    let refund=await execute<CheckoutAttempt>(owner,{command:'prepare_reversal',operationId:randomUUID(),saleId:prior.saleId!,reason:'Venta anterior'})
+    refund=await execute(owner,{command:'start_checkout',operationId:randomUUID(),attemptId:refund.id,expectedRevision:refund.revision})
+    await execute(owner,{command:'resolve_checkout',operationId:randomUUID(),attemptId:refund.id,expectedRevision:refund.revision,resolution:'complete',confirmed:true,reason:'Dinero devuelto'})
+    await db.query("update app_private.sale_reversals set created_at='2026-10-03T18:15:00Z' where sale_id=$1",[prior.saleId])
+    const report=await reportAt(owner,'2026-10-03','day','2026-10-03T18:30:00Z')
+    expect(report).toMatchObject({partial:true,comparisonComparable:true,totals:{grossCents:2002,discountCents:3,salesCents:1999,reversalCents:1001,netCents:998,saleCount:1},previous:{salesCents:1001,saleCount:1}})
+    expect(new Date(report.cutoff).toISOString()).toBe('2026-10-03T18:30:00.000Z')
+    expect(new Date(report.previousCutoff).toISOString()).toBe('2026-10-02T18:30:00.000Z')
+    for(const [series,totals] of [[report.series,report.totals],[report.previousSeries,report.previous]] as const) {
+      for(const field of ['salesCents','reversalCents','netCents','saleCount'] as const) expect(series.reduce((sum,p)=>sum+p[field],0)).toBe(totals[field])
+      expect(totals.grossCents-totals.discountCents).toBe(totals.salesCents)
+      expect(totals.salesCents-totals.reversalCents).toBe(totals.netCents)
+    }
+    expect(report.series.find(p=>p.slot==='hour:12:00:0')).toMatchObject({salesCents:1999,reversalCents:1001,netCents:998,saleCount:1,future:false})
+    expect(report.series.filter(p=>p.future).every(p=>p.salesCents===0 && p.reversalCents===0 && p.netCents===0 && p.saleCount===0)).toBe(true)
+  })
+
+  it('distinguishes real empty and zero-value buckets from calendar slots that do not exist',async()=>{
+    const owner=await newActor();await activate(owner);await open(owner)
+    const product=await newProduct(owner,0),sale=await pay(owner,await newOrder(owner,product),'cash')
+    await db.query("update app_private.sales set created_at='2026-02-28T17:00:00Z' where id=$1",[sale.saleId])
+    const report=await reportAt(owner,'2026-02-28','month','2026-03-01T06:00:00Z')
+    expect(report.series).toHaveLength(28);expect(report.previousSeries).toHaveLength(31)
+    expect(report.comparisonComparable).toBe(true)
+    expect(report.series.find(p=>p.slot==='day:28')).toMatchObject({salesCents:0,saleCount:1,future:false})
+    expect(report.series.find(p=>p.slot==='day:27')).toMatchObject({salesCents:0,saleCount:0,future:false})
+    expect(report.series.find(p=>p.slot==='day:29')).toBeUndefined()
+    const negative=await reportAt(owner,'2026-04-01','day','2026-04-01T06:00:00Z')
+    expect(negative.series).toHaveLength(24);expect(negative.series.every(p=>p.future)).toBe(true)
+  })
+
+  it('keeps 23 and 25 real hourly buckets and omits inequivalent partial DST comparisons',async()=>{
+    const owner=await newActor();await db.query("update app_private.businesses set timezone='America/Chicago' where id=$1",[owner.businessId])
+    const spring=await reportAt(owner,'2026-03-08','day','2026-03-10T12:00:00Z')
+    expect(spring.series).toHaveLength(23);expect(spring.previousSeries).toHaveLength(24)
+    expect(spring.series.some(p=>p.slot==='hour:02:00:0')).toBe(false)
+    const fall=await reportAt(owner,'2026-11-01','day','2026-11-03T12:00:00Z')
+    expect(fall.series).toHaveLength(25)
+    expect(fall.series.filter(p=>p.label==='01:00').map(p=>p.slot)).toEqual(['hour:01:00:0','hour:01:00:1'])
+    expect(new Set(fall.series.map(p=>p.start)).size).toBe(25)
+    expect(fall.comparisonComparable).toBe(true)
+    expect(fall.series.every(p=>new Date(p.end).getTime()>new Date(p.start).getTime())).toBe(true)
+    for(const [date,asOf] of [['2026-03-08','2026-03-08T08:30:00Z'],['2026-03-09','2026-03-09T07:30:00Z'],['2026-11-01','2026-11-01T06:30:00Z'],['2026-11-02','2026-11-02T07:30:00Z']]) {
+      expect((await reportAt(owner,date,'day',asOf)).comparisonComparable).toBe(false)
+    }
+    const unique=(await db.query<{matches:number}>("select matches::integer from app_private.ops_local_cutoff(timestamp '2026-03-08 02:30','America/Chicago')")).rows[0].matches
+    const repeated=(await db.query<{matches:number}>("select matches::integer from app_private.ops_local_cutoff(timestamp '2026-11-01 01:30','America/Chicago')")).rows[0].matches
+    expect([unique,repeated]).toEqual([0,2])
+  })
+
+  it('caps previous partial months, excludes future windows and keeps one cutoff for every metric',async()=>{
+    const owner=await newActor()
+    const partial=await reportAt(owner,'2026-03-15','month','2026-03-15T18:30:00Z')
+    expect(partial).toMatchObject({partial:true,comparisonComparable:true,startDate:'2026-03-01',comparisonStartDate:'2026-02-01'})
+    expect(new Date(partial.previousCutoff).toISOString()).toBe('2026-02-15T18:30:00.000Z')
+    expect(partial.series.find(p=>p.slot==='day:15')?.future).toBe(false)
+    expect(partial.previousSeries.find(p=>p.slot==='day:16')?.future).toBe(true)
+    const tooLong=await reportAt(owner,'2026-03-30','month','2026-03-30T18:30:00Z')
+    expect(tooLong.comparisonComparable).toBe(false)
+    expect(new Date(tooLong.previousCutoff).toISOString()).toBe('2026-03-01T06:00:00.000Z')
+    const future=await reportAt(owner,'2026-04-03','day','2026-04-02T18:00:00Z')
+    expect(future).toMatchObject({partial:false,comparisonComparable:false,totals:{salesCents:0,reversalCents:0,saleCount:0},previous:{salesCents:0,reversalCents:0,saleCount:0}})
+    expect(future.series.every(p=>p.future)).toBe(true);expect(future.previousSeries.every(p=>p.future)).toBe(true)
+    expect(new Date(future.cutoff).toISOString()).toBe('2026-04-03T06:00:00.000Z')
+    expect(new Date(future.previousCutoff).toISOString()).toBe('2026-04-02T06:00:00.000Z')
+  })
+
+  it('preserves registered IVA without inventing a tax rate or repairing legacy snapshots',async()=>{
+    const owner=await newActor();await activate(owner);await open(owner)
+    const product=await newProduct(owner,11600)
+    const known=await pay(owner,await newOrder(owner,product),'cash'),unknown=await pay(owner,await newOrder(owner,product),'cash')
+    await db.query('update app_private.sale_items set tax_treatment=null,tax_bps=null where sale_id=$1',[known.saleId])
+    await db.query('update app_private.sale_items set tax_treatment=null,tax_bps=null,tax_cents=0 where sale_id=$1',[unknown.saleId])
+    await db.query("update app_private.sales set created_at='2026-10-02T18:00:00Z' where id=any($1::uuid[])",[[known.saleId,unknown.saleId]])
+    const report=await reportAt(owner,'2026-10-02','day','2026-10-03T18:30:00Z')
+    expect(report.totals).toMatchObject({salesCents:23200,taxCents:1600,grossCents:23200,discountCents:0})
+    expect((await db.query<{tax_bps:null;tax_treatment:null}>('select tax_bps,tax_treatment from app_private.sale_items where sale_id=$1',[known.saleId])).rows[0]).toEqual({tax_bps:null,tax_treatment:null})
+  })
+
+  it('keeps every analytics helper private with an empty search path',async()=>{
+    const signatures=['app_private.ops_report_series(uuid,date,date,text,text,timestamptz)','app_private.ops_local_cutoff(timestamp,text)','app_private.ops_period_report_at(uuid,date,text,timestamptz)','app_private.ops_period_report(uuid,date,text)']
+    for(const signature of signatures) {
+      const privileges=(await db.query<{anon:boolean;authenticated:boolean;service:boolean;settings:string[]}>('select has_function_privilege(\'anon\',$1,\'execute\') anon,has_function_privilege(\'authenticated\',$1,\'execute\') authenticated,has_function_privilege(\'service_role\',$1,\'execute\') service,proconfig settings from pg_proc where oid=$1::regprocedure',[signature])).rows[0]
+      expect(privileges).toEqual({anon:false,authenticated:false,service:true,settings:['search_path=""']})
+    }
+  })
+
   it('permits refund-only staff to recover reversals without exposing cash amounts or other payment attempts',async()=>{
     const owner=await newActor();await activate(owner);await open(owner,50000)
     const staff=await newActor(owner.businessId,['sales.read_all','sales.reverse'])
@@ -168,6 +263,8 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     await db.query("update app_private.sale_reversals set created_at=clock_timestamp()-interval '1 second' where business_id=$1",[owner.businessId])
     const today=await execute<BusinessPeriodReport>(owner,{command:'report_period',date:day,period:'day'})
     expect(today.totals).toMatchObject({salesCents:0,saleCount:0,reversalCents:1001,netCents:-1001})
+    expect(today.series.reduce((sum,p)=>sum+p.reversalCents,0)).toBe(1001)
+    expect(today.series.reduce((sum,p)=>sum+p.netCents,0)).toBe(-1001)
   })
 
   it('records payment and comanda with one command, closes the paid order and safely replays after closing the shift',async()=>{
@@ -627,6 +724,9 @@ async function newActor(existingBusiness?:string,permissions?:string[]):Promise<
 async function execute<T=unknown>(actor:Actor,command:PosCommand):Promise<T> {
  const result=(await db.query<{result:{data:T;error?:{code:string}}}>("select public.account_secure($1,$2,'pos',$3::jsonb,$4,$5) result",[actor.userId,actor.sessionId,JSON.stringify({action:'pos',businessId:actor.businessId,operatorToken:actor.token,...command}),actor.keyHash,randomUUID()])).rows[0].result
  if(result.error) throw new Error(result.error.code);return result.data
+}
+async function reportAt(actor:Actor,date:string,period:'day'|'week'|'month',asOf:string):Promise<BusinessPeriodReport> {
+ return (await db.query<{report:BusinessPeriodReport}>('select app_private.ops_period_report_at($1,$2::date,$3,$4::timestamptz) report',[actor.businessId,date,period,asOf])).rows[0].report
 }
 async function activate(actor:Actor){await execute(actor,{command:'activate_operations',operationId:randomUUID()})}
 async function open(actor:Actor,openingCents=0){return execute<CashShift>(actor,{command:'open_shift',operationId:randomUUID(),openingCents})}

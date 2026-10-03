@@ -1,8 +1,7 @@
-import type { AccountClientError } from '../../lib/account'
-import type { PosAccess } from '../../lib/pos'
-import ReportDashboard from './ReportDashboard'
+import ReportDashboard, { type ReportTab } from './ReportDashboard'
+import type { ReportController } from './usePeriodReport'
 export { businessDate } from '../../lib/reporting'
 
-export default function ReportsScreen({ access, timezone, onSessionError }: { access: PosAccess; timezone: string; onSessionError?: (error: AccountClientError) => void }) {
-  return <ReportDashboard access={access} timezone={timezone} onSessionError={onSessionError} detailed />
+export default function ReportsScreen({ controller, tab, onTabChange }: { controller: ReportController; tab: ReportTab; onTabChange: (tab: ReportTab) => void }) {
+  return <ReportDashboard controller={controller} tab={tab} onTabChange={onTabChange} detailed />
 }

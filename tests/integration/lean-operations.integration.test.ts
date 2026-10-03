@@ -45,6 +45,13 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     expect(current.totals).toEqual(daily)
     expect(current.totals).toMatchObject({ salesCents: 1001, saleCount: 1 })
     expect(current.series.reduce((sum, point) => sum + point.salesCents, 0)).toBe(1001)
+    expect(current.cutoff).toBe(current.asOf)
+    expect(current.previousSeries.length).toBeGreaterThan(0)
+    for (const field of ['salesCents', 'reversalCents', 'netCents', 'saleCount'] as const) {
+      expect(current.series.reduce((sum, point) => sum + point[field], 0)).toBe(current.totals[field])
+      expect(current.previousSeries.reduce((sum, point) => sum + point[field], 0)).toBe(current.previous[field])
+    }
+    expect(current.series.every(point => point.slot.startsWith('hour:') && new Date(point.end) > new Date(point.start))).toBe(true)
     expect(current).toMatchObject({ partial: true, comparisonComparable: true })
     const week = data(await pos<BusinessPeriodReport>(owner, { ...command, period: 'week' }))
     expect(week.series).toHaveLength(7)

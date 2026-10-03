@@ -40,7 +40,6 @@ import {
   invitationFromLink,
   preferredBusiness,
   rememberBusiness,
-  roleLabels,
 } from "./lib/business-access";
 const InvitationScanner = lazy(() => import("./components/InvitationScanner"));
 import type { Destination } from "./components/HomeScreen";
@@ -54,19 +53,18 @@ const NotificationsPanel = lazy(
 );
 const DeviceLogin = lazy(() => import("./components/DeviceLogin"));
 const PinUnlockScreen = lazy(() => import("./components/PinUnlockScreen"));
-const loadingView = (
-  <section
-    className="screen flex flex-col max-compact:flex-1 loading-screen items-center gap-5 pt-18"
-    aria-live="polite"
-    aria-busy="true"
-  >
-    <span
-      className="loader size-6 animate-spin rounded-full border-2 border-line border-t-brand motion-reduce:animate-none"
-      aria-hidden="true"
-    />
-    <p>Preparando tu acceso…</p>
-  </section>
-);
+function LoadingScreen() {
+  return (
+    <section
+      className="loading-screen"
+      role="status"
+    >
+      <span className="loader" aria-hidden="true" />
+      <p>Preparando tu acceso…</p>
+    </section>
+  );
+}
+const loadingView = <LoadingScreen />;
 const DevelopmentLogin =
   import.meta.env.DEV && developmentLoginEnabled
     ? lazy(() => import("./development/DevelopmentLogin"))
@@ -1219,14 +1217,14 @@ function AccountApp() {
     navigate(next);
   }
 
-  function changePin() {
+  function changePin(returnFocus = "pin") {
     if (!operatorRef.current || busy) return;
     setCurrentPin("");
     setPin("");
     setConfirmation("");
     setError("");
     pinChangeOperation.current = null;
-    openMoreScreen("change-pin", "pin");
+    openMoreScreen("change-pin", returnFocus);
   }
 
   async function logout() {
@@ -1278,6 +1276,10 @@ function AccountApp() {
   const isHome = screen === "home" && Boolean(operator);
   const isReady = screen === "ready" && Boolean(operator);
   const isWorkspace = Boolean(operator) && (isHome || isManagement || screen === 'change-pin');
+  const identityName = session?.user.user_metadata.full_name ?? session?.user.user_metadata.name;
+  const accountName = typeof identityName === 'string' && identityName.trim()
+    ? identityName.trim()
+    : session?.user.email ?? 'Mi cuenta';
   const managementContent = screen === 'change-pin' && operator ? (
     <section className="screen flex flex-col max-compact:flex-1">
       <button
@@ -1402,7 +1404,7 @@ function AccountApp() {
 
   return (
     <div
-      className={`app-shell flex min-h-dvh flex-col ${isWorkspace ? "pos-shell" : isReady ? "home-shell" : ""}`}
+      className={`app-shell flex min-h-dvh flex-col ${isWorkspace ? "pos-shell" : isReady ? "home-shell" : screen === "unlock" ? "pin-unlock-shell" : ""}`}
     >
       <a
         className="sr-only fixed top-3 left-3 z-50 rounded-lg bg-ink px-4 py-3 text-white focus:not-sr-only"
@@ -1410,7 +1412,7 @@ function AccountApp() {
       >
         Ir al contenido
       </a>
-      {!isWorkspace && screen !== "unlock" && (
+      {!isWorkspace && screen !== "unlock" && screen !== "loading" && (
         <header className="app-header flex h-22 shrink-0 items-center justify-between gap-4 px-10 max-compact:h-19 max-compact:px-6">
           <span className="wordmark inline-flex items-center gap-2.5 text-[17px] font-semibold tracking-tight max-compact:text-base">
             POS México
@@ -1441,9 +1443,11 @@ function AccountApp() {
               ? "business-home mx-auto mt-16 w-full max-w-260 flex-1 px-10 pb-16 max-compact:mt-8 max-compact:flex max-compact:px-6 max-compact:pb-10"
               : isManagement
                 ? "management-main mx-auto mt-6 w-full max-w-260 flex-1 px-10 max-compact:mt-4 max-compact:px-6"
-                : screen === "unlock"
-                  ? "pin-unlock-main flex w-full flex-1 bg-white"
-                  : "auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10"
+                : screen === "loading"
+                  ? "loading-main flex w-full flex-1"
+                  : screen === "unlock"
+                    ? "pin-unlock-main flex w-full flex-1"
+                    : "auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10"
         }
       >
         <Suspense fallback={loadingView}>
@@ -1459,17 +1463,7 @@ function AccountApp() {
               </p>
             </section>
           ) : screen === "loading" ? (
-            <section
-              className="screen flex flex-col max-compact:flex-1 loading-screen items-center gap-5 pt-18"
-              aria-live="polite"
-              aria-busy="true"
-            >
-              <span
-                className="loader size-6 animate-spin rounded-full border-2 border-line border-t-brand motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              <p>Preparando tu acceso…</p>
-            </section>
+            loadingView
           ) : screen === "login" ? (
             <section className="screen flex flex-col max-compact:flex-1 login-screen [&_h1]:text-[40px] [&_h1]:leading-[1.12] [&_h1]:tracking-tight [&>p]:mt-5 [&>p]:max-w-90 max-compact:[&_h1]:text-4xl">
               <div className="screen-icon mb-8 grid size-16 place-items-center rounded-2xl border border-line max-compact:mb-7">
@@ -2019,11 +2013,6 @@ function AccountApp() {
                           </span>
                           <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
                             <span className="block font-medium">{business.name}</span>
-                            {business.role && (
-                              <span className="block text-sm text-muted">
-                                {roleLabels[business.role]}
-                              </span>
-                            )}
                           </span>
                           <ChevronRight size={20} aria-hidden="true" />
                         </button>
@@ -2134,6 +2123,7 @@ function AccountApp() {
               managementTitle={managementTitle}
               managementKey={managementContent ? screen : undefined}
               business={operator.business}
+              accountName={accountName}
               operatorToken={operator.operatorToken}
               onSessionError={showFailure}
               onLock={() => void lock()}
@@ -2153,7 +2143,7 @@ function AccountApp() {
               onTeam={() => openMoreScreen("team", "employees")}
               onDevices={() => openMoreScreen("devices", "devices")}
               onSwitchBusiness={changeBusiness}
-              onChangePin={changePin}
+              onChangePin={() => changePin(operator.business.role === "owner" ? "account" : "pin")}
               onNotifications={() =>
                 openMoreScreen("notifications", "notifications")
               }
@@ -2182,7 +2172,7 @@ function AccountApp() {
           )}
         </Suspense>
       </main>
-      {!isWorkspace && screen !== "unlock" && (
+      {!isWorkspace && screen !== "unlock" && screen !== "loading" && (
         <footer className="app-footer px-6 pt-4 pb-[calc(20px+env(safe-area-inset-bottom))] text-center text-xs text-muted">
           POS México
         </footer>

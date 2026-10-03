@@ -10,7 +10,8 @@ export type Destination = WorkSection | 'Inicio' | 'Caja' | 'Reportes' | 'Más'
 export function availableDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>): Destination[] {
   return [...(business.role === 'owner' ? ['Inicio' as const] : []), ...businessWorkSections(business),
     ...(hasPermission(business, 'cash.read') ? ['Caja' as const] : []),
-    ...(hasPermission(business, 'reports.read') ? ['Reportes' as const] : []), 'Más']
+    ...(hasPermission(business, 'reports.read') ? ['Reportes' as const] : []),
+    ...(business.role === 'owner' ? [] : ['Más' as const])]
 }
 
 export function initialDestination(business: Pick<BusinessContext, 'role' | 'permissions'>): Destination {
@@ -18,11 +19,11 @@ export function initialDestination(business: Pick<BusinessContext, 'role' | 'per
 }
 
 export function primaryDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>, operating: boolean): Destination[] {
-  if (business.role === 'owner' && !operating) return ['Inicio', 'Ventas', 'Productos', 'Reportes', 'Más']
+  if (business.role === 'owner' && !operating) return ['Inicio', 'Ventas', 'Productos', 'Reportes']
   const allowed = availableDestinations(business)
   const primary: Destination[] = ['Venta', 'Comandas', 'Ventas'].filter((d): d is WorkSection => allowed.includes(d as Destination))
   if (!primary.length && initialDestination(business) !== 'Más') primary.push(initialDestination(business))
-  return [...primary, 'Más']
+  return business.role === 'owner' ? primary : [...primary, 'Más']
 }
 
 export function businessWorkSections(business: Pick<BusinessContext, 'role' | 'permissions'>): WorkSection[] {

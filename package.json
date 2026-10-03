@@ -33,7 +33,9 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "react-number-format": "^5.4.5"
+    "react-is": "19.3.0",
+    "react-number-format": "^5.4.5",
+    "recharts": "3.10.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

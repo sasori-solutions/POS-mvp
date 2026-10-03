@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowLeftRight,
-  Bell,
   ChevronRight,
   KeyRound,
   LockKeyhole,
@@ -9,8 +7,6 @@ import {
   Package,
   Wallet,
   ChartNoAxesCombined,
-  Store,
-  Tablet,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -18,7 +14,8 @@ import type { BusinessContext } from "../lib/contracts";
 import { availableDestinations, initialDestination, type Destination } from "../lib/navigation";
 export type { Destination } from "../lib/navigation";
 import WorkspaceShell from "./WorkspaceShell";
-import ReportDashboard from "../features/operations/ReportDashboard";
+import ReportDashboard, { type ReportTab } from "../features/operations/ReportDashboard";
+import { useReportController } from "../features/operations/usePeriodReport";
 import { hasPermission } from "../lib/business-access";
 import type { OperationsResponses, OperationalOrder, OrderInputLine, CheckoutAttempt } from "../lib/operations-contracts";
 import type { CartLine, ItemSelection, Product } from "../lib/pos-contracts";
@@ -40,6 +37,7 @@ import OrderEditor from "../features/operations/OrderEditor";
 
 interface HomeScreenProps {
   business: BusinessContext;
+  accountName?: string;
   operatorToken: string;
   deviceToken?: string;
   onSessionError?: (error: AccountClientError) => void;
@@ -67,6 +65,7 @@ interface HomeScreenProps {
 
 export default function HomeScreen({
   business,
+  accountName,
   operatorToken,
   deviceToken,
   onSessionError,
@@ -117,6 +116,10 @@ export default function HomeScreen({
   const [saleVisited, setSaleVisited] = useState(active === 'Venta');
   useEffect(() => { if (active === 'Venta') setSaleVisited(true); }, [active]);
   const access = { businessId: business.id, operatorToken, deviceToken };
+  const [reportTab, setReportTab] = useState<ReportTab>('sales');
+  const analytics = useReportController(access, business.timezone, onSessionError,
+    !managementContent && (active === 'Inicio' || active === 'Reportes'), hasPermission(business, 'reports.read'));
+  useEffect(() => { setReportTab('sales'); }, [operatorScope]);
   const catalog = useCatalog(
     access,
     hasPermission(business, 'catalog.read') && !managementContent && (active === 'Venta' || active === 'Productos' || Boolean(editingOrder || selectedOrder)),
@@ -253,13 +256,18 @@ export default function HomeScreen({
     onDestinationChange?.(next);
   }
   useEffect(() => {
-    if (focusOnReturn)
-      more.current
-        ?.querySelector<HTMLButtonElement>(
-          `[data-more-item="${focusOnReturn}"]`,
-        )
-        ?.focus();
-  }, [focusOnReturn]);
+    if (!focusOnReturn || managementContent) return;
+    const moreAction = more.current?.querySelector<HTMLButtonElement>(
+      `[data-more-item="${focusOnReturn}"]`,
+    );
+    const workspaceButtons = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('[data-workspace-action]'),
+    ).filter((button) => button.getClientRects().length > 0);
+    const workspaceAction = workspaceButtons.find(
+      (button) => button.dataset.workspaceAction === focusOnReturn,
+    ) ?? workspaceButtons.find((button) => button.dataset.workspaceAction === 'menu');
+    (moreAction ?? workspaceAction)?.focus();
+  }, [focusOnReturn, managementContent, active]);
   function row(
     id: string,
     label: string,
@@ -271,29 +279,29 @@ export default function HomeScreen({
     return (
       <button
         type="button"
-        className="pos-menu-row flex min-h-14 w-full items-center gap-4 border-0 border-b border-line bg-transparent py-4 text-left hover:bg-surface [&>svg]:shrink-0"
+        className="pos-menu-row"
         data-more-item={id}
         aria-label={label}
         aria-describedby={description ? `more-${id}-help` : undefined}
         disabled={busy}
         onClick={action}
       >
-        <Icon size={21} strokeWidth={1.6} aria-hidden="true" />
+        <Icon className="pos-menu-icon" size={21} strokeWidth={1.6} aria-hidden="true" />
         <span className="pos-menu-copy flex min-w-0 flex-1 flex-col gap-1 [&>span]:font-medium [&_small]:text-sm [&_small]:text-muted">
           <span>{label}</span>
           {description && <small id={`more-${id}-help`}>{description}</small>}
         </span>
         {navigates && (
-          <ChevronRight size={18} strokeWidth={1.6} aria-hidden="true" />
+          <ChevronRight className="pos-menu-chevron" size={18} strokeWidth={1.6} aria-hidden="true" />
         )}
       </button>
     );
   }
   const title = managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
   return (
-    <WorkspaceShell business={business} active={active} operating={operating && !managementContent} title={title} busy={busy}
-      onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onSettings={onSettings}
-      onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={managementKey}>
+    <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent} title={title} busy={busy}
+      onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin}
+      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={managementKey}>
       {managementContent && <div className="workspace-management">{managementContent}</div>}
       <section
         className="pos-content flex min-w-0 flex-1 flex-col"
@@ -339,9 +347,9 @@ export default function HomeScreen({
           </div>
         )}
         {active === "Inicio" && !managementContent ? (
-          <ReportDashboard access={access} timezone={business.timezone} onSessionError={onSessionError} onSale={() => setActive('Venta')} onCash={() => setActive('Caja')} onTeam={onTeam} />
+          <ReportDashboard controller={analytics} onOpenReport={tab => { setReportTab(tab); setActive('Reportes'); }} />
         ) : active === "Reportes" && !managementContent ? (
-          <ReportsScreen access={access} timezone={business.timezone} onSessionError={onSessionError} />
+          <ReportsScreen controller={analytics} tab={reportTab} onTabChange={setReportTab} />
         ) : active === "Caja" ? (
           snapshot ? <CashScreen business={business} access={access} snapshot={snapshot} mutation={mutation} refresh={operation.refresh} onSessionError={onSessionError} /> : <p role="status">Cargando caja…</p>
         ) : active === "Productos" ? (
@@ -366,54 +374,14 @@ export default function HomeScreen({
           />
         ) : active === "Comandas" ? (
           snapshot ? <OrdersScreen business={business} access={access} snapshot={snapshot} mutation={mutation} onOrder={setSelectedOrder} onNew={() => setEditingOrder({})} refresh={operation.refresh} onSessionError={onSessionError} /> : <p role="status">Cargando comandas…</p>
-        ) : active === "Más" ? (
-          <div className="pos-more mt-6 w-full max-w-160" ref={more}>
+        ) : active === "Más" && !isOwner ? (
+          <div className="pos-more mt-6 w-full max-w-160 tablet:max-w-280" ref={more}>
             {!isOwner && hasPermission(business, 'catalog.read') && <section className="pos-menu-group"><h2>Productos</h2>{row('products','Productos',Package,()=>setActive('Productos'),'Catálogo y disponibilidad autorizada')}</section>}
             {!isOwner && allowed.length === 1 && <p>Tu cuenta no tiene permisos de operación. Pide al dueño que revise tu acceso.</p>}
-            {(hasPermission(business, 'cash.read') || hasPermission(business, 'reports.read')) && <section className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted"><h2>Operación</h2>{hasPermission(business, 'cash.read') && row('cash', 'Caja', Wallet, () => setActive('Caja'), 'Turnos, efectivo y cierre')}{hasPermission(business, 'reports.read') && row('reports', 'Reportes', ChartNoAxesCombined, () => setActive('Reportes'), 'Ventas del día y diferencias de caja')}</section>}
-            {business.role === "owner" && (
-              <section
-                className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted"
-                aria-labelledby="more-business-title"
-              >
-                <h2 id="more-business-title">Negocio</h2>
-                {onNotifications &&
-                  row(
-                    "notifications",
-                    "Notificaciones",
-                    Bell,
-                    onNotifications,
-                    "Solicitudes de cambio de dispositivo",
-                  )}
-                {onSettings &&
-                  row(
-                    "settings",
-                    "Datos del negocio",
-                    Store,
-                    onSettings,
-                    "Nombre, dirección y formas de pago",
-                  )}
-                {onTeam &&
-                  row(
-                    "employees",
-                    "Empleados",
-                    Users,
-                    onTeam,
-                    "Agregar personas y administrar su acceso",
-                  )}
-                {onDevices &&
-                  row(
-                    "devices",
-                    "Dispositivos de caja",
-                    Tablet,
-                    onDevices,
-                    "Tablets y computadoras donde trabaja tu equipo",
-                  )}
-              </section>
-            )}
+            {(hasPermission(business, 'cash.read') || hasPermission(business, 'reports.read')) && <section className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"><h2>Operación</h2>{hasPermission(business, 'cash.read') && row('cash', 'Caja', Wallet, () => setActive('Caja'), 'Turnos, efectivo y cierre')}{hasPermission(business, 'reports.read') && row('reports', 'Reportes', ChartNoAxesCombined, () => setActive('Reportes'), 'Ventas del día y diferencias de caja')}</section>}
             {onChangePin && (
               <section
-                className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted"
+                className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"
                 aria-labelledby="more-access-title"
               >
                 <h2 id="more-access-title">Mi acceso</h2>
@@ -422,17 +390,10 @@ export default function HomeScreen({
               </section>
             )}
             <section
-              className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted"
+              className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"
               aria-labelledby="more-session-title"
             >
               <h2 id="more-session-title">Sesión</h2>
-              {onSwitchBusiness &&
-                row(
-                  "business",
-                  "Cambiar negocio",
-                  ArrowLeftRight,
-                  onSwitchBusiness,
-                )}
               {onSwitchEmployee &&
                 row(
                   "employee",
