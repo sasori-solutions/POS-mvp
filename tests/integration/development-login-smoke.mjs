@@ -16,6 +16,7 @@ const ownerContext = await browser.newContext({ viewport: { width: 1024, height:
 const employeeContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
 let businessId
 let employeeBusinessId
+const businessName = `Dev smoke ${randomUUID().slice(0, 8)}`
 const external = []
 for (const context of [ownerContext, employeeContext]) {
   await context.route('**/*', route => {
@@ -26,6 +27,17 @@ for (const context of [ownerContext, employeeContext]) {
 }
 const owner = await ownerContext.newPage()
 const employee = await employeeContext.newPage()
+const failedAccountResponses = []
+for (const [actor, page] of [['owner', owner], ['employee', employee]]) {
+  page.on('response', async response => {
+    if (!response.url().endsWith('/functions/v1/account') || response.status() < 400) return
+    try {
+      const request = response.request().postDataJSON()
+      const reply = await response.json()
+      failedAccountResponses.push({ actor, action: request.action, command: request.command, status: response.status(), code: reply.error?.code })
+    } catch { /* A discarded response must not expose request credentials in diagnostics. */ }
+  })
+}
 await owner.addInitScript(() => {
   if (!localStorage.getItem('pos-mexico-auth')) localStorage.setItem('pos-mexico-auth', 'hosted-session-placeholder')
 })
@@ -41,7 +53,7 @@ try {
   assert.equal(await owner.evaluate(() => localStorage.getItem('pos-mexico-auth')), 'hosted-session-placeholder', 'Local initialization ignores hosted identity storage')
   await login(owner, 'new')
   await owner.getByRole('button', { name: 'Crear mi negocio', exact: true }).click()
-  await owner.getByLabel('Nombre del negocio').fill(`Dev smoke ${randomUUID().slice(0, 8)}`)
+  await owner.getByLabel('Nombre del negocio').fill(businessName)
   await owner.getByRole('button', { name: 'Continuar', exact: true }).click()
   await owner.getByTestId('pin-input').fill('234567')
   await owner.getByTestId('pin-confirm-input').fill('234567')
@@ -70,8 +82,11 @@ try {
   await owner.getByRole('button', { name: /Empleados/ }).click()
   await owner.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
   await owner.getByLabel('Nombre del empleado').fill('Empleado smoke local')
-  await owner.getByRole('radio', { name: 'Cajero', exact: true }).check()
+  await owner.getByRole('checkbox', { name: 'Cobrar ventas', exact: true }).check()
+  await expect(owner.getByRole('checkbox', { name: 'Consultar productos', exact: true })).toBeChecked()
+  const employeeCreation = response(owner, 'create_employee')
   await owner.getByRole('button', { name: 'Crear invitación', exact: true }).click()
+  assert.deepEqual((await (await employeeCreation).json()).data.permissions, ['catalog.read', 'sales.create'])
   const invitation = await owner.getByLabel('Enlace de invitación', { exact: true }).inputValue()
   await employee.goto(`${origin}/`)
   await login(employee, 'employee')
@@ -88,7 +103,7 @@ try {
   await employee.getByTestId('pin-confirm-input').fill('345678')
   const acceptance = response(employee, 'accept_invitation')
   await employee.getByRole('button', { name: 'Unirme', exact: true }).click()
-  assert.equal((await (await acceptance).json()).data.business.role, 'cashier')
+  assert.deepEqual((await (await acceptance).json()).data.business.permissions, ['catalog.read', 'sales.create'])
   await expect(employee.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible()
   await employee.getByRole('navigation').getByRole('button', { name: 'Productos', exact: true }).click()
   await expect(employee.getByRole('heading', { name: 'Productos', exact: true })).toBeVisible()
@@ -103,7 +118,7 @@ try {
   await employee.getByRole('button', { name: 'Cambiar negocio', exact: true }).click()
   await expect(employee.getByRole('heading', { name: 'Mis negocios', exact: true })).toBeVisible()
   await expect(employee.getByRole('heading', { name: 'Como empleado', exact: true })).toBeVisible()
-  await employee.getByRole('button', { name: /Dev smoke.*Cajero/ }).click()
+  await employee.getByRole('button', { name: new RegExp(businessName) }).click()
   await employee.getByTestId('pin-input').fill('345678')
   await employee.getByRole('button', { name: 'Entrar', exact: true }).click()
   await employee.getByRole('navigation').getByRole('button', { name: 'Más', exact: true }).click()
@@ -136,7 +151,11 @@ try {
   assert.equal((await seedDevelopment(config)).created, false)
   assert.equal(counts(), before, 'Seeding again preserves identities, businesses, products and sales without duplicates')
   assert.deepEqual(external, [], 'No external requests, including Google or hosted Supabase')
+  if (failedAccountResponses.length) console.error(JSON.stringify({ failedAccountResponses }))
   console.log('PASS development UI: password login, business/PIN, persisted product/sale, owned and employee business selection, logout/relogin, a product created after employee login, device reload and non-destructive reseeding, without Google.')
+} catch (error) {
+  console.error(JSON.stringify({ failedAccountResponses }))
+  throw error
 } finally {
   await browser.close()
   for (const cleanupId of [businessId, employeeBusinessId].filter(Boolean)) {
