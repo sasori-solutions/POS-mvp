@@ -1,4 +1,5 @@
 import { parseProductDetails, parseSelection } from './product-validation.ts'
+import { parseOperationsCommand } from './operations-validation.ts'
 import type { PosCommand, SaleInputLine } from '../../../src/lib/pos-contracts.ts'
 import type { PaymentMethod } from '../../../src/lib/contracts.ts'
 import { isUuid, RequestValidationError } from './validation.ts'
@@ -20,6 +21,8 @@ function text(value: unknown, min: number, max: number): string {
 }
 
 export function parsePosCommand(input: Record<string, unknown>, accessKeys: string[]): PosCommand {
+  const operation = parseOperationsCommand(input, accessKeys)
+  if (operation) return operation
   const keys = (extra: string[]) => exactKeys(input, [...accessKeys, 'command', ...extra])
   switch (input.command) {
     case 'catalog': keys([]); return { command: 'catalog' }

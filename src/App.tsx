@@ -17,7 +17,7 @@ import {
   LogOut,
   Store,
 } from "lucide-react";
-import { accountRequest, AccountClientError } from "./lib/account";
+import { accountRequest, AccountClientError, accountErrorMessages } from "./lib/account";
 import type {
   AccountErrorCode,
   BusinessContext,
@@ -152,6 +152,7 @@ function entryIntent() {
   };
 }
 const accountMessages: Record<AccountErrorCode | "NETWORK_ERROR", string> = {
+  ...accountErrorMessages,
   PRODUCT_CHANGED: "El producto cambió. Revisa la cuenta antes de cobrar.",
   PRODUCT_UNAVAILABLE: "Un producto ya no está disponible. Revisa la venta.",
   SALE_NOT_FOUND: "No encontramos esta venta.",

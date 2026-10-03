@@ -1,6 +1,7 @@
 export type VatTreatment = 'vat_16' | 'vat_0' | 'exempt' | 'border_8' | 'unconfigured'
 
 import type { PaymentMethod } from './contracts.ts'
+import type { OperationsCommand, OperationsResponses, OperationsErrorCode } from './operations-contracts.ts'
 
 export interface Variation {
   id: string; name: string; priceCents: number; sku: string; barcode: string; soldOut: boolean
@@ -83,6 +84,7 @@ export interface Sale extends SaleSummary {
 export interface SaleCursor { createdAt: string; id: string }
 
 export type PosCommand =
+  | OperationsCommand
   | { command: 'catalog' }
   | ({ command: 'save_product'; operationId: string } & ProductInput)
   | { command: 'set_product_active'; operationId: string; productId: string; expectedVersion: number; active: boolean }
@@ -93,7 +95,7 @@ export type PosCommand =
   | { command: 'sales'; cursor: SaleCursor | null }
   | { command: 'sale'; saleId: string }
 
-export interface PosResponses {
+export interface PosResponses extends OperationsResponses {
   catalog: { products: Product[]; paymentMethods: PaymentMethod[] }
   save_product: Product
   set_product_active: Product
@@ -105,4 +107,4 @@ export interface PosResponses {
   sale: Sale
 }
 
-export type PosErrorCode = 'PRODUCT_CHANGED' | 'PRODUCT_UNAVAILABLE' | 'SALE_NOT_FOUND' | 'PAYMENT_METHOD_DISABLED'
+export type PosErrorCode = 'PRODUCT_CHANGED' | 'PRODUCT_UNAVAILABLE' | 'SALE_NOT_FOUND' | 'PAYMENT_METHOD_DISABLED' | OperationsErrorCode

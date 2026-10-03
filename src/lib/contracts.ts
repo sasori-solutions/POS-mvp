@@ -15,6 +15,7 @@ export const permissionPrerequisites: Partial<Record<BusinessPermission, Busines
   'sales.discount': 'sales.create', 'sales.reverse': 'sales.read_all',
   'orders.manage': 'orders.read', 'orders.cancel': 'orders.read', 'kitchen.operate': 'kitchen.read',
   'cash.open': 'cash.read', 'cash.move': 'cash.read', 'cash.close': 'cash.read',
+  'tables.manage': 'orders.read',
 }
 export type PaymentMethod = 'cash' | 'card_external' | 'transfer'
 
