@@ -101,7 +101,8 @@ export default function HomeScreen({
   const [morePage, setMorePage] = useState<"menu" | "cash" | "reports">("menu");
   const [selectedOrder, setSelectedOrder] = useState<OperationalOrder | null>(null);
   const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder; tableId?: string } | null>(null);
-  const [savedCounterId, setSavedCounterId] = useState<string>();
+  const [savedCounter, setSavedCounter] = useState<OperationalOrder | null>(null);
+  const counterOrderId = useRef<string | null>(null);
   const destination = selectedDestination ?? localDestination;
   const access = { businessId: business.id, operatorToken, deviceToken };
   const catalog = useCatalog(
@@ -113,16 +114,41 @@ export default function HomeScreen({
   const operation = useOperations(access, canOperate, onSessionError);
   const mutation = useOperationalMutation(access, business.employee?.id ?? 'owner', onSessionError);
   const snapshot = operation.snapshot;
-  const order = snapshot?.orders.find(o => o.id === selectedOrder?.id) ?? selectedOrder;
+  const selectedSnapshot = snapshot?.orders.find(o => o.id === selectedOrder?.id);
+  const order = selectedSnapshot && selectedSnapshot.revision >= (selectedOrder?.revision ?? 0)
+    ? selectedSnapshot : selectedOrder;
+  const counterSnapshot = snapshot?.orders.find(o => o.id === savedCounter?.id);
+  const counter = counterSnapshot && counterSnapshot.revision >= (savedCounter?.revision ?? 0)
+    ? counterSnapshot : savedCounter;
+  useEffect(() => {
+    if (counterSnapshot && counterSnapshot.revision > (savedCounter?.revision ?? 0)) setSavedCounter(counterSnapshot);
+  }, [counterSnapshot, savedCounter?.revision]);
+  function orderSaved(saved: OperationalOrder) {
+    if (saved.id === counterOrderId.current) setSavedCounter(saved);
+    setSelectedOrder(saved);
+  }
   useEffect(() => {
     if (mutation.lastResult?.command !== 'save_order') return;
     const saved = mutation.lastResult.result as OperationalOrder;
-    if (!saved.tableId && saved.name === 'Mostrador') { setSavedCounterId(saved.id); setSelectedOrder(saved); }
+    if (saved.id === counterOrderId.current) { setSavedCounter(saved); setSelectedOrder(saved); }
   }, [mutation.lastResult]);
   async function saveCounter(cart: CartLine[]) {
-    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId: crypto.randomUUID(), expectedRevision: null, name: 'Mostrador', tableId: null, items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) });
+    if (counter?.status === 'open') {
+      setSelectedOrder(counter);
+      return;
+    }
+    const orderId = crypto.randomUUID();
+    counterOrderId.current = orderId;
+    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: null, name: 'Mostrador', tableId: null, items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) });
+    setSavedCounter(saved);
     setSelectedOrder(saved);
     await operation.refresh();
+  }
+  function retryOperation() {
+    const command = mutation.pending;
+    if (!command) return;
+    if (command.command === 'save_order' && !command.tableId && command.name === 'Mostrador') counterOrderId.current = command.orderId;
+    void mutation.execute(command).then(() => operation.refresh()).catch(() => {});
   }
   const more = useRef<HTMLDivElement>(null);
   function setActive(next: Destination) {
@@ -255,7 +281,7 @@ export default function HomeScreen({
         {canOperate && operation.error && <div className="ops-message" role="alert"><p>{operation.error}</p><button className="pos-button pos-secondary" onClick={() => void operation.refresh()} disabled={operation.loading}>Reintentar carga</button></div>}
         {(mutation.pending || mutation.error || mutation.notice) && <div className="ops-message" role={mutation.error ? 'alert' : 'status'}>
           {mutation.error && <p>{mutation.error}</p>}
-          {mutation.pending && <><p>Hay una solicitud por confirmar. Reintenta el mismo registro sin repetir el movimiento de dinero.</p><button className="pos-button pos-secondary" disabled={mutation.busy} onClick={() => { const command = mutation.pending; if (command) void mutation.execute(command).then(() => operation.refresh()).catch(() => {}) }}>Reintentar solicitud guardada</button></>}
+          {mutation.pending && <><p>Hay una solicitud por confirmar. Reintenta el mismo registro sin repetir el movimiento de dinero.</p><button className="pos-button pos-secondary" disabled={mutation.busy} onClick={retryOperation}>Reintentar solicitud guardada</button></>}
           {!mutation.pending && mutation.notice && <p>{mutation.notice}</p>}
         </div>}
 
@@ -271,7 +297,8 @@ export default function HomeScreen({
               canAvailability={hasPermission(business, 'catalog.availability')}
               onAccount={snapshot?.enabled ? saveCounter : undefined}
               collectionReady={Boolean(snapshot) && !operation.error && !mutation.pending && !mutation.busy}
-              savedCounterId={savedCounterId}
+              savedCounter={counter ?? undefined}
+              onNewAccount={() => { counterOrderId.current = null; setSavedCounter(null); }}
             />
           </div>
         )}
@@ -400,8 +427,8 @@ export default function HomeScreen({
       {(editingOrder || order) && <PosDialog title={editingOrder ? editingOrder.order ? 'Editar cuenta' : 'Abrir cuenta' : order!.name} busy={mutation.busy} onClose={() => { setEditingOrder(null); setSelectedOrder(null); }}>
         <div className="ops-section">
           {mutation.error && <p role="alert">{mutation.error}</p>}
-          {mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" disabled={mutation.busy} onClick={() => { const command = mutation.pending; if (command) void mutation.execute(command).then(() => operation.refresh()).catch(() => {}) }}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? editingOrder.tableId ?? 'new'} order={editingOrder.order} initialTableId={editingOrder.tableId} products={catalog.products} tables={hasPermission(business, 'tables.manage') ? snapshot?.tables ?? [] : []} mutation={mutation} onSaved={saved => { setEditingOrder(null); setSelectedOrder(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} access={access} onSessionError={onSessionError} order={order} business={business} tables={snapshot?.tables ?? []} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={setSelectedOrder} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} />}
+          {mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" disabled={mutation.busy} onClick={retryOperation}>Reintentar solicitud guardada</button></>}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? editingOrder.tableId ?? 'new'} order={editingOrder.order} initialTableId={editingOrder.tableId} products={catalog.products} tables={hasPermission(business, 'tables.manage') ? snapshot?.tables ?? [] : []} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} access={access} onSessionError={onSessionError} order={order} business={business} tables={snapshot?.tables ?? []} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} />}
         </div>
       </PosDialog>}
 

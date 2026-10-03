@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { AccountClientError } from "../lib/account";
 import type { PaymentMethod } from "../lib/contracts";
+import type { OperationalOrder } from "../lib/operations-contracts";
 import type {
   CartLine,
   ItemSelection,
@@ -83,7 +84,8 @@ export default function SaleScreen({
   canAvailability = true,
   onAccount,
   collectionReady = true,
-  savedCounterId,
+  savedCounter,
+  onNewAccount,
 }: {
   access: PosAccess;
   employeeId: string;
@@ -94,7 +96,8 @@ export default function SaleScreen({
   canAvailability?: boolean;
   onAccount?: (cart: CartLine[]) => Promise<void>;
   collectionReady?: boolean;
-  savedCounterId?: string;
+  savedCounter?: OperationalOrder;
+  onNewAccount?: () => void;
 }) {
   const [choosing, setChoosing] = useState<Product | null>(null);
   const [availability, setAvailability] = useState<Product | null>(null);
@@ -130,8 +133,16 @@ export default function SaleScreen({
     query,
     category,
   );
-  const frozen = busy || Boolean(pending) || storageError;
-  useEffect(() => { if (savedCounterId) { setCart([]); setCheckout(false); setShowCart(false); } }, [savedCounterId]);
+  const account = savedCounter?.status === 'open' ? savedCounter : undefined;
+  const frozen = busy || Boolean(pending) || storageError || Boolean(account);
+  useEffect(() => {
+    if (savedCounter && savedCounter.status !== 'open') {
+      setCart([]);
+      setCheckout(false);
+      setShowCart(false);
+      setNotice("");
+    }
+  }, [savedCounter?.id, savedCounter?.status]);
 
   async function clearStoredOperation(operationId: string) {
     if (navigator.locks)
@@ -210,10 +221,16 @@ export default function SaleScreen({
         quantity: item.quantity,
         selection: item.selection,
       }))
-    : cart;
-  let total = pending?.totalCents ?? 0;
+    : account
+      ? account.items.map((line) => ({
+          product: { id: line.productId, name: line.name, category: line.category,
+            active: true, priceCents: line.unitPriceCents, version: line.version },
+          quantity: line.quantity,
+        }))
+      : cart;
+  let total = pending?.totalCents ?? account?.totalCents ?? 0;
   let totalError = "";
-  if (!pending) {
+  if (!pending && !account) {
     try {
       total = cartTotal(cart);
     } catch (caught) {
@@ -223,6 +240,7 @@ export default function SaleScreen({
   }
   if (
     !pending &&
+    !account &&
     !totalError &&
     new TextEncoder().encode(
       JSON.stringify(
@@ -239,6 +257,7 @@ export default function SaleScreen({
       "La cuenta tiene demasiadas opciones. Divídela en dos ventas antes de cobrar.";
   const outdated =
     !pending &&
+    !account &&
     catalog.loaded &&
     cart.some((line) => {
       const current = catalog.products.find(
@@ -259,6 +278,7 @@ export default function SaleScreen({
     !catalog.error &&
     online &&
     !frozen;
+  const canResumeAccount = Boolean(account && onAccount) && collectionReady && online && !busy && !pending && !storageError;
 
   function add(product: Product, selection?: ItemSelection) {
     if (frozen || checkout || isSoldOut(product)) return;
@@ -308,7 +328,7 @@ export default function SaleScreen({
     setError("");
   }
   useEffect(() => {
-    if (pending || busy || !catalog.loaded || catalog.error) return;
+    if (account || pending || busy || !catalog.loaded || catalog.error) return;
     const changed = cart.some((line) => {
       const current = catalog.products.find((p) => p.id === line.product.id);
       return (
@@ -366,7 +386,7 @@ export default function SaleScreen({
         ? previous
         : "El catálogo cambió. Revisamos precios y disponibilidad. Comprueba la cuenta antes de cobrar.",
     );
-  }, [catalog.products, catalog.loaded, catalog.error, cart, pending, busy]);
+  }, [catalog.products, catalog.loaded, catalog.error, cart, account, pending, busy]);
 
   async function toggleAvailability(product: Product) {
     if (availabilityBusy || !canAvailability) return;
@@ -553,13 +573,12 @@ export default function SaleScreen({
   }
 
   async function saveAccount() {
-    if (!onAccount || !canCheckout || submitting.current) return;
+    if (!onAccount || !(canCheckout || canResumeAccount) || submitting.current) return;
     submitting.current = true;
     setBusy(true);
     setError("");
     try {
       await onAccount(cart);
-      if (mounted.current) { setCart([]); setCheckout(false); setShowCart(false); }
     } catch (caught) {
       if (mounted.current) setError(caught instanceof Error ? caught.message : "No pudimos guardar la cuenta.");
     } finally {
@@ -698,7 +717,7 @@ export default function SaleScreen({
         ) : (
           <div className="touch-catalog grid grid-cols-4 gap-4 max-desktop:grid-cols-3 max-[60rem]:grid-cols-2 max-tablet:gap-3 max-tablet:pb-19">
             {filtered.map((product) => {
-              const amount = cart
+              const amount = displayCart
                 .filter((line) => line.product.id === product.id)
                 .reduce((sum, line) => sum + line.quantity, 0);
               const d = productDetails(product),
@@ -847,21 +866,23 @@ export default function SaleScreen({
             </div>
           )}
           <ul className="cart-lines m-0 list-none p-0 [&_li]:border-b [&_li]:border-line [&_li]:py-4 [&_li>p]:mt-2 [&_li>p]:text-sm">
-            {displayCart.map((line) => {
+            {displayCart.map((line, index) => {
               const { product, quantity: amount, selection } = line,
-                key = lineKey(line),
-                price = selectedPrice(product, selection);
+                savedLine = account?.items[index],
+                key = savedLine?.lineId ?? lineKey(line),
+                price = savedLine?.unitPriceCents ?? selectedPrice(product, selection),
+                label = savedLine?.selectionLabel ?? selectionLabel(product, selection);
               return (
                 <li key={key}>
                   <div className="cart-line-heading flex items-baseline justify-between gap-4 [&_strong]:min-w-0 [&_strong]:font-medium [&_strong]:[overflow-wrap:anywhere] [&_span]:whitespace-nowrap [&_span]:tabular-nums">
                     <strong>{product.name}</strong>
-                    <span>{money(price * amount)}</span>
+                    <span>{money(savedLine?.totalCents ?? price * amount)}</span>
                   </div>
-                  {selectionLabel(product, selection) && (
-                    <p>{selectionLabel(product, selection)}</p>
+                  {label && (
+                    <p>{label}</p>
                   )}
                   <p>{money(price)} por unidad</p>
-                  {!checkout && !pending ? (
+                  {!checkout && !pending && !account ? (
                     <div className="quantity-controls mt-3 flex items-center gap-2 [&_span]:min-w-6 [&_span]:text-center [&_span]:tabular-nums [&_button]:size-12 [&_button]:min-h-12 [&_button]:rounded-lg [&_button]:border [&_button]:border-line [&_button]:bg-white">
                       <button
                         className="pos-icon-button"
@@ -924,7 +945,7 @@ export default function SaleScreen({
           <dl className="sale-totals mb-3 flex flex-col gap-4">
             {!pending && displayCart.length > 0 && (
               <VatSummary
-                lines={cart.map((line) => {
+                lines={account?.items ?? cart.map((line) => {
                   const d = productDetails(line.product);
                   return {
                     totalCents:
@@ -940,6 +961,9 @@ export default function SaleScreen({
               <dt>Total MXN</dt>
               <dd>{money(total)}</dd>
             </div>
+            {account && account.balanceCents !== account.totalCents && (
+              <div><dt>Por cobrar</dt><dd>{money(account.balanceCents)}</dd></div>
+            )}
           </dl>
           {checkout || pending ? (
             <>
@@ -1007,6 +1031,20 @@ export default function SaleScreen({
                   Editar venta
                 </button>
               )}
+            </>
+          ) : account ? (
+            <>
+              <button className="pos-button pos-primary" disabled={!canResumeAccount} onClick={() => void saveAccount()}>
+                Continuar cobro {money(account.balanceCents)}
+              </button>
+              {onNewAccount && <button className="pos-button pos-secondary" disabled={busy || !collectionReady} onClick={() => {
+                setCart([]);
+                setCheckout(false);
+                setShowCart(false);
+                setNotice("");
+                setError("");
+                onNewAccount();
+              }}>Nueva cuenta</button>}
             </>
           ) : (
             <button
