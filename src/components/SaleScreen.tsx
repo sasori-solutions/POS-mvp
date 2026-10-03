@@ -13,9 +13,11 @@ import {
 import { AccountClientError } from "../lib/account";
 import type { PaymentMethod } from "../lib/contracts";
 import type { OperationalOrder } from "../lib/operations-contracts";
+import { checkoutTotals } from "../lib/checkout-selection";
 import type {
   CartLine,
   ItemSelection,
+  PosCommand,
   Product,
   Sale,
 } from "../lib/pos-contracts";
@@ -83,8 +85,11 @@ export default function SaleScreen({
   onHistory,
   onSessionError,
   canAvailability = true,
+  canFavorite = false,
   onAccount,
   collectionReady = true,
+  collectionAllowed = true,
+  activationRequired = false,
   savedCounter,
   onAccountAdd,
   onAccountQuantity,
@@ -97,8 +102,11 @@ export default function SaleScreen({
   onHistory: () => void;
   onSessionError?: (error: AccountClientError) => void;
   canAvailability?: boolean;
+  canFavorite?: boolean;
   onAccount?: (cart: CartLine[]) => Promise<void>;
   collectionReady?: boolean;
+  collectionAllowed?: boolean;
+  activationRequired?: boolean;
   savedCounter?: OperationalOrder;
   onAccountAdd?: (product: Product, selection?: ItemSelection) => Promise<void>;
   onAccountQuantity?: (lineId: string, change: number | 'remove') => Promise<void>;
@@ -114,6 +122,11 @@ export default function SaleScreen({
   } | null>(null);
   const [availabilityBusy, setAvailabilityBusy] = useState(false);
   const [availabilityError, setAvailabilityError] = useState("");
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [favoriteError, setFavoriteError] = useState("");
+  const favoriteRequests = useRef(
+    new Map<string, Extract<PosCommand, { command: "save_product" }>>(),
+  );
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -141,6 +154,8 @@ export default function SaleScreen({
     category,
   );
   const account = savedCounter?.status === 'open' ? savedCounter : undefined;
+  const remainingAccountLines = account?.items.filter(line => line.quantity > line.paidQuantity) ?? [];
+  const remainingAccountTotals = account ? remainingAccountLines.map(line => ({ ...line, ...checkoutTotals(account, [{ lineId: line.lineId, quantity: line.quantity - line.paidQuantity }]) })) : [];
   const accountEditable = Boolean(account && account.phase === 'service' && !account.frozen && onAccountAdd && onAccountQuantity);
   const frozen = busy || Boolean(pending) || storageError || Boolean(account && (!accountEditable || !collectionReady));
   useEffect(() => {
@@ -231,13 +246,13 @@ export default function SaleScreen({
         selection: item.selection,
       }))
     : account
-      ? account.items.map((line) => ({
+      ? remainingAccountLines.map((line) => ({
           product: { id: line.productId, name: line.name, category: line.category,
             active: true, priceCents: line.unitPriceCents, version: line.version },
-          quantity: line.quantity,
+          quantity: line.quantity - line.paidQuantity,
         }))
       : cart;
-  let total = pending?.totalCents ?? account?.totalCents ?? 0;
+  let total = pending?.totalCents ?? account?.balanceCents ?? 0;
   let totalError = "";
   if (!pending && !account) {
     try {
@@ -279,6 +294,8 @@ export default function SaleScreen({
       );
     });
   const canCheckout =
+    !activationRequired &&
+    collectionAllowed &&
     collectionReady &&
     cart.length > 0 &&
     !outdated &&
@@ -287,7 +304,7 @@ export default function SaleScreen({
     !catalog.error &&
     online &&
     !frozen;
-  const canResumeAccount = Boolean(account?.items.length && onAccount) && collectionReady && online && !busy && !pending && !storageError;
+  const canResumeAccount = Boolean(account?.items.length && onAccount) && collectionAllowed && collectionReady && online && !busy && !pending && !storageError;
 
   function add(product: Product, selection?: ItemSelection) {
     if (frozen || checkout || isSoldOut(product)) return;
@@ -458,10 +475,59 @@ export default function SaleScreen({
     }
   }
 
+  async function toggleFavorite(product: Product) {
+    if (availabilityBusy || favoriteBusy || !canFavorite) return;
+    const currentDetails = productDetails(product);
+    const command = favoriteRequests.current.get(product.id) ?? {
+      command: "save_product" as const,
+      operationId: crypto.randomUUID(),
+      productId: product.id,
+      expectedVersion: product.version,
+      name: product.name,
+      category: product.category,
+      priceCents: product.priceCents,
+      details: { ...currentDetails, favorite: !currentDetails.favorite },
+    };
+    favoriteRequests.current.set(product.id, command);
+    setFavoriteBusy(true);
+    setFavoriteError("");
+    try {
+      const saved = await posRequest(access, command);
+      if (!mounted.current) return;
+      catalog.upsert(saved);
+      setAvailability(saved);
+      favoriteRequests.current.delete(product.id);
+      setNotice(
+        command.details?.favorite
+          ? `${saved.name} añadido a favoritos.`
+          : `${saved.name} quitado de favoritos.`,
+      );
+    } catch (caught) {
+      if (!mounted.current) return;
+      setFavoriteError(
+        caught instanceof Error
+          ? caught.message
+          : "No pudimos actualizar los favoritos.",
+      );
+      if (caught instanceof AccountClientError) {
+        if (!["NETWORK_ERROR", "SERVER_ERROR"].includes(caught.code))
+          favoriteRequests.current.delete(product.id);
+        if (caught.code === "PRODUCT_CHANGED") {
+          setAvailability(null);
+          void catalog.refresh();
+          setError("El producto cambió. Revisa sus detalles e intenta de nuevo.");
+        }
+        if (accessErrorCodes.includes(caught.code)) onSessionError?.(caught);
+      }
+    } finally {
+      if (mounted.current) setFavoriteBusy(false);
+    }
+  }
+
   async function register() {
     if (submitting.current || storageError || !online) return;
     let command = pendingRef.current;
-    if (!command && (!canCheckout || !catalog.paymentMethods.includes(payment)))
+    if (!command && (!collectionAllowed || !canCheckout || !catalog.paymentMethods.includes(payment)))
       return;
     submitting.current = true;
     setBusy(true);
@@ -904,7 +970,7 @@ export default function SaleScreen({
           <ul className="cart-lines m-0 list-none p-0 [&_li]:py-2 [&_li>p]:mt-1 [&_li>p]:text-sm">
             {displayCart.map((line, index) => {
               const { product, quantity: amount, selection } = line,
-                savedLine = account?.items[index],
+                savedLine = pending ? undefined : remainingAccountLines[index],
                 key = savedLine?.lineId ?? lineKey(line),
                 price = savedLine?.unitPriceCents ?? selectedPrice(product, selection),
                 label = savedLine?.selectionLabel ?? selectionLabel(product, selection);
@@ -912,7 +978,7 @@ export default function SaleScreen({
                 <li key={key}>
                   <div className="cart-line-heading flex items-baseline justify-between gap-4 [&_strong]:min-w-0 [&_strong]:font-medium [&_strong]:[overflow-wrap:anywhere] [&_span]:whitespace-nowrap [&_span]:tabular-nums">
                     <strong>{amount} × {product.name}</strong>
-                    <span>{money(savedLine?.totalCents ?? price * amount)}</span>
+                    <span>{money((!pending ? remainingAccountTotals[index]?.totalCents : undefined) ?? price * amount)}</span>
                   </div>
                   {label && (
                     <p>{label}</p>
@@ -984,7 +1050,7 @@ export default function SaleScreen({
           <dl className="sale-totals mb-3 flex flex-col gap-2 tablet:gap-4">
             {!pending && displayCart.length > 0 && (
               <VatSummary
-                lines={account?.items ?? cart.map((line) => {
+                lines={account ? remainingAccountTotals : cart.map((line) => {
                   const d = productDetails(line.product);
                   return {
                     totalCents:
@@ -997,11 +1063,11 @@ export default function SaleScreen({
               />
             )}
             <div className="sale-total">
-              <dt>Total MXN</dt>
+              <dt>{account && account.paidCents > 0 ? 'Por cobrar MXN' : 'Total MXN'}</dt>
               <dd>{money(total)}</dd>
             </div>
-            {account && account.balanceCents !== account.totalCents && (
-              <div><dt>Por cobrar</dt><dd>{money(account.balanceCents)}</dd></div>
+            {account && account.paidCents > 0 && (
+              <div><dt>Pagado</dt><dd>{money(account.paidCents)}</dd></div>
             )}
           </dl>
           {account ? (
@@ -1112,13 +1178,8 @@ export default function SaleScreen({
             setAvailability(null);
             availabilityRequest.current = null;
           }}
-          busy={availabilityBusy}
+          busy={availabilityBusy || favoriteBusy}
         >
-          <p>
-            {productDetails(availability).soldOut
-              ? "Este producto está marcado como agotado."
-              : "Cambia su disponibilidad para todas las cajas."}
-          </p>
           {productDetails(availability).variations.length > 0 &&
             productDetails(availability).variations.every((v) => v.soldOut) && (
               <p className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3">
@@ -1134,10 +1195,38 @@ export default function SaleScreen({
               {availabilityError}
             </p>
           )}
+          {favoriteError && (
+            <p
+              className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+              role="alert"
+            >
+              {favoriteError}
+            </p>
+          )}
           <div className="dialog-actions mt-6 flex flex-col gap-3">
+            {canFavorite && (
+              <button
+                className="pos-button pos-secondary"
+                type="button"
+                aria-pressed={productDetails(availability).favorite}
+                disabled={availabilityBusy || favoriteBusy}
+                onClick={() => void toggleFavorite(availability)}
+              >
+                <Star
+                  aria-hidden="true"
+                  size={18}
+                  fill={productDetails(availability).favorite ? "currentColor" : "none"}
+                />
+                {favoriteBusy
+                  ? "Guardando…"
+                  : productDetails(availability).favorite
+                    ? "Quitar de favoritos"
+                    : "Añadir a favoritos"}
+              </button>
+            )}
             <button
               className="pos-button pos-primary"
-              disabled={availabilityBusy}
+              disabled={availabilityBusy || favoriteBusy}
               onClick={() => void toggleAvailability(availability)}
             >
               {availabilityBusy

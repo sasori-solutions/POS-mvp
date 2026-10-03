@@ -1,4 +1,13 @@
 import type { CheckoutSelection, OperationalOrder } from './operations-contracts'
+import type { PaymentMethod } from './contracts'
+
+/** UI selection only, kept in memory for the current operator. Never a payment authorization. */
+export interface CheckoutDraft {
+  orderId: string
+  split: boolean
+  quantities: Record<string, number>
+  method: PaymentMethod
+}
 
 /** Same prefix allocation as ops_slice: each cent is charged exactly once. */
 export function checkoutTotals(order: OperationalOrder, items: CheckoutSelection[]) {

@@ -16,11 +16,12 @@ export type { Destination } from "../lib/navigation";
 import WorkspaceShell from "./WorkspaceShell";
 import ReportDashboard, { type ReportTab } from "../features/operations/ReportDashboard";
 import { useReportController } from "../features/operations/usePeriodReport";
+import { businessDate } from "../lib/reporting";
 import { hasPermission } from "../lib/business-access";
 import type { OperationsResponses, OperationalOrder, OrderInputLine, CheckoutAttempt } from "../lib/operations-contracts";
 import type { CartLine, ItemSelection, Product } from "../lib/pos-contracts";
 import { lineKey, selectedPrice } from "../lib/product-details";
-import { AccountClientError } from "../lib/account";
+import { AccountClientError, accountRequest } from "../lib/account";
 import ProductsScreen from "./ProductsScreen";
 import SaleScreen from "./SaleScreen";
 import CheckoutPanel from "./CheckoutPanel";
@@ -34,6 +35,7 @@ import OrdersScreen from "../features/operations/OrdersScreen";
 import ReportsScreen from "../features/operations/ReportsScreen";
 import OrderDetail from "../features/operations/OrderDetail";
 import OrderEditor from "../features/operations/OrderEditor";
+import type { CheckoutDraft } from "../lib/checkout-selection";
 
 interface HomeScreenProps {
   business: BusinessContext;
@@ -94,31 +96,81 @@ export default function HomeScreen({
   const [selectedOrder, setSelectedOrder] = useState<OperationalOrder | null>(null);
   const [confirmUnpaid, setConfirmUnpaid] = useState(false);
   const unpaidDecision = useRef<((confirmed: boolean) => void) | null>(null);
+  const sessionErrorHandler = useRef(onSessionError);
+  sessionErrorHandler.current = onSessionError;
   useEffect(() => () => { unpaidDecision.current?.(false); }, []);
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder } | null>(null);
   const [savedCounter, setSavedCounter] = useState<OperationalOrder | null>(null);
   const counterOrderId = useRef<string | null>(null);
   const backOrder = useRef<OperationalOrder | null>(null);
+  const checkoutDraft = useRef<{ scope: string; value: CheckoutDraft } | null>(null);
   const [backError, setBackError] = useState("");
   const operatorScope = `${business.id}:${operatorToken}:${deviceToken ?? ''}`;
   const currentOperator = useRef<string | null>(operatorScope);
   currentOperator.current = operatorScope;
   useEffect(() => {
     currentOperator.current = operatorScope;
-    return () => { currentOperator.current = null; };
+    return () => { currentOperator.current = null; checkoutDraft.current = null; };
   }, [operatorScope]);
   const destination = selectedDestination ?? localDestination;
   const allowed = availableDestinations(business);
   const active = allowed.includes(destination) ? destination : initialDestination(business);
   const isOwner = business.role === 'owner';
+  const canReadReports = hasPermission(business, 'reports.read');
   const [operating, setOperating] = useState(!isOwner || active === 'Venta' || active === 'Comandas');
   const [saleVisited, setSaleVisited] = useState(active === 'Venta');
   useEffect(() => { if (active === 'Venta') setSaleVisited(true); }, [active]);
   const access = { businessId: business.id, operatorToken, deviceToken };
   const [reportTab, setReportTab] = useState<ReportTab>('sales');
+  const [datePulse, setDatePulse] = useState(0);
+  const today = businessDate(business.timezone);
+  const presenceScope = `${business.id}:${operatorToken}:${deviceToken ?? ''}`;
+  const [presenceSnapshot, setPresenceSnapshot] = useState<{ scope: string; employees: NonNullable<BusinessContext['connectedEmployees']> } | null>(null);
+  const presence = business.connectedEmployees ?? (presenceSnapshot?.scope === presenceScope ? presenceSnapshot.employees : undefined);
+  const homeAnalytics = useReportController(access, business.timezone, onSessionError,
+    !managementContent && active === 'Inicio', hasPermission(business, 'reports.read'));
   const analytics = useReportController(access, business.timezone, onSessionError,
-    !managementContent && (active === 'Inicio' || active === 'Reportes'), hasPermission(business, 'reports.read'));
+    !managementContent && active === 'Reportes', hasPermission(business, 'reports.read'));
+  useEffect(() => {
+    const timer = window.setInterval(() => setDatePulse(value => value + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (business.role !== 'owner' || managementContent || active !== 'Inicio') return;
+    let alive = true;
+    void accountRequest({ action: 'context', businessId: business.id, operatorToken })
+      .then(context => {
+        if (alive && context.business.id === business.id) setPresenceSnapshot({ scope: presenceScope, employees: context.business.connectedEmployees ?? [] });
+      })
+      .catch(caught => {
+        if (alive && caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) sessionErrorHandler.current?.(caught);
+      });
+    return () => { alive = false; };
+  }, [business.id, business.role, managementContent, active, operatorToken, presenceScope]);
+  useEffect(() => {
+    if (homeAnalytics.date !== today || homeAnalytics.period !== 'day') {
+      homeAnalytics.setDate(today);
+      homeAnalytics.setPeriod('day');
+    }
+  }, [today, datePulse, homeAnalytics.date, homeAnalytics.period, homeAnalytics.setDate, homeAnalytics.setPeriod]);
+  useEffect(() => {
+    if (managementContent || active !== 'Inicio' || !canReadReports) return;
+    let pending = false;
+    const refresh = () => {
+      if (pending || document.visibilityState === 'hidden') return;
+      pending = true;
+      void homeAnalytics.refresh().finally(() => { pending = false; });
+    };
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+    };
+  }, [managementContent, active, canReadReports, homeAnalytics.refresh]);
   useEffect(() => { setReportTab('sales'); }, [operatorScope]);
   const catalog = useCatalog(
     access,
@@ -145,8 +197,11 @@ export default function HomeScreen({
   }
   function paymentRecorded(saved: OperationalOrder) {
     if (currentOperator.current !== operatorScope) return;
+    const settled = saved.balanceCents <= 0 || ['paid', 'closed', 'waived', 'cancelled'].includes(saved.status);
+    if (settled && checkoutDraft.current?.value.orderId === saved.id) checkoutDraft.current = null;
     if (saved.id === counterOrderId.current) setSavedCounter(saved);
-    setPaymentComplete(selectedOrder?.id === saved.id);
+    setSelectedOrder(saved);
+    setPaymentComplete(selectedOrder?.id === saved.id && settled);
     backOrder.current = null;
     setBackError("");
   }
@@ -255,6 +310,12 @@ export default function HomeScreen({
     setLocalDestination(next);
     onDestinationChange?.(next);
   }
+  function openReport(tab: ReportTab) {
+    analytics.setDate(today);
+    analytics.setPeriod('day');
+    setReportTab(tab);
+    setActive('Reportes');
+  }
   useEffect(() => {
     if (!focusOnReturn || managementContent) return;
     const moreAction = more.current?.querySelector<HTMLButtonElement>(
@@ -301,7 +362,12 @@ export default function HomeScreen({
   return (
     <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent} title={title} busy={busy}
       onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin}
-      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={managementKey}>
+      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={managementKey}
+      headingAside={active === 'Venta' && !managementContent && snapshot && !operation.error && snapshot.shift?.status !== 'open'
+        ? hasPermission(business, 'cash.read')
+          ? <button type="button" className="cash-shift-notice" aria-label="Turno cerrado. Ir a Caja" onClick={() => setActive('Caja')}>Turno cerrado</button>
+          : <span className="cash-shift-notice" role="status">Turno cerrado</span>
+        : undefined}>
       {managementContent && <div className="workspace-management">{managementContent}</div>}
       <section
         className="pos-content flex min-w-0 flex-1 flex-col"
@@ -337,8 +403,11 @@ export default function HomeScreen({
               onHistory={() => setActive("Ventas")}
               onSessionError={onSessionError}
               canAvailability={hasPermission(business, 'catalog.availability')}
+              canFavorite={hasPermission(business, 'catalog.manage')}
               onAccount={snapshot?.enabled ? saveCounter : undefined}
               collectionReady={Boolean(snapshot) && !operation.error && !mutation.pending && !mutation.busy}
+              collectionAllowed={snapshot?.shift?.status === 'open'}
+              activationRequired={snapshot?.enabled === false}
               savedCounter={counter ?? undefined}
               onAccountAdd={addCounterItem}
               onAccountQuantity={changeCounterQuantity}
@@ -347,7 +416,7 @@ export default function HomeScreen({
           </div>
         )}
         {active === "Inicio" && !managementContent ? (
-          <ReportDashboard controller={analytics} onOpenReport={tab => { setReportTab(tab); setActive('Reportes'); }} />
+          <ReportDashboard controller={homeAnalytics} presence={business.role === 'owner' ? presence : undefined} onOpenReport={openReport} onOpenTeam={onTeam} />
         ) : active === "Reportes" && !managementContent ? (
           <ReportsScreen controller={analytics} tab={reportTab} onTabChange={setReportTab} />
         ) : active === "Caja" ? (
@@ -430,7 +499,16 @@ export default function HomeScreen({
           {backError && !mutation.error && <p role="alert">{backError}</p>}
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} />}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh}
+            draft={checkoutDraft.current?.scope === operatorScope ? checkoutDraft.current.value : undefined}
+            onDraftChange={value => { if (!paymentComplete && currentOperator.current === operatorScope) checkoutDraft.current = { scope: operatorScope, value }; }}
+            onOpenCash={hasPermission(business, 'cash.read') ? () => { void prepareBackToOrder().then(canClose => {
+              if (!canClose || currentOperator.current !== operatorScope) return;
+              backOrder.current = null;
+              closeOrderPanel();
+              setActive('Caja');
+            }); } : undefined}
+          />}
         </div>
       </OrderPanel>}
       {confirmUnpaid && <PosDialog title="¿Volver a la cuenta?" busy={false} onClose={() => { setConfirmUnpaid(false); unpaidDecision.current?.(false); }}>

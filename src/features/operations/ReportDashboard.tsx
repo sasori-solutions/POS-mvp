@@ -3,15 +3,16 @@ import { ArrowDown, ArrowUp, ArrowUpRight, ChevronDown, Info, RefreshCw } from '
 import { gsap } from 'gsap'
 import { useGSAP } from '@gsap/react'
 import type { BusinessDayReport, BusinessPeriodReport } from '../../lib/operations-contracts'
+import type { BusinessContext, BusinessRole } from '../../lib/contracts'
 import { money } from '../../lib/pos'
-import { averageTicket, businessDate, changePercent } from '../../lib/reporting'
+import { businessDate, changePercent } from '../../lib/reporting'
 import { paymentLabels } from '../../components/PosShared'
 import type { ReportController } from './usePeriodReport'
 
 gsap.registerPlugin(useGSAP)
 const charts = () => import('./AnalyticsCharts')
 const TemporalChart = lazy(() => charts().then(module => ({ default: module.TemporalChart })))
-const PaymentMixChart = lazy(() => charts().then(module => ({ default: module.PaymentMixChart })))
+const DailySalesChart = lazy(() => charts().then(module => ({ default: module.DailySalesChart })))
 const RankedBars = lazy(() => charts().then(module => ({ default: module.RankedBars })))
 const PaymentNetChart = lazy(() => charts().then(module => ({ default: module.PaymentNetChart })))
 const FinancialWaterfall = lazy(() => charts().then(module => ({ default: module.FinancialWaterfall })))
@@ -24,6 +25,7 @@ const periods = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes']] as const
 const tabs = [['sales', 'Ventas'], ['products', 'Productos'], ['finances', 'Finanzas']] as const
 const colors = { cash: '#0F766E', card_external: '#2563EB', transfer: '#7C3AED' }
 const quantity = (value: number) => value.toLocaleString('es-MX')
+const emptyPresence: NonNullable<BusinessContext['connectedEmployees']> = []
 
 function Help({ label, children }: { label: string; children: ReactNode }) {
   return <details className="analytics-help"><summary aria-label={`Información sobre ${label}`}><Info size={16} aria-hidden="true" /></summary><div role="note">{children}</div></details>
@@ -58,9 +60,13 @@ function ChartPlaceholder({ height = 260 }: { height?: number }) {
 }
 
 function DashboardSkeleton({ detailed }: { detailed: boolean }) {
+  if (!detailed) return <div className="analytics-skeleton analytics-home-skeleton" role="status" aria-label="Cargando resumen de hoy" aria-busy="true">
+    <section className="analytics-card analytics-home-sales-placeholder" aria-hidden="true"><span className="analytics-skeleton-line analytics-shimmer" /><span className="analytics-skeleton-number analytics-shimmer" /><div className="analytics-home-sales-chart"><ChartPlaceholder height={208} /></div></section>
+    <div className="analytics-columns analytics-home-columns" aria-hidden="true">{[0, 1].map(index => <section className="analytics-card" key={index}><span className="analytics-skeleton-line analytics-shimmer" /><div className="analytics-home-list-placeholder">{[0, 1, 2].map(item => <span className="analytics-shimmer" key={item} />)}</div></section>)}</div>
+  </div>
   return <div className="analytics-skeleton" role="status" aria-label="Cargando información del negocio" aria-busy="true">
-    <div className={`analytics-kpis ${detailed ? 'analytics-kpis-four' : ''}`} aria-hidden="true">
-      {Array.from({ length: detailed ? 4 : 3 }, (_, index) => <div className={`analytics-kpi ${!detailed && !index ? 'analytics-kpi-main' : ''}`} key={index}><span className="analytics-skeleton-line analytics-shimmer" /><span className="analytics-skeleton-number analytics-shimmer" /><span className="analytics-skeleton-line short analytics-shimmer" /></div>)}
+    <div className="analytics-kpis analytics-kpis-four" aria-hidden="true">
+      {Array.from({ length: 4 }, (_, index) => <div className="analytics-kpi" key={index}><span className="analytics-skeleton-line analytics-shimmer" /><span className="analytics-skeleton-number analytics-shimmer" /><span className="analytics-skeleton-line short analytics-shimmer" /></div>)}
     </div>
     <section className="analytics-card" aria-hidden="true"><span className="analytics-skeleton-line analytics-shimmer" /><ChartPlaceholder /></section>
     <div className="analytics-columns" aria-hidden="true">{[0, 1].map(index => <section className="analytics-card" key={index}><span className="analytics-skeleton-line analytics-shimmer" /><ChartPlaceholder height={230} /></section>)}</div>
@@ -73,6 +79,25 @@ function Card({ title, help, action, children, className = '' }: { title: string
 
 function ReportLink({ onClick, label }: { onClick?: () => void; label: string }) {
   return onClick ? <button type="button" className="analytics-card-link" aria-label={label} onClick={onClick}><ArrowUpRight size={19} aria-hidden="true" /></button> : null
+}
+
+const employeeRoleLabels: Record<Exclude<BusinessRole, 'owner'>, string> = {
+  manager: 'Gerente', cashier: 'Cajero', kitchen: 'Cocina',
+}
+
+function initials(name: string) {
+  return name.trim().split(/\s+/).slice(0, 2).map(part => Array.from(part)[0] ?? '').join('').toLocaleUpperCase('es-MX')
+}
+
+function DailyProductBars({ products }: { products: BusinessDayReport['products'] }) {
+  const maximum = Math.max(1, ...products.map(product => product.quantity))
+  return <ol className="analytics-daily-products" aria-label="Productos más vendidos hoy">{products.map(product => {
+    const ratio = product.quantity / maximum * 100
+    return <li key={`${product.productId}:${product.name}`}>
+      <div className="analytics-daily-product-label"><span>{product.name}</span><strong>{quantity(product.quantity)} {product.quantity === 1 ? 'unidad' : 'unidades'}</strong></div>
+      <div className="analytics-daily-product-track" role="img" aria-label={`${quantity(product.quantity)} ${product.quantity === 1 ? 'unidad vendida' : 'unidades vendidas'}`}><span style={{ width: `${Math.max(8, ratio)}%` }} /></div>
+    </li>
+  })}</ol>
 }
 
 function ProductTable({ products }: { products: BusinessDayReport['products'] }) {
@@ -117,31 +142,38 @@ function TemporalPanel({ report, metric, setMetric, detailed, onOpenReport }: { 
   </Card>
 }
 
-interface ReportPresentation { report: BusinessPeriodReport; detailed: boolean; tab: ReportTab; metric: Metric; productMetric: 'netCents' | 'quantity' }
-interface ReportActions { setMetric: (metric: Metric) => void; setProductMetric: (metric: 'netCents' | 'quantity') => void; onOpenReport?: (tab: ReportTab) => void }
+interface ReportPresentation { report: BusinessPeriodReport; detailed: boolean; tab: ReportTab; metric: Metric; productMetric: 'netCents' | 'quantity'; presence: NonNullable<BusinessContext['connectedEmployees']> }
+interface ReportActions { setMetric: (metric: Metric) => void; setProductMetric: (metric: 'netCents' | 'quantity') => void; onOpenReport?: (tab: ReportTab) => void; onOpenTeam?: () => void }
 
-function ReportBody({ report, detailed, tab, metric, setMetric, productMetric, setProductMetric, onOpenReport }: ReportPresentation & ReportActions) {
+function ReportBody({ report, detailed, tab, metric, setMetric, productMetric, setProductMetric, onOpenReport, onOpenTeam, presence }: ReportPresentation & ReportActions) {
   const total = report.totals, previous = report.previous
-  const average = averageTicket(total.salesCents, total.saleCount), previousAverage = averageTicket(previous.salesCents, previous.saleCount)
   const comparable = report.comparisonComparable
   const top = [...total.products].filter(product => product.quantity > 0).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name, 'es')).slice(0, 5)
   const ranking = [...total.products].sort((a, b) => b[productMetric] - a[productMetric] || a.name.localeCompare(b.name, 'es')).slice(0, 10)
   return <div className="analytics-body">
-    <div className={`analytics-kpis ${detailed ? 'analytics-kpis-four' : ''}`} aria-label="Resumen de ventas">
-      {detailed ? <>
+    {detailed && <div className="analytics-kpis analytics-kpis-four" aria-label="Resumen de ventas">
         <Kpi label="Cobrado" value={money(total.salesCents)} current={total.salesCents} previous={previous.salesCents} comparable={comparable} help="Importe registrado después de descuentos, con IVA incluido. Los pagos electrónicos se registran por confirmación del operador." />
         <Kpi label="Neto" value={money(total.netCents)} current={total.netCents} previous={previous.netCents} comparable={comparable} help="Cobrado menos devoluciones efectivas en el período. Puede ser negativo y no representa beneficio." />
         <Kpi label="Devoluciones" value={money(total.reversalCents)} current={total.reversalCents} previous={previous.reversalCents} comparable={comparable} help="Devoluciones en su fecha efectiva, incluidas las de ventas de otros períodos." tone={total.reversalCents > 0 ? '#DC2626' : undefined} />
         <Kpi label="Descuentos" value={money(total.discountCents)} current={total.discountCents} previous={previous.discountCents} comparable={comparable} help="Descuentos asignados a los cobros registrados en el período." />
-      </> : <>
-        <Kpi label="Ventas netas" value={money(total.netCents)} current={total.netCents} previous={previous.netCents} comparable={comparable} main help="Cobrado menos devoluciones efectivas, con IVA incluido. No representa beneficio." />
-        <Kpi label="Cobros" value={quantity(total.saleCount)} current={total.saleCount} previous={previous.saleCount} comparable={comparable} help="Cantidad de recibos registrados. Un cobro no equivale a un cliente." />
-        <Kpi label="Ticket promedio" value={average === null ? '—' : money(average)} current={average} previous={previousAverage} comparable={comparable} help="Cobrado después de descuentos, con IVA incluido, dividido entre los cobros registrados." />
-      </>}
-    </div>
+    </div>}
     {!detailed ? <>
-      <TemporalPanel report={report} metric="netCents" setMetric={setMetric} detailed={false} onOpenReport={onOpenReport} />
-      <div className="analytics-columns analytics-home-columns"><Card title="Métodos de pago" help="Distribución del importe cobrado, antes de devoluciones. Las porciones suman el cobrado del período." action={<ReportLink label="Ver métodos de pago en Reportes" onClick={onOpenReport ? () => onOpenReport('sales') : undefined} />}><Suspense fallback={<ChartPlaceholder height={230} />}><PaymentMixChart payments={total.payments} /></Suspense></Card><Card title="Más vendidos" help="Unidades vendidas según el nombre guardado en el recibo." action={<ReportLink label="Ver productos en Reportes" onClick={onOpenReport ? () => onOpenReport('products') : undefined} />}><Suspense fallback={<ChartPlaceholder height={230} />}><RankedBars items={top.map(product => ({ key: `${product.productId}:${product.name}`, label: product.name, value: product.quantity }))} /></Suspense></Card></div>
+      <Card title="Ventas de hoy" action={<ReportLink label="Ver ventas detalladas" onClick={onOpenReport ? () => onOpenReport('sales') : undefined} />} className="analytics-home-sales">
+        <div className="analytics-home-sales-summary"><strong>{money(total.netCents)}</strong><i aria-hidden="true">·</i><span>{quantity(total.saleCount)} {total.saleCount === 1 ? 'venta' : 'ventas'}</span></div>
+        <div className="analytics-home-sales-chart"><Suspense fallback={<ChartPlaceholder height={208} />}><DailySalesChart report={report} /></Suspense></div>
+      </Card>
+      <div className="analytics-columns analytics-home-columns">
+        <Card title={`Empleados conectados · ${presence.length}`} action={<ReportLink label="Ver empleados" onClick={onOpenTeam} />}>
+          {presence.length ? <ul className="analytics-presence-list">{presence.map(employee => <li key={employee.id}>
+            <span className="analytics-presence-avatar" aria-hidden="true">{initials(employee.name)}</span>
+            <span className="analytics-presence-person"><strong>{employee.name}</strong><small>{employeeRoleLabels[employee.role === 'owner' ? 'manager' : employee.role]}</small></span>
+            <span className="analytics-presence-status">Activo</span>
+          </li>)}</ul> : <p className="analytics-empty">Sin empleados conectados.</p>}
+        </Card>
+        <Card title="Más vendidos hoy" action={<ReportLink label="Ver detalle de productos" onClick={onOpenReport ? () => onOpenReport('products') : undefined} />}>
+          {top.length ? <DailyProductBars products={top} /> : <p className="analytics-empty">Sin productos vendidos hoy.</p>}
+        </Card>
+      </div>
     </> : tab === 'sales' ? <>
       <TemporalPanel report={report} metric={metric} setMetric={setMetric} detailed />
       <div className="analytics-columns"><Card title="Neto por método" help="Cobrado menos devoluciones de cada método. Una devolución de una venta anterior puede producir un neto negativo."><Suspense fallback={<ChartPlaceholder />}><PaymentNetChart payments={total.payments} /></Suspense><PaymentTable payments={total.payments} /></Card><Card title="Operadores" help="Agrupación por el nombre registrado en la venta. Nombres iguales pueden pertenecer a personas distintas; no mide desempeño laboral."><Operators operators={total.operators} /></Card></div>
@@ -156,15 +188,15 @@ function ReportBody({ report, detailed, tab, metric, setMetric, productMetric, s
   </div>
 }
 
-function DataTransition({ report, identity, detailed, tab, metric, productMetric, setMetric, setProductMetric, onOpenReport }: ReportPresentation & ReportActions & { identity: string }) {
-  const [display, setDisplay] = useState({ report, identity, detailed, tab, metric, productMetric })
+function DataTransition({ report, identity, detailed, tab, metric, productMetric, presence, setMetric, setProductMetric, onOpenReport, onOpenTeam }: ReportPresentation & ReportActions & { identity: string }) {
+  const [display, setDisplay] = useState({ report, identity, detailed, tab, metric, productMetric, presence })
   const [previous, setPrevious] = useState<ReportPresentation | null>(null)
   const container = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
-    if (display.report === report && display.identity === identity && display.metric === metric && display.productMetric === productMetric && display.tab === tab && display.detailed === detailed) return
+    if (display.report === report && display.identity === identity && display.metric === metric && display.productMetric === productMetric && display.tab === tab && display.detailed === detailed && display.presence === presence) return
     setPrevious(display.identity !== identity && !window.matchMedia('(prefers-reduced-motion: reduce)').matches ? display : null)
-    setDisplay({ report, identity, detailed, tab, metric, productMetric })
-  }, [report, identity, display, metric, productMetric, detailed, tab])
+    setDisplay({ report, identity, detailed, tab, metric, productMetric, presence })
+  }, [report, identity, display, metric, productMetric, detailed, tab, presence])
   useGSAP(() => {
     if (!previous || !container.current) return
     const incoming = container.current.querySelector('.analytics-incoming'), outgoing = container.current.querySelector('.analytics-outgoing')
@@ -174,14 +206,15 @@ function DataTransition({ report, identity, detailed, tab, metric, productMetric
   }, { dependencies: [display.identity, previous], scope: container, revertOnUpdate: true })
   return <div className="analytics-data-transition" ref={container}>
     {previous && <div className="analytics-outgoing" aria-hidden="true" inert><ReportBody {...previous} setMetric={setMetric} setProductMetric={setProductMetric} /></div>}
-    <div className="analytics-incoming"><ReportBody {...display} setMetric={setMetric} setProductMetric={setProductMetric} onOpenReport={onOpenReport} /></div>
+    <div className="analytics-incoming"><ReportBody {...display} setMetric={setMetric} setProductMetric={setProductMetric} onOpenReport={onOpenReport} onOpenTeam={onOpenTeam} /></div>
   </div>
 }
 
-export default function ReportDashboard({ controller, detailed = false, tab = 'sales', onTabChange, onOpenReport }: {
-  controller: ReportController; detailed?: boolean; tab?: ReportTab; onTabChange?: (tab: ReportTab) => void; onOpenReport?: (tab: ReportTab) => void
+export default function ReportDashboard({ controller, detailed = false, tab = 'sales', onTabChange, onOpenReport, onOpenTeam, presence }: {
+  controller: ReportController; detailed?: boolean; tab?: ReportTab; onTabChange?: (tab: ReportTab) => void; onOpenReport?: (tab: ReportTab) => void; onOpenTeam?: () => void; presence?: BusinessContext['connectedEmployees']
 }) {
   const { report, date, period, displayedQuery, loading, error, stale, setDate, setPeriod, refresh, retry } = controller
+  const currentPresence = presence ?? emptyPresence
   const panelId = useId()
   const [metric, setMetric] = useState<Metric>('salesCents')
   const [productMetric, setProductMetric] = useState<'netCents' | 'quantity'>('netCents')
@@ -197,11 +230,13 @@ export default function ReportDashboard({ controller, detailed = false, tab = 's
     event.preventDefault(); onTabChange?.(tabs[next][0]); document.getElementById(`${panelId}-${tabs[next][0]}`)?.focus()
   }
   return <div className="analytics-dashboard">
-    <div className="analytics-toolbar"><div className="analytics-periods" role="group" aria-label="Período del reporte">{periods.map(([value, label]) => <button type="button" key={value} aria-pressed={(displayedQuery?.period ?? period) === value} data-pending={loading && period === value && displayedQuery?.period !== value || undefined} onClick={() => setPeriod(value)}>{label}</button>)}</div><div className="analytics-date-actions"><label className="analytics-date"><span className="sr-only">Fecha del reporte</span><input type="date" min="2000-01-01" max="2100-12-31" value={date} onChange={event => { if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(event.target.value)) setDate(event.target.value) }} /></label><button type="button" className="pos-icon-button analytics-refresh" aria-label="Actualizar reporte" aria-busy={loading} disabled={loading} onClick={() => void refresh()}><RefreshCw size={20} className={loading ? 'is-loading' : ''} aria-hidden="true" /></button></div></div>
-    <div className="analytics-context"><span>{range || ' '}</span>{report && <span className={`analytics-status ${stale ? 'stale' : ''}`}>{stale ? 'Desactualizado' : pending ? 'Cambiando período…' : loading ? 'Actualizando…' : report.partial ? 'En curso' : businessDate(report.timezone, new Date(report.asOf)) < report.startDate ? 'Pendiente' : ''}</span>}<span className="sr-only" role="status" aria-live="polite">{loading ? report ? 'Actualizando información; se conserva el último reporte.' : 'Cargando información.' : ''}</span></div>
+    {detailed && <>
+      <div className="analytics-toolbar"><div className="analytics-periods" role="group" aria-label="Período del reporte">{periods.map(([value, label]) => <button type="button" key={value} aria-pressed={(displayedQuery?.period ?? period) === value} data-pending={loading && period === value && displayedQuery?.period !== value || undefined} onClick={() => setPeriod(value)}>{label}</button>)}</div><div className="analytics-date-actions"><label className="analytics-date"><span className="sr-only">Fecha del reporte</span><input type="date" min="2000-01-01" max="2100-12-31" value={date} onChange={event => { if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(event.target.value)) setDate(event.target.value) }} /></label><button type="button" className="pos-icon-button analytics-refresh" aria-label="Actualizar reporte" aria-busy={loading} disabled={loading} onClick={() => void refresh()}><RefreshCw size={20} className={loading ? 'is-loading' : ''} aria-hidden="true" /></button></div></div>
+      <div className="analytics-context"><span>{range || ' '}</span>{report && <span className={`analytics-status ${stale ? 'stale' : ''}`}>{stale ? 'Desactualizado' : pending ? 'Cambiando período…' : loading ? 'Actualizando…' : report.partial ? 'En curso' : businessDate(report.timezone, new Date(report.asOf)) < report.startDate ? 'Pendiente' : ''}</span>}<span className="sr-only" role="status" aria-live="polite">{loading ? report ? 'Actualizando información; se conserva el último reporte.' : 'Cargando información.' : ''}</span></div>
+    </>}
     {detailed && <div className="analytics-tabs" role="tablist" aria-label="Secciones de Reportes">{tabs.map(([value, label], index) => <button type="button" id={`${panelId}-${value}`} key={value} role="tab" aria-selected={tab === value} aria-controls={`${panelId}-panel`} tabIndex={tab === value ? 0 : -1} onClick={() => onTabChange?.(value)} onKeyDown={event => onTabKey(event, index)}>{label}</button>)}</div>}
     {error && <div className="analytics-error" role="alert"><span>{error}</span><button type="button" onClick={() => void retry()} disabled={loading}>Reintentar</button></div>}
     {!report && loading && <DashboardSkeleton detailed={detailed} />}
-    {report && <div id={detailed ? `${panelId}-panel` : undefined} role={detailed ? 'tabpanel' : undefined} aria-labelledby={detailed ? `${panelId}-${tab}` : undefined} aria-busy={loading}><DataTransition report={report} identity={`${displayedQuery?.date}:${displayedQuery?.period}:${detailed ? `${tab}:${metric === 'saleCount' ? 'count' : 'money'}:${productMetric}` : 'home'}`} detailed={detailed} tab={tab} metric={metric} productMetric={productMetric} setMetric={setMetric} setProductMetric={setProductMetric} onOpenReport={onOpenReport} /><footer className="analytics-updated">Actualizado {new Date(report.asOf).toLocaleString('es-MX', { timeZone: report.timezone, hour: '2-digit', minute: '2-digit', timeZoneName: 'shortOffset' })}</footer></div>}
+    {report && <div id={detailed ? `${panelId}-panel` : undefined} role={detailed ? 'tabpanel' : undefined} aria-labelledby={detailed ? `${panelId}-${tab}` : undefined} aria-busy={loading}><DataTransition report={report} identity={`${displayedQuery?.date}:${displayedQuery?.period}:${detailed ? `${tab}:${metric === 'saleCount' ? 'count' : 'money'}:${productMetric}` : 'home'}`} detailed={detailed} tab={tab} metric={metric} productMetric={productMetric} presence={currentPresence} setMetric={setMetric} setProductMetric={setProductMetric} onOpenReport={onOpenReport} onOpenTeam={onOpenTeam} />{detailed && <footer className="analytics-updated">Actualizado {new Date(report.asOf).toLocaleString('es-MX', { timeZone: report.timezone, hour: '2-digit', minute: '2-digit', timeZoneName: 'shortOffset' })}</footer>}</div>}
   </div>
 }

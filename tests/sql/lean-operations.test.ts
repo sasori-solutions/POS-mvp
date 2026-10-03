@@ -567,14 +567,19 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
   it('requires an open shift, hides expected cash until submitted count, serializes movements and closes with exact difference',async()=>{
     const actor=await newActor();await activate(actor);const product=await newProduct(actor,11600)
     let order=await newOrder(actor,product);order=await execute(actor,{command:'begin_order_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision})
-    await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[{lineId:order.items[0].lineId,quantity:1}],paymentMethod:'cash'})).rejects.toThrow('SHIFT_REQUIRED')
+    for (const paymentMethod of ['cash','card_external','transfer'] as const) {
+      await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[{lineId:order.items[0].lineId,quantity:1}],paymentMethod})).rejects.toThrow('SHIFT_REQUIRED')
+    }
+    expect(await execute(actor,{command:'order',orderId:order.id})).toMatchObject({paidCents:0,balanceCents:11600,items:[{paidQuantity:0}]})
     let shift=await open(actor,5000)
     shift=await execute(actor,{command:'cash_movement',operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision,kind:'out',amountCents:1000,reason:'Gasto de caja'})
     await pay(actor,order,'cash')
     shift=await execute(actor,{command:'begin_shift_close',operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision})
     expect(shift).toMatchObject({status:'closing',expectedCents:null,differenceCents:null,countedCents:null})
     const another=await newOrder(actor,product);const checkout=await execute<OperationalOrder>(actor,{command:'begin_order_checkout',operationId:randomUUID(),orderId:another.id,expectedRevision:another.revision})
-    await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:checkout.id,expectedRevision:checkout.revision,items:[{lineId:checkout.items[0].lineId,quantity:1}],paymentMethod:'card_external'})).rejects.toThrow('SHIFT_NOT_OPEN')
+    for (const paymentMethod of ['cash','card_external','transfer'] as const) {
+      await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:checkout.id,expectedRevision:checkout.revision,items:[{lineId:checkout.items[0].lineId,quantity:1}],paymentMethod})).rejects.toThrow('SHIFT_NOT_OPEN')
+    }
     await expect(execute(actor,{command:'cash_movement',operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision,kind:'in',amountCents:1000,reason:'No durante conteo'})).rejects.toThrow('SHIFT_NOT_OPEN')
     const close={command:'close_shift' as const,operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision,countedCents:15550}
     const closed=await execute<CashShift>(actor,close);expect(await execute(actor,close)).toEqual(closed)
