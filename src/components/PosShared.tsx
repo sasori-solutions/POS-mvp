@@ -18,6 +18,7 @@ export function CatalogFilters({
   onCategory,
   action,
   trailingFilter,
+  appearance = "library",
 }: {
   products: Product[];
   query: string;
@@ -26,14 +27,16 @@ export function CatalogFilters({
   onCategory: (value: string) => void;
   action?: React.ReactNode;
   trailingFilter?: React.ReactNode;
+  appearance?: "library" | "sale";
 }) {
   const categories = [
     ...new Set(products.map((product) => product.category).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b, "es"));
+  const sale = appearance === "sale";
   return (
-    <div className="catalog-filters my-5 flex flex-col gap-4">
+    <div className={sale ? "catalog-filters sale-filters" : "catalog-filters my-5 flex flex-col gap-4"}>
       <div className="flex items-center gap-3 max-tablet:flex-wrap">
-        <div className="catalog-search flex min-h-13.5 min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-surface px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:min-h-13 [&_input]:min-w-0 [&_input]:w-full [&_input]:border-0 [&_input]:bg-transparent [&_input]:text-ink [&_input:focus-visible]:outline-none [&_button]:-mr-3 [&_button]:size-12 [&_button]:min-h-12 [&_svg]:shrink-0 max-tablet:basis-full">
+        <div className={sale ? "catalog-search" : "catalog-search flex min-h-13.5 min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-surface px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:min-h-13 [&_input]:min-w-0 [&_input]:w-full [&_input]:border-0 [&_input]:bg-transparent [&_input]:text-ink [&_input:focus-visible]:outline-none [&_button]:-mr-3 [&_button]:size-12 [&_button]:min-h-12 [&_svg]:shrink-0 max-tablet:basis-full"}>
           <Search size={20} aria-hidden="true" />
           <input
             aria-label="Buscar producto"
@@ -63,7 +66,7 @@ export function CatalogFilters({
           {["", ...categories].map((value) => (
             <button
               key={value}
-              className="catalog-category min-h-12 max-w-55 shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 [overflow-wrap:anywhere] hover:border-brand aria-pressed:border-brand-soft aria-pressed:bg-brand-soft aria-pressed:text-brand-hover"
+              className={sale ? "catalog-category" : "catalog-category min-h-12 max-w-55 shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 [overflow-wrap:anywhere] hover:border-brand aria-pressed:border-brand-soft aria-pressed:bg-brand-soft aria-pressed:text-brand-hover"}
               aria-pressed={category === value}
               onClick={() => onCategory(value)}
             >

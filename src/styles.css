@@ -113,7 +113,7 @@
   .workspace-mode { @apply border border-line; }
   .workspace-owner .workspace-mode { @apply border-dashboard-border; }
   .workspace-main { @apply mx-auto flex w-full max-w-360 flex-col px-4 pb-[calc(104px+env(safe-area-inset-bottom))] tablet:px-8 min-[64rem]:ml-54 min-[64rem]:w-[calc(100%-216px)] min-[64rem]:px-10 min-[64rem]:pb-10; }
-  .workspace-header { @apply flex min-h-19 items-center gap-3; }
+  .workspace-header { @apply flex min-h-19 items-center gap-3; padding-top: env(safe-area-inset-top); }
   .workspace-mobile-business { @apply min-w-0 flex-1 truncate text-sm font-medium min-[64rem]:hidden; }
   .workspace-header-actions { @apply ml-auto flex items-center gap-0; }
   .workspace-header-actions .pos-icon-button { @apply justify-items-end; }
@@ -140,11 +140,41 @@
   .workspace-shell .ops-card { @apply rounded-xl; }
   .workspace-shell .pos-primary { @apply border-ink bg-ink enabled:hover:border-ink-hover enabled:hover:bg-ink-hover; }
   .workspace-shell .sale-library-tabs button[aria-pressed=true] { @apply border-ink; }
-  .workspace-shell .touch-product { @apply rounded-xl border-transparent enabled:hover:border-line; }
   .workspace-shell .touch-product-quantity { @apply bg-ink; }
   .workspace-shell .catalog-filters input { @apply rounded-xl border-transparent bg-surface; }
   .workspace-shell .ops-tabs button[aria-pressed=true] { @apply border-ink text-ink; }
   .workspace-shell .product-list { @apply border-t-0; }
+  .workspace-operator .workspace-header { @apply min-h-16 gap-2; }
+  .workspace-operator .workspace-mobile-business { @apply line-clamp-2 whitespace-normal text-[13px] leading-5 min-[64rem]:hidden; }
+  .workspace-operator .workspace-dashboard-link { @apply min-[64rem]:hidden; }
+  .workspace-operator .workspace-header-actions { @apply shrink-0 gap-0; }
+  .workspace-operator .workspace-header-actions .pos-icon-button { @apply size-12 min-h-12; }
+  .workspace-shell[data-destination=Venta] .workspace-page-heading { @apply mt-2 mb-3; }
+  .workspace-shell[data-destination=Venta] .workspace-main { @apply pb-[calc(176px+env(safe-area-inset-bottom))] tablet:pb-[calc(104px+env(safe-area-inset-bottom))] min-[64rem]:pb-10; }
+  .sale-library-tabs { @apply flex gap-6 border-b border-line; }
+  .sale-library-tabs button { @apply flex min-h-12 items-center gap-2 border-0 border-b-2 border-transparent bg-transparent px-0 py-3 text-sm text-muted; }
+  .sale-library-tabs button[aria-pressed=true] { @apply border-ink font-medium text-ink; }
+  .sale-filters { @apply my-4 flex flex-col gap-3; }
+  .sale-filters .catalog-search { @apply flex min-h-12 min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-line bg-white px-3 text-muted focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand; }
+  .sale-filters .catalog-search > svg { @apply shrink-0; }
+  .sale-filters .catalog-search .pos-icon-button { @apply -mr-2 size-12 min-h-12; }
+  .workspace-shell .sale-filters input { @apply min-h-12 min-w-0 w-full rounded-none border-0 bg-transparent text-[15px] text-ink focus-visible:outline-none; }
+  .sale-filters .catalog-categories { @apply gap-2 pb-0.5; }
+  .sale-filters .catalog-category { @apply min-h-12 max-w-55 shrink-0 rounded-lg border border-transparent bg-surface px-4 py-2 text-sm hover:border-line; overflow-wrap: anywhere; }
+  .sale-product { @apply relative flex h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-white p-0 text-left text-ink disabled:opacity-100 enabled:hover:border-ink enabled:active:bg-surface; }
+  .sale-product .tile-visual { @apply grid aspect-[4/3] w-full place-items-center overflow-hidden; }
+  .sale-product .tile-visual img { @apply size-full object-cover; }
+  .sale-product .tile-monogram { @apply text-2xl leading-none font-medium text-ink; }
+  .sold-out-tile .tile-visual { @apply opacity-55 grayscale; }
+  .sale-product .tile-copy { @apply flex w-full flex-1 flex-col items-start gap-2 p-3; }
+  .sale-product .tile-copy strong { @apply line-clamp-2 min-h-10 w-full text-[15px] leading-5 font-medium; overflow-wrap: anywhere; }
+  .sale-product .tile-copy b { @apply mt-auto min-h-6 text-[15px] leading-6 font-medium tabular-nums; overflow-wrap: anywhere; }
+  .sale-product .tile-stock { @apply absolute top-3 left-3 rounded-md bg-white px-2 py-1 text-xs leading-5 font-medium text-ink; }
+  .touch-product-wrap .tile-menu { @apply absolute right-1 bottom-1 size-12 min-h-12 rounded-lg bg-transparent text-muted enabled:hover:bg-surface enabled:hover:text-ink; }
+  .mobile-cart-action .sale-account-trigger { @apply min-h-13 justify-start gap-2.5; }
+  .mobile-cart-action .sale-account-trigger:disabled { @apply border-line bg-surface text-muted opacity-100; }
+  .sale-account-count { @apply ml-1 grid h-7 min-w-7 place-items-center rounded-md bg-white/15 px-1.5 text-sm tabular-nums; }
+  .sale-account-amount { @apply ml-auto tabular-nums; }
   .workspace-shell .sales-list button { @apply my-2 min-h-20 rounded-xl border border-line px-4 py-3; }
   .workspace-management .management-heading h1 { @apply sr-only; }
   .workspace-management .management-heading { @apply mb-5; }

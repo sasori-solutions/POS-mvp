@@ -141,7 +141,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
     </div>
   }
 
-  return <div ref={root} className={`workspace-shell ${ownerDashboard ? `workspace-owner${navigationCollapsed ? ' workspace-owner-collapsed' : ''}` : 'workspace-operator'}`}>
+  return <div ref={root} data-destination={active} className={`workspace-shell ${ownerDashboard ? `workspace-owner${navigationCollapsed ? ' workspace-owner-collapsed' : ''}` : 'workspace-operator'}`}>
     <aside id={sidebarId} className="workspace-sidebar" aria-label="Menú del negocio">
       {ownerDashboard ? ownerPanel() : <>
         <div className="workspace-brand"><span className="workspace-business-mark">{business.name.slice(0, 1).toUpperCase()}</span><span>{business.name}{!owner && <small>{business.employee?.name ?? 'Punto de venta'}</small>}</span></div>
@@ -160,10 +160,10 @@ export default function WorkspaceShell({ business, accountName, active, operatin
     <div className="workspace-main">
       <header className="workspace-header">
         {ownerDashboard && <button type="button" ref={menuTrigger} className="pos-icon-button workspace-menu-toggle" aria-label="Abrir menú" aria-expanded={navigationOpen} aria-controls={drawerId} data-workspace-action="menu" onClick={() => setNavigationOpen(true)}><Menu size={23} aria-hidden="true"/></button>}
-        <span className="workspace-mobile-business">{business.name}</span>
+        <span className="workspace-mobile-business" title={business.name}>{business.name}</span>
         {owner && !operating && <button type="button" className="workspace-mobile-mode" disabled={busy} onClick={() => onSelect('Venta')}>Punto de Venta<ArrowRight size={17}/></button>}
         <div className="workspace-header-actions">
-          {owner && operating && <button type="button" className="workspace-mobile-mode workspace-mobile-mode-icon" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
+          {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link workspace-mobile-mode-icon" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
           {owner && onNotifications && <button type="button" className="pos-icon-button" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} disabled={busy} data-workspace-action="notifications" onClick={onNotifications}><span className="workspace-icon"><Bell size={21} aria-hidden="true"/>{unreadCount > 0 && <span className="workspace-badge workspace-notification-badge" aria-hidden="true">{unreadCount > 99 ? '99+' : unreadCount}</span>}</span></button>}
           <button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><LockKeyhole size={21}/></button>
         </div>
