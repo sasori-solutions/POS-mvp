@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Home, LayoutGrid, ClipboardList, ReceiptText, Package, Menu, Wallet, ChartNoAxesCombined, Users, Settings, Tablet, KeyRound, ArrowRight, ArrowLeft, ArrowLeftRight, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, LockKeyhole, Bell, LogOut } from 'lucide-react'
+import { Home, LayoutGrid, ClipboardList, ReceiptText, Package, Menu, Wallet, ChartNoAxesCombined, Users, Settings, Tablet, KeyRound, ArrowRight, ArrowLeftRight, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, LockKeyhole, Bell, LogOut } from 'lucide-react'
 import { gsap } from 'gsap'
 import { useGSAP } from '@gsap/react'
 import type { BusinessContext } from '../lib/contracts'
@@ -141,7 +141,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
     </div>
   }
 
-  return <div ref={root} className={`workspace-shell ${ownerDashboard ? `workspace-owner${navigationCollapsed ? ' workspace-owner-collapsed' : ''}` : 'workspace-operator'}`}>
+  return <div ref={root} data-destination={active} className={`workspace-shell ${ownerDashboard ? `workspace-owner${navigationCollapsed ? ' workspace-owner-collapsed' : ''}` : 'workspace-operator'}`}>
     <aside id={sidebarId} className="workspace-sidebar" aria-label="Menú del negocio">
       {ownerDashboard ? ownerPanel() : <>
         <div className="workspace-brand"><span className="workspace-business-mark">{business.name.slice(0, 1).toUpperCase()}</span><span>{business.name}{!owner && <small>{business.employee?.name ?? 'Punto de venta'}</small>}</span></div>
@@ -160,9 +160,13 @@ export default function WorkspaceShell({ business, accountName, active, operatin
     <div className="workspace-main">
       <header className="workspace-header">
         {ownerDashboard && <button type="button" ref={menuTrigger} className="pos-icon-button workspace-menu-toggle" aria-label="Abrir menú" aria-expanded={navigationOpen} aria-controls={drawerId} data-workspace-action="menu" onClick={() => setNavigationOpen(true)}><Menu size={23} aria-hidden="true"/></button>}
-        <span className="workspace-mobile-business">{business.name}</span>
-        {owner && <button type="button" className="workspace-mobile-mode" disabled={busy} onClick={() => onSelect(operating ? 'Inicio' : 'Venta')}>{operating ? <ArrowLeft size={17}/> : null}{operating ? 'Dashboard' : 'Punto de Venta'}{!operating && <ArrowRight size={17}/>}</button>}
-        <div className="workspace-header-actions">{owner && onNotifications && <button type="button" className="pos-icon-button workspace-icon" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} disabled={busy} data-workspace-action="notifications" onClick={onNotifications}><Bell size={21}/>{unreadCount > 0 && <span className="workspace-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>}</button>}<button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><LockKeyhole size={21}/></button></div>
+        <span className="workspace-mobile-business" title={business.name}>{business.name}</span>
+        {owner && !operating && <button type="button" className="workspace-mobile-mode" disabled={busy} onClick={() => onSelect('Venta')}>Punto de Venta<ArrowRight size={17}/></button>}
+        <div className="workspace-header-actions">
+          {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link" aria-label="Dashboard" title="Volver al inicio" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
+          {owner && onNotifications && <button type="button" className="pos-icon-button workspace-icon" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} disabled={busy} data-workspace-action="notifications" onClick={onNotifications}><Bell size={21}/>{unreadCount > 0 && <span className="workspace-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>}</button>}
+          <button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><LockKeyhole size={21}/></button>
+        </div>
       </header>
       <div className="workspace-page-heading"><h1 id="pos-section-title">{title}</h1>{!owner && business.employee && <span>{business.employee.name}</span>}</div>
       {children}

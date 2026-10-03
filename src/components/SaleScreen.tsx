@@ -639,7 +639,7 @@ export default function SaleScreen({
         <SaleDetail sale={receipt} />
         {error && (
           <p
-            className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+            className="pos-error mt-6 rounded-lg border border-line bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
             role="alert"
           >
             {error}
@@ -691,11 +691,11 @@ export default function SaleScreen({
   return (
     <div
       data-cart={showCart}
-      className={`sale-workspace group/sale mt-2 grid grid-cols-[minmax(0,1fr)_360px] items-start gap-8 max-desktop:grid-cols-[minmax(0,1fr)_320px] max-desktop:gap-6 max-tablet:mt-0 max-tablet:block ${showCart ? "show-cart" : ""}`}
+      className={`sale-workspace group/sale grid grid-cols-[minmax(0,1fr)_360px] items-start gap-8 max-desktop:grid-cols-[minmax(0,1fr)_320px] max-desktop:gap-6 max-tablet:block ${showCart ? "show-cart" : ""}`}
     >
-      <div className="sale-catalog min-w-0 max-tablet:pb-20">
+      <div className="sale-catalog min-w-0">
         <div
-          className="sale-library-tabs flex gap-6 border-b border-line [&_button]:flex [&_button]:min-h-13 [&_button]:items-center [&_button]:gap-2 [&_button]:border-0 [&_button]:border-b-3 [&_button]:border-transparent [&_button]:bg-transparent [&_button]:py-2 [&_button]:text-[15px] [&_button]:text-muted [&_button[aria-pressed=true]]:border-brand [&_button[aria-pressed=true]]:font-medium [&_button[aria-pressed=true]]:text-ink max-tablet:gap-5 max-tablet:[&_button]:text-sm"
+          className="sale-library-tabs"
           role="group"
           aria-label="Vista del catálogo"
         >
@@ -708,6 +708,7 @@ export default function SaleScreen({
           </button>
         </div>
         <CatalogFilters
+          appearance="sale"
           products={activeProducts}
           query={query}
           category={category}
@@ -716,7 +717,7 @@ export default function SaleScreen({
         />
         {!online && (
           <p
-            className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3"
+            className="pos-warning my-4 rounded-lg border border-line bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3"
             role="status"
           >
             Sin conexión. Conéctate para registrar la venta.
@@ -724,7 +725,7 @@ export default function SaleScreen({
         )}
         {catalog.error && (
           <div
-            className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+            className="pos-error mt-6 rounded-lg border border-line bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
             role="alert"
           >
             <p>{catalog.error}</p>
@@ -757,7 +758,7 @@ export default function SaleScreen({
             description="Prueba otro nombre o categoría."
           />
         ) : (
-          <div className="touch-catalog grid grid-cols-4 gap-4 max-desktop:grid-cols-3 max-[60rem]:grid-cols-2 max-tablet:gap-3 max-tablet:pb-19">
+          <div className="touch-catalog grid grid-cols-4 gap-x-4 gap-y-5 max-desktop:grid-cols-3 max-[60rem]:grid-cols-2 max-tablet:gap-x-3 max-tablet:gap-y-4">
             {filtered.map((product) => {
               const amount = displayCart
                 .filter((line) => line.product.id === product.id)
@@ -777,7 +778,7 @@ export default function SaleScreen({
                   key={product.id}
                 >
                   <button
-                    className="touch-product relative flex h-full w-full flex-col overflow-hidden rounded-lg border border-line bg-white p-0 text-left [overflow-wrap:anywhere] enabled:hover:border-brand enabled:active:bg-surface group-data-[sold-out=true]/product:opacity-100 [&_strong]:text-base [&_strong]:leading-snug [&_strong]:font-medium [&_b]:text-sm [&_b]:font-medium [&_b]:text-muted [&_b]:tabular-nums max-tablet:[&_strong]:text-[15px]"
+                    className="touch-product sale-product"
                     onClick={() =>
                       d.variations.length ||
                       d.modifierSets.length ||
@@ -787,10 +788,10 @@ export default function SaleScreen({
                         : add(product)
                     }
                     disabled={frozen || checkout || soldOut}
-                    aria-label={`Agregar ${product.name}, ${money(shownPrice)}`}
+                    aria-label={`Agregar ${product.name}, ${money(shownPrice)}${soldOut ? ', agotado' : ''}`}
                   >
                     <span
-                      className="tile-visual grid aspect-[1.15] w-full place-items-center overflow-hidden group-data-[sold-out=true]/product:opacity-55 group-data-[sold-out=true]/product:grayscale [&_img]:size-full [&_img]:object-cover"
+                      className="tile-visual"
                       style={{ backgroundColor: d.tileColor }}
                     >
                       {product.image ? (
@@ -802,28 +803,24 @@ export default function SaleScreen({
                           loading="lazy"
                         />
                       ) : (
-                        <span className="tile-monogram text-[32px] leading-none font-medium text-ink max-tablet:text-[28px]">
+                        <span className="tile-monogram">
                           {d.tileLabel ||
                             product.name.slice(0, 2).toLocaleUpperCase("es-MX")}
                         </span>
                       )}
                     </span>
-                    <span className="tile-copy flex w-full flex-1 flex-col items-start gap-1.5 px-3 py-3.5 text-ink max-tablet:p-3">
-                      <strong>{product.name}</strong>
-                      <b>
+                    <span className="tile-copy">
+                      <strong title={product.name}>{product.name}</strong>
+                      <b className={canAvailability ? 'pr-11' : undefined}>
                         {d.variablePrice
                           ? "Precio variable"
                           : `${prices.length ? "Desde " : ""}${money(shownPrice)}`}
                       </b>
-                      {soldOut ? (
-                        <small className="tile-stock text-xs text-muted group-data-[sold-out=true]/product:font-semibold group-data-[sold-out=true]/product:text-ink">
-                          Agotado
-                        </small>
-                      ) : null}
                     </span>
+                    {soldOut && <small className="tile-stock">Agotado</small>}
                     {amount > 0 && (
                       <span
-                        className="touch-product-quantity absolute top-2 left-2 z-10 grid h-6.5 min-w-6.5 place-items-center rounded-full bg-brand px-1 text-xs font-medium text-white"
+                        className={`touch-product-quantity absolute top-3 z-10 grid h-7 min-w-7 place-items-center rounded-full bg-ink px-1.5 text-xs font-medium text-white ${soldOut ? 'right-3' : 'left-3'}`}
                         aria-hidden="true"
                       >
                         {amount}
@@ -831,7 +828,7 @@ export default function SaleScreen({
                     )}
                   </button>
                   {canAvailability && <button
-                    className="tile-menu absolute! top-1 right-1 size-12! min-h-12! rounded-lg! bg-white/95! enabled:hover:bg-white! pos-icon-button"
+                    className="tile-menu pos-icon-button"
                     aria-label={`Disponibilidad de ${product.name}`}
                     disabled={frozen || checkout || availabilityBusy}
                     onClick={() => {
@@ -846,18 +843,22 @@ export default function SaleScreen({
             })}
           </div>
         )}
-        <div className="mobile-cart-action fixed bottom-[calc(76px+env(safe-area-inset-bottom))] left-1/2 z-30 w-full -translate-x-1/2 border-t border-line bg-white px-4 py-3 tablet:hidden">
+        <div className="mobile-cart-action fixed bottom-[calc(76px+env(safe-area-inset-bottom))] inset-x-0 z-30 border-t border-line bg-white px-4 py-3 tablet:hidden">
           <button
             ref={cartButton}
-            className="pos-button pos-primary"
+            className="pos-button pos-primary sale-account-trigger"
+            aria-label={displayCart.length ? `Ver cuenta (${displayCart.reduce((sum, line) => sum + line.quantity, 0)}) ${money(total)}` : "Ver cuenta"}
             aria-expanded={showCart}
             aria-controls="current-sale-account"
             onClick={() => setShowCart(true)}
             disabled={!displayCart.length && !storageError}
           >
-            {displayCart.length
-              ? `Ver cuenta (${displayCart.reduce((sum, line) => sum + line.quantity, 0)}) ${money(total)}`
-              : "Ver cuenta"}
+            <ShoppingBag size={20} aria-hidden="true" />
+            <span>Ver cuenta</span>
+            {displayCart.length > 0 && <>
+              <span className="sale-account-count" aria-hidden="true">{displayCart.reduce((sum, line) => sum + line.quantity, 0)}</span>
+              <span className="sale-account-amount" aria-hidden="true">{money(total)}</span>
+            </>}
           </button>
         </div>
       </div>
@@ -881,7 +882,7 @@ export default function SaleScreen({
           )}
           {error && (
             <p
-              className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+              className="pos-error mt-6 rounded-lg border border-line bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
               role="alert"
             >
               {error}
@@ -965,7 +966,7 @@ export default function SaleScreen({
           </ul>
           {outdated && (
             <p
-              className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3"
+              className="pos-warning my-4 rounded-lg border border-line bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3"
               role="status"
             >
               Revisando disponibilidad y precios…
@@ -973,7 +974,7 @@ export default function SaleScreen({
           )}
           {totalError && (
             <p
-              className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+              className="pos-error mt-6 rounded-lg border border-line bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
               role="alert"
             >
               {totalError}
@@ -1121,14 +1122,14 @@ export default function SaleScreen({
           </p>
           {productDetails(availability).variations.length > 0 &&
             productDetails(availability).variations.every((v) => v.soldOut) && (
-              <p className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3">
+              <p className="pos-warning my-4 rounded-lg border border-line bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3">
                 Sus variantes están agotadas. Revisa su disponibilidad en
                 Productos.
               </p>
             )}
           {availabilityError && (
             <p
-              className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+              className="pos-error mt-6 rounded-lg border border-line bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
               role="alert"
             >
               {availabilityError}
