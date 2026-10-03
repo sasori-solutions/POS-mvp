@@ -4,9 +4,28 @@ import type { AccountError, AccountErrorCode, AccountRequest } from '../../../sr
 import { isUuid, parseAccountRequest, RequestValidationError } from './validation.ts'
 import { mailConfiguration, sendPinRecovery } from './email.ts'
 import { claimsFromVerifiedJwt, verifiedGoogleAuthentication } from './authentication.ts'
+import { processPointResult } from '../point/service.ts'
 
 const maxBodyBytes = 8192
 const errorDefinitions: Record<AccountErrorCode, { status: number; message: string }> = {
+  POINT_DISABLED: { status: 409, message: 'Integrated collections are disabled.' },
+  POINT_CONNECTION_REQUIRED: { status: 409, message: 'Verify a provider connection first.' },
+  POINT_TERMINAL_NOT_READY: { status: 409, message: 'The terminal configuration is unverified.' },
+  POINT_TERMINAL_BUSY: { status: 409, message: 'The terminal has an unresolved operation.' },
+  POINT_CHECKOUT_NOT_FOUND: { status: 404, message: 'The integrated checkout is unavailable.' },
+  POINT_RESULT_UNCERTAIN: { status: 409, message: 'The original payment still requires reconciliation.' },
+  POINT_STATE_INVALID: { status: 409, message: 'The payment transition is unavailable.' },
+  POINT_FACT_MISMATCH: { status: 409, message: 'The provider evidence requires review.' },
+  POINT_REFUND_LIMIT: { status: 409, message: 'The refund exceeds the available balance.' },
+  POINT_REFUND_ALLOCATION_REQUIRED: { status: 409, message: 'The refund allocation requires evidence.' },
+  POINT_ADMIN_DENIED: { status: 403, message: 'Independent administrative authorization is required.' },
+  POINT_PERIOD_CLOSED: { status: 409, message: 'The financial period is closed.' },
+  POINT_LEASE_LOST: { status: 409, message: 'The worker lease is unavailable.' },
+  POINT_OAUTH_INVALID: { status: 400, message: 'The provider authorization is unavailable or expired.' },
+  POINT_CONFIGURATION_REQUIRED: { status: 503, message: 'The integration requires server configuration.' },
+  POINT_SERVICE_UNAVAILABLE: { status: 503, message: 'The provider result remains unconfirmed.' },
+  POINT_REFRESH_BUSY: { status: 409, message: 'Provider credentials are being refreshed.' },
+  POINT_IDEMPOTENCY_WINDOW_EXPIRED: { status: 409, message: 'The payment requires review outside the recovery guarantee.' },
   OPERATIONS_DISABLED: { status: 409, message: 'The owner must activate operations first.' },
   LEGACY_CHECKOUT_DISABLED: { status: 409, message: 'Use the operational checkout after activation.' },
   SHIFT_REQUIRED: { status: 409, message: 'Open a cash shift to continue.' },
@@ -156,6 +175,8 @@ function localPasswordTesting(url: string): boolean {
 
 function rpcFor(request: AccountRequest): { name: string; args: Record<string, unknown> } {
   switch (request.action) {
+    case 'device_point':
+      return { name: 'point_device', args: { p_device_token: request.deviceToken, p_operator_token: request.operatorToken, p_payload: request } }
     case 'device_pos':
       return { name: 'pos_device', args: { p_device_token: request.deviceToken, p_operator_token: request.operatorToken, p_payload: request } }
     case 'device_request_pin_email':
@@ -198,6 +219,7 @@ Deno.serve(async (request: Request) => {
     // Restricted device commands validate their own credential in SQL; the public API key grants no tenant access.
     const verifiedDevice = await verifiedDeviceRequest(await boundedJson(request))
     const action = parseAccountRequest(verifiedDevice.request)
+    if ((action.action === 'point' || action.action === 'device_point') && action.command === 'start' && Deno.env.get('POINT_CHARGES_ENABLED') !== 'true') return errorResponse('POINT_DISABLED', headers)
     const deviceAction = action.action.startsWith('device_')
     const emailConfirmation = action.action === 'pin_email_details' || action.action === 'confirm_pin_email'
     const publicCredentialAction = deviceAction || emailConfirmation
@@ -250,8 +272,21 @@ Deno.serve(async (request: Request) => {
       if (!sent || delivery.error) return errorResponse('EMAIL_UNAVAILABLE', headers)
       return new Response(JSON.stringify({ data: { sent: true, retryAfterSeconds: 60 } }), { status: 200, headers })
     }
+    if (action.action === 'point' || action.action === 'device_point') {
+      let result = await processPointResult(admin, action, data.data,
+        identityArgs.p_user_id ? { userId: identityArgs.p_user_id, authSessionId: identityArgs.p_auth_session_id } : undefined)
+      if (['oauth_callback','verify_connection','link_terminal','test_terminal'].includes(action.command)) {
+        const refreshed = action.action === 'point'
+          ? await admin.rpc('point_execute', { ...identityArgs, p_business_id: action.businessId, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
+          : await admin.rpc('point_device', { p_device_token: action.deviceToken, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
+        if (refreshed.error || !refreshed.data?.data) return errorResponse('SERVER_ERROR', headers)
+        result = refreshed.data.data
+      }
+      return new Response(JSON.stringify({ data: result }), { status: 200, headers })
+    }
     return new Response(JSON.stringify(data), { status: 200, headers })
   } catch (error) {
+    if (error instanceof Error && Object.hasOwn(errorDefinitions, error.message) && error.message.startsWith('POINT_')) return errorResponse(error.message as AccountErrorCode, headers)
     if (error instanceof DeviceProofError) return errorResponse('DEVICE_PROOF_INVALID', headers)
     if (error instanceof RequestValidationError) return errorResponse('VALIDATION_ERROR', headers)
     if (error instanceof BodyTooLargeError) return errorResponse('PAYLOAD_TOO_LARGE', headers)

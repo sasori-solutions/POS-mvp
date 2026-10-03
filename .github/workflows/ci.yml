@@ -15,6 +15,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  full:
+    name: Required financial checks
+    uses: ./.github/workflows/full-checks.yml
   checks:
     name: Basic checks
     runs-on: ubuntu-latest
@@ -53,7 +56,7 @@ jobs:
   deploy:
     name: Cloudflare
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: checks
+    needs: [checks, full]
     permissions:
       contents: read
       actions: read

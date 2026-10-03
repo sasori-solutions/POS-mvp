@@ -1,4 +1,5 @@
 import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts.ts'
+import type { PointCommand, PointResponses, PointErrorCode } from './point-contracts.ts'
 
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
 export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
@@ -17,7 +18,7 @@ export const permissionPrerequisites: Partial<Record<BusinessPermission, Busines
   'cash.open': 'cash.read', 'cash.move': 'cash.read', 'cash.close': 'cash.read',
   'tables.manage': 'orders.read',
 }
-export type PaymentMethod = 'cash' | 'card_external' | 'transfer'
+export type PaymentMethod = 'cash' | 'card_external' | 'transfer' | 'card_integrated'
 
 /** Progressive setup: fiscal and bank credentials never belong in this profile. */
 export interface BusinessProfile {
@@ -143,6 +144,8 @@ export interface OwnerNotification {
 
 type OwnerRequest = { businessId: string; operatorToken: string }
 type AccountRequestBody =
+  | ({ action: 'point' } & OwnerRequest & PointCommand)
+  | ({ action: 'device_point'; deviceToken: string; operatorToken: string } & PointCommand)
   | ({ action: 'pos' } & OwnerRequest & PosCommand)
   | ({ action: 'device_pos'; deviceToken: string; operatorToken: string } & PosCommand)
   | { action: 'status' }
@@ -185,6 +188,8 @@ type AccountRequestBody =
 export type AccountRequest = AccountRequestBody & { deviceProof?: DeviceProof }
 
 export interface AccountResponses {
+  point: PointResponses[keyof PointResponses]
+  device_point: PointResponses[keyof PointResponses]
   pos: PosResponses[keyof PosResponses]
   device_pos: PosResponses[keyof PosResponses]
   status: { businesses: BusinessSummary[] }
@@ -225,6 +230,7 @@ export interface AccountResponses {
   device_forget: { revoked: true }
 }
 export type AccountErrorCode =
+  | PointErrorCode
   | PosErrorCode
   | 'AUTH_REQUIRED' | 'GOOGLE_REQUIRED' | 'VALIDATION_ERROR' | 'BUSINESS_ACCESS_DENIED'
   | 'PERMISSION_DENIED' | 'INVITATION_INVALID' | 'PAIRING_INVALID' | 'DEVICE_REVOKED'
