@@ -4,7 +4,15 @@ Originally implemented on `feat/products-sales`, 1 October 2026, and now merged 
 
 ## Alcance vigente del MVP — 2 de octubre de 2026
 
-La petición humana posterior acota el catálogo al dueño y operador desde su celular, sin hardware propio ni pantalla para el cliente. El editor conserva foto, nombre, descripción/categoría/alérgenos, precio fijo, tamaños, extras, favoritos y disponibilidad/unidades opcionales. Retira tipos digitales/eventos, nombres alternos, códigos de barras/SKU, costos, datos nutricionales, personalización de fichas y generación de combinaciones. Los datos anteriores se conservan. IVA se clasifica por separado (16 %, tasa 0, exento, estímulo fronterizo 8 %) dentro del precio final, con snapshots inmutables y compatibilidad de registros anteriores. Véase [catalogo-mvp-iva.md](catalogo-mvp-iva.md) para decisiones, fuentes fiscales, migración 0014 y límites.
+La petición humana posterior acota el catálogo al dueño y operador desde su celular, sin hardware propio ni pantalla para el cliente. El editor conserva foto, nombre, descripción/categoría/alérgenos, precio fijo, tamaños, extras, favoritos y disponibilidad manual. Retira tipos digitales/eventos, nombres alternos, códigos de barras/SKU, costos, datos nutricionales, personalización de fichas y generación de combinaciones. Los datos anteriores se conservan. IVA se clasifica por separado (16 %, tasa 0, exento, estímulo fronterizo 8 %) dentro del precio final, con snapshots inmutables y compatibilidad de registros anteriores. Véase [catalogo-mvp-iva.md](catalogo-mvp-iva.md) para decisiones, fuentes fiscales, migración 0014 y límites.
+
+### Disponibilidad manual — incremento 1b, 2 de octubre de 2026
+
+La instrucción humana de esta sesión retira cantidades de inventario y avisos de pocas existencias. El editor y Venta usan las marcas manuales de agotado del producto y sus tamaños. La migración `20261002001900_manual_availability.sql` conserva los valores históricos `trackStock`, `stock` y `lowStockAlert` en las filas privadas, pero el catálogo devuelve `trackStock: false`. Guardar desde ese catálogo conserva los valores originales; un cliente antiguo tampoco puede cambiarlos ni activar seguimiento en un producto nuevo. No se realiza backfill destructivo.
+
+Las líneas nuevas siguen verificando disponibilidad manual, permisos, negocio, selección, versión y precio en servidor. La ruta heredada `complete_sale` conserva su contrato y deja de validar o descontar existencias, sin avanzar versiones del catálogo por una venta. Un reintento aceptado conserva su resultado después de marcar un producto agotado. Las líneas ya aceptadas en una cuenta conservan sus snapshots para el cobro posterior, aunque el catálogo cambie.
+
+La fuente de esta corrección es la instrucción humana de la sesión y el código local vigente. Las notas históricas siguientes describen la expansión anterior, incluida su política de inventario; no acreditan esa política como vigente ni publicación del incremento 1b.
 
 La expansión descrita a continuación conserva el antecedente técnico; no es la lista vigente de controles del editor.
 
