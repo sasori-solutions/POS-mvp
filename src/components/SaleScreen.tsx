@@ -41,7 +41,6 @@ import {
   selectedPrice,
   selectionLabel,
 } from "../lib/product-details";
-import { number } from "../lib/format";
 import ProductSelection from "./ProductSelection";
 import {
   BackToCatalog,
@@ -244,19 +243,9 @@ export default function SaleScreen({
         current.version !== line.product.version
       );
     });
-  const stockExceeded = cart.some((line) => {
-    const d = productDetails(line.product);
-    return (
-      d.trackStock &&
-      cart
-        .filter((l) => l.product.id === line.product.id)
-        .reduce((sum, l) => sum + l.quantity, 0) > d.stock
-    );
-  });
   const canCheckout =
     cart.length > 0 &&
     !outdated &&
-    !stockExceeded &&
     !totalError &&
     catalog.loaded &&
     !catalog.error &&
@@ -397,7 +386,7 @@ export default function SaleScreen({
         command.soldOut
           ? `${saved.name} marcado como agotado.`
           : isSoldOut(saved)
-            ? `${saved.name} sigue agotado. Revisa sus existencias y variantes en Productos.`
+            ? `${saved.name} sigue agotado. Revisa sus variantes en Productos.`
             : `${saved.name} disponible de nuevo.`,
       );
     } catch (caught) {
@@ -745,16 +734,7 @@ export default function SaleScreen({
                         <small className="tile-stock text-xs text-muted group-data-[sold-out=true]/product:font-semibold group-data-[sold-out=true]/product:text-ink">
                           Agotado
                         </small>
-                      ) : (
-                        d.trackStock && (
-                          <small className="tile-stock text-xs text-muted group-data-[sold-out=true]/product:font-semibold group-data-[sold-out=true]/product:text-ink">
-                            {d.stock <= d.lowStockAlert
-                              ? "Pocas existencias · "
-                              : ""}
-                            {number(d.stock)} disponibles
-                          </small>
-                        )
-                      )}
+                      ) : null}
                     </span>
                     {amount > 0 && (
                       <span
@@ -907,15 +887,6 @@ export default function SaleScreen({
               Revisando disponibilidad y precios…
             </p>
           )}
-          {stockExceeded && (
-            <p
-              className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3"
-              role="alert"
-            >
-              La cantidad supera las existencias. Reduce las unidades de la
-              cuenta.
-            </p>
-          )}
           {totalError && (
             <p
               className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
@@ -1050,13 +1021,6 @@ export default function SaleScreen({
               ? "Este producto está marcado como agotado."
               : "Cambia su disponibilidad para todas las cajas."}
           </p>
-          {productDetails(availability).trackStock &&
-            productDetails(availability).stock === 0 && (
-              <p className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3">
-                Sin existencias. Repón el inventario en Productos para poder
-                venderlo.
-              </p>
-            )}
           {productDetails(availability).variations.length > 0 &&
             productDetails(availability).variations.every((v) => v.soldOut) && (
               <p className="pos-warning my-4 rounded-lg border border-line border-l-3 border-l-warning bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3">

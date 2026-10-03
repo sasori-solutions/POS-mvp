@@ -421,7 +421,7 @@ test('phone/tablet layout and draft survive navigation without horizontal overfl
   } finally { await backend.db.close() }
 })
 
-test('expanded product editor persists a photo, variants, extras and stock, then recovers a selected sale', async ({ page },info) => {
+test('expanded product editor persists a photo, variants and extras with manual availability, then recovers a selected sale', async ({ page },info) => {
   const backend = await mockPos(page,{empty:true,saleResponseLosses:1})
   try {
     await unlock(page); await navigate(page,'Productos')
@@ -441,8 +441,8 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     await page.getByLabel('Opción 1 de grupo 1',{exact:true}).fill('Avena')
     await page.getByLabel('Precio extra 1',{exact:true}).fill('0.11')
     await page.getByLabel('Selecciones mínimas',{exact:true}).fill('1')
-    await page.getByLabel('Controlar existencias',{exact:false}).check()
-    await page.getByLabel('Existencias actuales',{exact:true}).fill('4')
+    await expect(page.getByLabel('Controlar existencias',{exact:false})).toHaveCount(0)
+    await expect(page.getByLabel('Existencias actuales',{exact:true})).toHaveCount(0)
     await page.getByLabel('Mostrar en favoritos',{exact:true}).check()
     await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
     await page.screenshot({path:`artifacts/qa/${info.project.name}-expanded-editor.png`,fullPage:true})
@@ -451,7 +451,7 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     const product = (await backend.catalog()).products[0]
     expect(product.image).toMatch(/^data:image\/jpeg;base64,/)
     expect(product.details?.variations).toHaveLength(2)
-    expect(product.details?.stock).toBe(4)
+    expect(product.details?.trackStock).toBe(false)
     await navigate(page,'Venta')
     await expect(page.getByRole('button',{name:'Actualizar catálogo',exact:true})).toHaveCount(0)
     await page.getByRole('button',{name:'Favoritos',exact:true}).click()
@@ -467,7 +467,8 @@ test('expanded product editor persists a photo, variants, extras and stock, then
     await page.getByRole('button',{name:'Reintentar registro',exact:true}).click()
     await expect(page.getByRole('heading',{name:'Venta registrada',exact:true})).toBeVisible()
     await expect(page.locator('.sale-detail')).toContainText('Grande, Avena')
-    expect((await backend.catalog()).products[0].details?.stock).toBe(3)
+    expect((await backend.catalog()).products[0].details?.trackStock).toBe(false)
+    expect((await backend.catalog()).products[0].version).toBe(product.version)
     expect((await backend.sales()).sales).toHaveLength(1)
     const attempts=backend.calls.filter(c=>c.command==='complete_sale')
     expect(attempts).toHaveLength(2); expect(attempts[1]).toEqual(attempts[0])

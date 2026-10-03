@@ -12,6 +12,8 @@ let legacyActor: Actor
 let legacyPinHash: string
 let legacyTaxSale: Sale
 let legacyTaxCommand: PosCommand
+let legacyInventoryProduct: Product
+let legacyEmptyInventoryProduct: Product
 
 describe('real PostgreSQL migrations and financial transactions (embedded, synthetic Auth rows)', () => {
   beforeAll(async () => {
@@ -31,7 +33,17 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     const legacyProduct = await execute<Product>(legacyActor,{...newProduct(),priceCents:11600,details:{...emptyDetails(),taxBps:1600,customerName:'Alias anterior'}})
     legacyTaxCommand = saleCommand(legacyProduct,1)
     legacyTaxSale = await execute<Sale>(legacyActor,legacyTaxCommand)
-    for (const file of migrations.filter(name => name >= vatMigration)) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    for (const file of migrations.filter(name => name >= vatMigration)) {
+      if (file === '20261002001900_manual_availability.sql') {
+        legacyInventoryProduct = await execute<Product>(legacyActor, {
+          ...newProduct(), details: { ...emptyDetails(), trackStock: true, stock: 3, lowStockAlert: 7 },
+        })
+        legacyEmptyInventoryProduct = await execute<Product>(legacyActor, {
+          ...newProduct(), details: { ...emptyDetails(), trackStock: true, stock: 0, lowStockAlert: 7 },
+        })
+      }
+      await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    }
   }, 60_000)
   afterAll(async () => { await db?.close() })
 
@@ -345,19 +357,40 @@ describe('real PostgreSQL migrations and financial transactions (embedded, synth
     expect((await execute<Sale>(actor, { ...saleCommand(variable), items: [variableLine], totalCents: 2002 })).totalCents).toBe(2002)
   })
 
-  it('deducts inventory once, rejects overselling atomically and prevents a stale editor from overwriting sold stock', async () => {
-    const actor = await newActor(), details = { ...emptyDetails(), trackStock: true, stock: 3 }
-    const input = { ...newProduct(), details }, product = await execute<Product>(actor, input), command = saleCommand(product,2)
-    await expect(execute(actor, saleCommand(product,4))).rejects.toThrow('PRODUCT_UNAVAILABLE')
-    expect(await count('sales',actor.businessId)).toBe(0)
-    const sale = await execute<Sale>(actor,command)
-    expect(await execute(actor,command)).toEqual(sale)
-    const catalog = await execute<{products:Product[]}>(actor,{command:'catalog'})
-    expect(catalog.products[0].details?.stock).toBe(1)
-    expect(catalog.products[0].version).toBe(product.version+1)
-    await expect(execute(actor,{...input,expectedVersion:product.version,operationId:randomUUID()})).rejects.toThrow('PRODUCT_CHANGED')
-    await expect(execute(actor,saleCommand(catalog.products[0],2))).rejects.toThrow('PRODUCT_UNAVAILABLE')
-    expect(await count('sales',actor.businessId)).toBe(1)
+  it('preserves dormant inventory on upgrade and legacy sales never reject or debit quantity', async () => {
+    const catalog = await execute<{products:Product[]}>(legacyActor,{command:'catalog'})
+    const product = catalog.products.find(p => p.id === legacyInventoryProduct.id)!
+    expect(product.details).toMatchObject({trackStock:false,stock:3,lowStockAlert:7})
+    const command = saleCommand(product,9)
+    const receipt = await execute<Sale>(legacyActor,command)
+    expect(receipt).toMatchObject({itemCount:9,totalCents:9009})
+    const stored = await db.query<{details:unknown;version:number}>('select details,version from app_private.products where business_id=$1 and id=$2',[legacyActor.businessId,product.id])
+    expect(stored.rows[0]).toMatchObject({details:{trackStock:true,stock:3,lowStockAlert:7},version:product.version})
+    const emptyProduct = catalog.products.find(p => p.id === legacyEmptyInventoryProduct.id)!
+    expect((await execute<Sale>(legacyActor,saleCommand(emptyProduct,9))).itemCount).toBe(9)
+    expect((await db.query<{details:unknown;version:number}>('select details,version from app_private.products where id=$1',[emptyProduct.id])).rows[0]).toMatchObject({details:{trackStock:true,stock:0},version:emptyProduct.version})
+    const unavailable = await execute<Product>(legacyActor,{command:'set_product_sold_out',productId:product.id,expectedVersion:product.version,soldOut:true,operationId:randomUUID()})
+    await expect(execute(legacyActor,saleCommand(unavailable))).rejects.toThrow('PRODUCT_UNAVAILABLE')
+    expect(await execute(legacyActor,command)).toEqual(receipt)
+  })
+
+  it('masked catalog saves preserve old inventory fields and obsolete clients cannot enable tracking', async () => {
+    const catalog = await execute<{products:Product[]}>(legacyActor,{command:'catalog'})
+    const product = catalog.products.find(p => p.id === legacyInventoryProduct.id)!
+    let current = await execute<Product>(legacyActor,{...newProduct(),productId:product.id,expectedVersion:product.version,details:product.details,name:'Nombre actualizado'})
+    current = await execute<Product>(legacyActor,{...newProduct(),productId:product.id,expectedVersion:current.version,details:{...current.details!,trackStock:true,stock:900,lowStockAlert:800}})
+    expect(current.details).toMatchObject({trackStock:false,stock:3,lowStockAlert:7})
+    const stored = await db.query<{details:unknown}>('select details from app_private.products where business_id=$1 and id=$2',[legacyActor.businessId,product.id])
+    expect(stored.rows[0].details).toMatchObject({trackStock:true,stock:3,lowStockAlert:7})
+    const actor = await newActor()
+    const fresh = await execute<Product>(actor,{...newProduct(),details:{...emptyDetails(),trackStock:true,stock:3,lowStockAlert:1}})
+    expect(fresh.details).toMatchObject({trackStock:false,stock:0,lowStockAlert:5})
+    const command = saleCommand(fresh,8)
+    const receipt = await execute<Sale>(actor,command)
+    expect(await execute(actor,command)).toEqual(receipt)
+    expect((await execute<{products:Product[]}>(actor,{command:'catalog'})).products[0]).toEqual(fresh)
+    expect((await db.query<{details:unknown}>('select details from app_private.products where id=$1',[fresh.id])).rows[0].details).toMatchObject({trackStock:false,stock:0,lowStockAlert:5})
+    for (const role of ['anon','authenticated']) expect((await db.query<{allowed:boolean}>("select has_function_privilege($1,'app_private.manual_availability_details(jsonb,jsonb)','EXECUTE') as allowed",[role])).rows[0].allowed).toBe(false)
   })
 
   it('assembles private bounded JPEG chunks with authorized retries and rejects foreign image attachment', async () => {

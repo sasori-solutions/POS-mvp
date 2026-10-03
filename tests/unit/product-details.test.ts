@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { productVat, vatSummary } from '../../src/lib/vat'
-import { emptyDetails, includedTax, lineKey, selectedPrice, selectionLabel } from '../../src/lib/product-details'
+import { emptyDetails, includedTax, isSoldOut, lineKey, productDetails, selectedPrice, selectionLabel } from '../../src/lib/product-details'
 import { parseAccountRequest } from '../../supabase/functions/account/validation'
 import { readPendingSale } from '../../src/lib/pending-sale'
 import type { Product } from '../../src/lib/pos-contracts'
@@ -8,6 +8,14 @@ const id = '7bd0d31b-729c-4eab-90f3-328044b164ce', modifier = 'a9f45b3c-729c-4ea
 const selection = { variationId: id, modifierIds: [modifier], variablePriceCents: null }
 const product: Product = { id, name: 'Café', category: '', priceCents: 1001, active: true, version: 1, details: { ...emptyDetails(), variations: [{ id, name: 'Grande', priceCents: 5801, sku: '', barcode: '', soldOut: false }], modifierSets: [{ id: modifier, name: 'Leche', min: 1, max: 1, options: [{ id: modifier, name: 'Avena', priceCents: 101 }] }] } }
 describe('catalog selections and durable recovery', () => {
+  it('uses manual availability even when historical inventory is empty', () => {
+    const historic = {...product,details:{...emptyDetails(),trackStock:true,stock:0,lowStockAlert:9}}
+    expect(productDetails(historic)).toMatchObject({trackStock:false,stock:0,lowStockAlert:9})
+    expect(isSoldOut(historic)).toBe(false)
+    expect(isSoldOut({...historic,details:{...historic.details,soldOut:true}})).toBe(true)
+    expect(isSoldOut({...product,details:{...product.details!,variations:product.details!.variations.map(v=>({...v,soldOut:true}))}})).toBe(true)
+    expect(historic.details.trackStock).toBe(true)
+  })
   it('prices selections in integer cents and rounds included tax once per line', () => {
     expect(selectedPrice(product, selection)).toBe(5902)
     expect(includedTax(17706, 1600)).toBe(2442)

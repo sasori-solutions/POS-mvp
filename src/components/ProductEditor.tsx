@@ -15,7 +15,7 @@ const sections = [
   ["pricing", "Precio e IVA"],
   ["variations", "Tamaños"],
   ["modifiers", "Extras"],
-  ["inventory", "Disponibilidad"],
+  ["availability", "Disponibilidad"],
 ] as const;
 
 export default function ProductEditor({
@@ -715,7 +715,7 @@ export default function ProductEditor({
             </button>
           </section>
           <section
-            id="product-inventory"
+            id="product-availability"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Disponibilidad</h3>
@@ -735,51 +735,6 @@ export default function ProductEditor({
               />
               <span>Mostrar en favoritos</span>
             </label>
-            <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
-              <input
-                type="checkbox"
-                checked={details.trackStock}
-                onChange={(e) => change("trackStock", e.target.checked)}
-              />
-              <span>
-                Controlar existencias
-                <small>
-                  Cada unidad vendida descuenta existencias compartidas entre variantes.
-                </small>
-              </span>
-            </label>
-            {details.trackStock && (
-              <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-                <div className="field">
-                  <label htmlFor="product-stock">Existencias actuales</label>
-                  <input
-                    id="product-stock"
-                    type="number"
-                    min={0}
-                    max={999999}
-                    step={1}
-                    value={details.stock}
-                    onChange={(e) => change("stock", Number(e.target.value))}
-                    required
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="product-low-stock">
-                    Aviso de pocas existencias
-                  </label>
-                  <input
-                    id="product-low-stock"
-                    type="number"
-                    min={0}
-                    max={999999}
-                    value={details.lowStockAlert}
-                    onChange={(e) =>
-                      change("lowStockAlert", Number(e.target.value))
-                    }
-                  />
-                </div>
-              </div>
-            )}
           </section>
         </fieldset>
         <footer className="editor-footer sticky bottom-0 z-30 col-span-full border-t border-line bg-white px-6 py-4 [&_.pos-error]:mt-0 [&_.pos-error]:mb-3 max-tablet:px-4 max-tablet:pt-3 max-tablet:pb-[calc(12px+env(safe-area-inset-bottom))]">

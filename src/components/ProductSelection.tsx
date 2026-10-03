@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ItemSelection, Product } from "../lib/pos-contracts";
-import { productDetails, selectedPrice } from "../lib/product-details";
+import { isSoldOut, productDetails, selectedPrice } from "../lib/product-details";
 import { money, parsePrice } from "../lib/pos";
 import { PosDialog } from "./PosShared";
 import MoneyInput from "./MoneyInput";
@@ -26,8 +26,9 @@ export default function ProductSelection({
     variablePriceCents: d.variablePrice ? parsePrice(price) : null,
   };
   const valid =
+    !isSoldOut(product) &&
     (!d.variablePrice || selection.variablePriceCents !== null) &&
-    (!d.variations.length || variationId !== null) &&
+    (!d.variations.length || d.variations.some((v) => v.id === variationId && !v.soldOut)) &&
     d.modifierSets.every((s) => {
       const count = s.options.filter((o) => modifierIds.includes(o.id)).length;
       return count >= s.min && count <= s.max;
