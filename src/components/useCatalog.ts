@@ -4,7 +4,7 @@ import type { PaymentMethod } from '../lib/contracts'
 import type { Product } from '../lib/pos-contracts'
 import { posRequest, type PosAccess } from '../lib/pos'
 
-export const accessErrorCodes = ['AUTH_REQUIRED', 'SESSION_INVALID', 'SESSION_EXPIRED', 'BUSINESS_ACCESS_DENIED', 'DEVICE_REVOKED', 'EMPLOYEE_INACTIVE', 'DEVICE_LINK_REQUIRED', 'DEVICE_APPROVAL_REQUIRED', 'DEVICE_PROOF_INVALID']
+export const accessErrorCodes = ['AUTH_REQUIRED', 'SESSION_INVALID', 'SESSION_EXPIRED', 'BUSINESS_ACCESS_DENIED', 'DEVICE_REVOKED', 'EMPLOYEE_INACTIVE', 'DEVICE_LINK_REQUIRED', 'DEVICE_APPROVAL_REQUIRED', 'DEVICE_PROOF_INVALID', 'PERMISSION_DENIED']
 
 export function useCatalog(access: PosAccess, enabled: boolean, onSessionError?: (error: AccountClientError) => void) {
   const [products, setProducts] = useState<Product[]>([])

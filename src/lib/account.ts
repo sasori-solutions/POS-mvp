@@ -9,7 +9,7 @@ const messages: Record<AccountErrorCode, string> = {
   PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado. Elige otro método disponible.',
   AUTH_REQUIRED: 'Tu sesión venció. Vuelve a entrar con Google.', GOOGLE_REQUIRED: 'Entra con Google para continuar.',
   VALIDATION_ERROR: 'Revisa los datos e intenta de nuevo.', BUSINESS_ACCESS_DENIED: 'No tienes acceso a este negocio.',
-  PERMISSION_DENIED: 'Tu rol no permite esta acción. Solicita ayuda al dueño.',
+  PERMISSION_DENIED: 'No tienes permiso para esta acción. Solicita ayuda al dueño.',
   INVITATION_INVALID: 'La invitación venció, fue revocada o ya no es válida. Pide una nueva al dueño.',
   PAIRING_INVALID: 'El código de conexión venció o ya no es válido. Pide uno nuevo al dueño.',
   DEVICE_LINK_REQUIRED: 'Usa tu acceso personal con Google desde Entrar como empleado. Permite el almacenamiento del navegador para vincularlo.',

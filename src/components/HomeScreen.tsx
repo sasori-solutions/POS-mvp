@@ -18,7 +18,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { BusinessContext } from "../lib/contracts";
-import { roleSections } from "../lib/navigation";
+import { businessWorkSections } from "../lib/navigation";
+import { hasPermission } from "../lib/business-access";
 import type { AccountClientError } from "../lib/account";
 import ProductsScreen from "./ProductsScreen";
 import SaleScreen from "./SaleScreen";
@@ -91,13 +92,13 @@ export default function HomeScreen({
   logoutLabel = "Cerrar sesión",
 }: HomeScreenProps) {
   const [localDestination, setLocalDestination] = useState<Destination>(
-    business.role === "kitchen" ? "Comandas" : "Venta",
+    businessWorkSections(business)[0] ?? "Más",
   );
   const destination = selectedDestination ?? localDestination;
   const access = { businessId: business.id, operatorToken, deviceToken };
   const catalog = useCatalog(
     access,
-    business.role !== "kitchen",
+    hasPermission(business, "catalog.read"),
     onSessionError,
   );
   const more = useRef<HTMLDivElement>(null);
@@ -143,13 +144,11 @@ export default function HomeScreen({
     );
   }
   const allowedDestinations = destinations.filter(
-    ({ name }) => name === "Más" || roleSections[business.role].includes(name),
+    ({ name }) => name === "Más" || businessWorkSections(business).includes(name),
   );
   const active = allowedDestinations.some(({ name }) => name === destination)
     ? destination
-    : business.role === "kitchen"
-      ? "Comandas"
-      : "Venta";
+    : allowedDestinations[0].name;
   const upcomingSection = active === "Comandas" ? upcoming.Comandas : null;
   const SectionIcon = upcomingSection?.icon;
 
@@ -232,7 +231,7 @@ export default function HomeScreen({
           </p>
         )}
 
-        {business.role !== "kitchen" && (
+        {hasPermission(business, "sales.create") && hasPermission(business, "catalog.read") && (
           <div hidden={active !== "Venta"}>
             <SaleScreen
               access={access}
@@ -241,6 +240,7 @@ export default function HomeScreen({
               onProducts={() => setActive("Productos")}
               onHistory={() => setActive("Ventas")}
               onSessionError={onSessionError}
+              canAvailability={hasPermission(business, 'catalog.availability')}
             />
           </div>
         )}
@@ -248,14 +248,14 @@ export default function HomeScreen({
           <ProductsScreen
             access={access}
             catalog={catalog}
-            canManage={business.role === "owner" || business.role === "manager"}
+            canManage={hasPermission(business, "catalog.manage")}
             onSessionError={onSessionError}
           />
         ) : active === "Ventas" ? (
           <SalesScreen
-            key={`${business.employee?.id}:${business.role}`}
+            key={`${business.employee?.id}:${JSON.stringify(business.permissions)}`}
             access={access}
-            ownOnly={business.role === "cashier"}
+            ownOnly={!hasPermission(business, "sales.read_all")}
             onSessionError={onSessionError}
           />
         ) : active === "Más" ? (

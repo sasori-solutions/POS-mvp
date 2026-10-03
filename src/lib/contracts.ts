@@ -3,6 +3,19 @@ import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts.ts'
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
 export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
 export type EmployeeRole = Exclude<BusinessRole, 'owner'>
+export const businessPermissions = [
+  'catalog.read', 'catalog.manage', 'catalog.availability',
+  'sales.create', 'sales.read_own', 'sales.read_all', 'sales.discount', 'sales.reverse',
+  'orders.read', 'orders.manage', 'orders.cancel', 'kitchen.read', 'kitchen.operate',
+  'cash.read', 'cash.open', 'cash.move', 'cash.close', 'reports.read', 'tables.manage',
+] as const
+export type BusinessPermission = typeof businessPermissions[number]
+export const permissionPrerequisites: Partial<Record<BusinessPermission, BusinessPermission>> = {
+  'catalog.manage': 'catalog.read', 'catalog.availability': 'catalog.read', 'sales.create': 'catalog.read',
+  'sales.discount': 'sales.create', 'sales.reverse': 'sales.read_all',
+  'orders.manage': 'orders.read', 'orders.cancel': 'orders.read', 'kitchen.operate': 'kitchen.read',
+  'cash.open': 'cash.read', 'cash.move': 'cash.read', 'cash.close': 'cash.read',
+}
 export type PaymentMethod = 'cash' | 'card_external' | 'transfer'
 
 /** Progressive setup: fiscal and bank credentials never belong in this profile. */
@@ -42,6 +55,7 @@ export interface EmployeeSummary {
   id: string
   name: string
   role: BusinessRole
+  permissions?: BusinessPermission[]
   active: boolean
   googleLinked?: boolean
   pinReady?: boolean
@@ -55,6 +69,7 @@ export interface InvitationSummary {
   id: string
   name: string
   role: EmployeeRole
+  permissions?: BusinessPermission[]
   expiresAt: string
   active: boolean
   status: 'pending' | 'accepted' | 'revoked' | 'expired' | 'unavailable'
@@ -72,10 +87,12 @@ export interface BusinessContext extends BusinessSummary {
   timezone: string
   currency: 'MXN'
   role: BusinessRole
+  /** Explicit live grants. Only the protected owner role grants implicit access. */
+  permissions?: BusinessPermission[]
   createdAt: string
   /** Owner-only details; blank projection for employees. */
   profile: BusinessProfile
-  employee?: { id: string; name: string; role: BusinessRole }
+  employee?: { id: string; name: string; role: BusinessRole; permissions?: BusinessPermission[] }
 }
 
 /** Keep operatorToken in memory; never persist it in browser storage. */
@@ -138,13 +155,13 @@ type AccountRequestBody =
   | ({ action: 'notifications' } & OwnerRequest)
   | ({ action: 'mark_notification_read'; notificationId: string } & OwnerRequest)
   | ({ action: 'review_employee_device'; notificationId: string; decision: 'approve' | 'reject' } & OwnerRequest)
-  | ({ action: 'create_employee'; name: string; role: EmployeeRole; pin: null; inviteWithGoogle?: boolean; operationId: string } & OwnerRequest)
-  | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; active: boolean; pin: null } & OwnerRequest)
+  | ({ action: 'create_employee'; name: string; role: EmployeeRole; permissions?: BusinessPermission[]; pin: null; inviteWithGoogle?: boolean; operationId: string } & OwnerRequest)
+  | ({ action: 'update_employee'; employeeId: string; name: string; role: EmployeeRole; permissions?: BusinessPermission[]; active: boolean; pin: null } & OwnerRequest)
   | ({ action: 'create_pin_setup'; employeeId: string; operationId: string } & OwnerRequest)
   | { action: 'employee_pin_setup_details'; setupCode: string }
   | { action: 'set_employee_pin'; setupCode: string; pin: string; operationId: string }
   | ({ action: 'delete_employee'; employeeId: string; operationId: string } & OwnerRequest)
-  | ({ action: 'create_invitation'; operationId: string } & OwnerRequest & ({ employeeId: string } | { name: string; role: EmployeeRole }))
+  | ({ action: 'create_invitation'; operationId: string } & OwnerRequest & ({ employeeId: string } | { name: string; role: EmployeeRole; permissions?: BusinessPermission[] }))
   | ({ action: 'revoke_invitation'; invitationId: string } & OwnerRequest)
   | { action: 'invitation_details'; invitationCode: string }
   | { action: 'accept_invitation'; invitationCode: string; name?: string; pin: string; operationId: string; deviceName?: string }

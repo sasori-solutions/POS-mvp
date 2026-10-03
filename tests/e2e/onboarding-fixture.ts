@@ -6,8 +6,8 @@ export const fixtureInvitation = 'c1'.repeat(32);
 export const fixturePinSetup = 'e4'.repeat(32);
 export const fixturePairingCode = 'b2'.repeat(32);
 export const fixtureDeviceToken = 'd3'.repeat(32);
-export const fixtureKitchen = { id: '84c75082-4633-4f53-8f34-a2ed0c7b2e66', name: 'Cocina de prueba', role: 'kitchen' as const, active: true, googleLinked: false, pinReady: true };
-export const fixtureCashier = { id: 'b1041684-c36b-4360-a98b-ce41c821cf41', name: 'Caja de prueba', role: 'cashier' as const, active: true, googleLinked: false, pinReady: true };
+export const fixtureKitchen: EmployeeSummary = { id: '84c75082-4633-4f53-8f34-a2ed0c7b2e66', name: 'Cocina de prueba', role: 'kitchen', permissions: ['kitchen.read', 'kitchen.operate'], active: true, googleLinked: false, pinReady: true };
+export const fixtureCashier: EmployeeSummary = { id: 'b1041684-c36b-4360-a98b-ce41c821cf41', name: 'Caja de prueba', role: 'cashier', permissions: ['catalog.read', 'catalog.availability', 'sales.create', 'sales.read_own'], active: true, googleLinked: false, pinReady: true };
 export const fixtureCashierPin = '014682';
 export const fixtureDeviceId = '20b56f6a-080d-4f03-99eb-545edb79a548';
 
@@ -28,6 +28,7 @@ export async function mockOnboarding(page: Page, options: {
   let hasBusiness = options.existingBusiness ?? false;
   let business: BusinessContext = structuredClone(fixtureBusiness) as BusinessContext;
   let googleRole: BusinessRole = options.role ?? 'owner';
+  let googleEmployeeId = options.role === 'kitchen' ? fixtureKitchen.id : fixtureCashier.id;
   let currentPin = fixturePin;
   let locked = true;
   let paired = false;
@@ -57,9 +58,9 @@ export async function mockOnboarding(page: Page, options: {
   }
   const expiresAt = () => new Date(Date.now() + 8 * 3_600_000).toISOString();
   const summary = () => ({ id: business.id, name: business.name, businessType: business.businessType, role: googleRole, canRecoverPin: googleRole === 'owner', recoveryReady: options.recoveryReady ?? true });
-  const projection = (role = googleRole, employee: EmployeeSummary = role === 'kitchen' ? fixtureKitchen : fixtureCashier): BusinessContext => role === 'owner'
+  const projection = (role = googleRole, employee: EmployeeSummary = employees.find(item => item.id === googleEmployeeId) ?? fixtureCashier): BusinessContext => role === 'owner'
     ? { ...business, role, canRecoverPin: undefined, recoveryReady: undefined }
-    : { ...business, role, canRecoverPin: undefined, recoveryReady: undefined, employee: { id: employee.id, name: employee.name, role }, profile: {
+    : { ...business, role, permissions: employee.permissions ?? [], canRecoverPin: undefined, recoveryReady: undefined, employee: { id: employee.id, name: employee.name, role, permissions: employee.permissions ?? [] }, profile: {
       branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: [],
     } };
   const unlocked = () => ({ business: projection(), operatorToken: fixtureOperatorToken, expiresAt: expiresAt() });
@@ -75,6 +76,11 @@ export async function mockOnboarding(page: Page, options: {
       return reject(401, 'DEVICE_REVOKED', 'El dispositivo fue revocado.');
     }
     switch (body.action) {
+      case 'pos': case 'device_pos':
+        // Isolated onboarding UI mock only.
+        if (body.command === 'catalog') return reply({ products: [], paymentMethods: business.profile.paymentMethods });
+        if (body.command === 'sales') return reply({ sales: [], nextCursor: null });
+        return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');
       case 'notifications': return reply({ notifications: [], unreadCount: 0 });
       case 'status': return reply({ businesses: hasBusiness ? [summary()] : [] });
       case 'create_business':
@@ -107,10 +113,11 @@ export async function mockOnboarding(page: Page, options: {
         if (invitation) Object.assign(invitation, { active: false, status: 'accepted', acceptedAt: new Date().toISOString() });
         hasBusiness = true;
         googleRole = employee.role;
+        googleEmployeeId = employee.id;
         currentPin = body.pin;
         locked = false;
         currentDeviceOperator = '';
-        return reply({ ...unlocked(), business: { ...projection(employee.role, employee), employee: { id: employee.id, name: employee.name, role: employee.role } } });
+        return reply({ ...unlocked(), business: projection(employee.role, employee) });
       }
       case 'request_pin_email': case 'device_request_pin_email':
         return reply({ sent: true, retryAfterSeconds: 60 });
@@ -143,7 +150,7 @@ export async function mockOnboarding(page: Page, options: {
         if (body.setupCode !== fixturePinSetup || !employee) return reject(400, 'PIN_SETUP_INVALID', 'Código inválido.');
         employee.pinReady = true;
         employeePins.set(employee.id, body.pin);
-        if (body.action === 'set_employee_pin') { googleRole = employee.role; currentPin = body.pin; locked = false; return reply(unlocked()); }
+        if (body.action === 'set_employee_pin') { googleRole = employee.role; googleEmployeeId = employee.id; currentPin = body.pin; locked = false; return reply(unlocked()); }
         currentDeviceEmployee = employee; operatorGeneration += 1; currentDeviceOperator = operatorGeneration.toString(16).padStart(64, '0');
         return reply({ business: projection(employee.role, employee), operatorToken: currentDeviceOperator, expiresAt: expiresAt() });
       }
@@ -153,10 +160,10 @@ export async function mockOnboarding(page: Page, options: {
       case 'create_employee': {
         if (employeeOperations.has(body.operationId)) return reply(employeeOperations.get(body.operationId));
         if (body.pin !== null) return reject(400, 'VALIDATION_ERROR', 'Revisa el acceso del empleado.');
-        const employee: EmployeeSummary = { id: crypto.randomUUID(), name: body.name, role: body.role, active: true, pinReady: false, googleLinked: false };
+        const employee: EmployeeSummary = { id: crypto.randomUUID(), name: body.name, role: body.role, permissions: body.permissions ?? [], active: true, pinReady: false, googleLinked: false };
         employees.push(employee);
         const invitation = body.inviteWithGoogle ? { invitationCode: fixtureInvitation, invitationId: crypto.randomUUID(), expiresAt: expiresAt() } : undefined;
-        if (invitation) invitations.push({ id: invitation.invitationId, employeeId: employee.id, name: employee.name, role: body.role, active: true, expiresAt: invitation.expiresAt, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null });
+        if (invitation) invitations.push({ id: invitation.invitationId, employeeId: employee.id, name: employee.name, role: body.role, permissions: employee.permissions, active: true, expiresAt: invitation.expiresAt, status: 'pending', acceptedAt: null, revokedAt: null, revokeReason: null });
         const pinSetup = invitation ? undefined : { setupCode: fixturePinSetup, setupId: crypto.randomUUID(), expiresAt: expiresAt() };
         if (pinSetup) pinSetupEmployeeId = employee.id;
         const result = { ...employee, ...(invitation ? { invitation } : {}), ...(pinSetup ? { pinSetup } : {}) };
@@ -167,7 +174,7 @@ export async function mockOnboarding(page: Page, options: {
       case 'update_employee': {
         const employee = employees.find((item) => item.id === body.employeeId);
         if (!employee) return reject(404, 'EMPLOYEE_INACTIVE', 'Empleado no disponible.');
-        Object.assign(employee, { name: body.name, role: body.role, active: body.active });
+        Object.assign(employee, { name: body.name, role: body.role, permissions: body.permissions ?? employee.permissions ?? [], active: body.active });
         if (body.pin) employee.pinReady = true;
         return reply(employee);
       }
@@ -230,5 +237,10 @@ export async function mockOnboarding(page: Page, options: {
       if (invitation) Object.assign(invitation, { active: false, status: 'accepted', acceptedAt: new Date().toISOString() });
       if (employee) Object.assign(employee, { googleLinked: true, pinReady: true });
     },
-    setRole: (role: BusinessRole) => { googleRole = role; } };
+    setEmployee: (employeeId: string) => {
+      const employee = employees.find(item => item.id === employeeId);
+      if (!employee) throw new Error('Missing onboarding employee fixture');
+      googleRole = employee.role;
+      googleEmployeeId = employee.id;
+    } };
 }

@@ -1,74 +1,59 @@
-import { Check, LockKeyhole } from "lucide-react";
-import type { BusinessRole } from "../lib/contracts";
-import { roleSections, workSections } from "../lib/navigation";
+import { useId } from "react";
+import { businessPermissions, permissionPrerequisites, type BusinessPermission } from "../lib/contracts";
 
-type EmployeeRole = Exclude<BusinessRole, "owner">;
-const choices = [
-  { value: "cashier", name: "Cajero" },
-  { value: "kitchen", name: "Cocina" },
-  { value: "manager", name: "Encargado" },
-] as const;
+const permissionGroups: { name: string; choices: [BusinessPermission, string][] }[] = [
+  { name: "Catálogo", choices: [["catalog.read", "Consultar productos"], ["catalog.manage", "Crear y editar productos"], ["catalog.availability", "Cambiar disponibilidad"]] },
+  { name: "Ventas", choices: [["sales.create", "Cobrar ventas"], ["sales.read_own", "Consultar sus ventas"], ["sales.read_all", "Consultar todas las ventas"], ["sales.discount", "Aplicar descuentos"], ["sales.reverse", "Anular ventas"]] },
+  { name: "Comandas y mesas", choices: [["orders.read", "Consultar comandas"], ["orders.manage", "Crear y editar comandas"], ["orders.cancel", "Cancelar comandas"], ["tables.manage", "Administrar mesas"]] },
+  { name: "Cocina", choices: [["kitchen.read", "Consultar cocina"], ["kitchen.operate", "Actualizar preparación"]] },
+  { name: "Caja", choices: [["cash.read", "Consultar caja"], ["cash.open", "Abrir caja"], ["cash.move", "Registrar entradas y salidas"], ["cash.close", "Cerrar caja"]] },
+  { name: "Reportes", choices: [["reports.read", "Consultar reportes"]] },
+];
 
 export default function EmployeeRoleFields({
-  role,
+  permissions,
   onChange,
   disabled,
 }: {
-  role: EmployeeRole;
-  onChange: (role: EmployeeRole) => void;
+  permissions: BusinessPermission[];
+  onChange: (permissions: BusinessPermission[]) => void;
   disabled: boolean;
 }) {
-  const included = roleSections[role];
-  const restricted = [
-    ...workSections.filter((section) => !included.includes(section)),
-    "Datos del negocio",
-    "Empleados y dispositivos",
-  ];
-
+  const id = useId();
+  function toggle(permission: BusinessPermission, selected: boolean) {
+    const next = new Set(permissions);
+    if (selected) {
+      next.add(permission);
+      let prerequisite = permissionPrerequisites[permission];
+      while (prerequisite) { next.add(prerequisite); prerequisite = permissionPrerequisites[prerequisite]; }
+    } else {
+      next.delete(permission);
+      for (const value of businessPermissions) {
+        let prerequisite = permissionPrerequisites[value];
+        while (prerequisite) {
+          if (!next.has(prerequisite)) { next.delete(value); break; }
+          prerequisite = permissionPrerequisites[prerequisite];
+        }
+      }
+    }
+    onChange(businessPermissions.filter(value => next.has(value)));
+  }
   return (
-    <fieldset className="employee-role-fields" disabled={disabled}>
-      <legend>Puesto y permisos</legend>
-      <div className="employee-role-choices grid grid-cols-3 gap-2">
-        {choices.map((choice) => (
-          <label key={choice.value}>
-            <input
-              type="radio"
-              name="employee-role"
-              value={choice.value}
-              checked={role === choice.value}
-              onChange={() => onChange(choice.value)}
-            />
-            <span>{choice.name}</span>
-          </label>
+    <fieldset className="employee-permission-fields" disabled={disabled}>
+      <legend className="text-base font-medium">Permisos</legend>
+      <p className="mt-2 text-sm text-muted">Selecciona las acciones que puede realizar. Administrar empleados y el negocio corresponde al dueño.</p>
+      <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-5 max-compact:grid-cols-1">
+        {permissionGroups.map(group => (
+          <fieldset key={group.name} className="min-w-0">
+            <legend className="mb-1 text-sm font-medium">{group.name}</legend>
+            {group.choices.map(([permission, label]) => (
+              <label key={permission} htmlFor={`${id}-${permission}`} className="flex min-h-12 cursor-pointer items-center gap-3 py-2 text-sm">
+                <input id={`${id}-${permission}`} type="checkbox" checked={permissions.includes(permission)} onChange={event => toggle(permission, event.target.checked)} className="h-5 w-5 shrink-0 accent-brand" />
+                <span>{label}</span>
+              </label>
+            ))}
+          </fieldset>
         ))}
-      </div>
-      <div
-        className="employee-permissions grid grid-cols-2 gap-5 pt-5 max-[22.5rem]:grid-cols-1"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <section aria-labelledby="employee-included-title">
-          <h2 id="employee-included-title">Puede abrir</h2>
-          <ul>
-            {included.map((section) => (
-              <li key={section}>
-                <Check size={16} aria-hidden="true" />
-                <span>{section}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-        <section aria-labelledby="employee-restricted-title">
-          <h2 id="employee-restricted-title">Sin acceso</h2>
-          <ul>
-            {restricted.map((section) => (
-              <li key={section}>
-                <LockKeyhole size={15} aria-hidden="true" />
-                <span>{section}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
       </div>
     </fieldset>
   );

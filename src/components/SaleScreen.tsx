@@ -81,6 +81,7 @@ export default function SaleScreen({
   onProducts,
   onHistory,
   onSessionError,
+  canAvailability = true,
 }: {
   access: PosAccess;
   employeeId: string;
@@ -88,6 +89,7 @@ export default function SaleScreen({
   onProducts: () => void;
   onHistory: () => void;
   onSessionError?: (error: AccountClientError) => void;
+  canAvailability?: boolean;
 }) {
   const [choosing, setChoosing] = useState<Product | null>(null);
   const [availability, setAvailability] = useState<Product | null>(null);
@@ -370,7 +372,7 @@ export default function SaleScreen({
   }, [catalog.products, catalog.loaded, catalog.error, cart, pending, busy]);
 
   async function toggleAvailability(product: Product) {
-    if (availabilityBusy) return;
+    if (availabilityBusy || !canAvailability) return;
     const command = availabilityRequest.current ?? {
       product,
       soldOut: !productDetails(product).soldOut,
@@ -763,7 +765,7 @@ export default function SaleScreen({
                       </span>
                     )}
                   </button>
-                  <button
+                  {canAvailability && <button
                     className="tile-menu absolute! top-1 right-1 size-12! min-h-12! rounded-lg! bg-white/95! enabled:hover:bg-white! pos-icon-button"
                     aria-label={`Disponibilidad de ${product.name}`}
                     disabled={frozen || checkout || availabilityBusy}
@@ -773,7 +775,7 @@ export default function SaleScreen({
                     }}
                   >
                     <MoreHorizontal size={20} aria-hidden="true" />
-                  </button>
+                  </button>}
                 </div>
               );
             })}

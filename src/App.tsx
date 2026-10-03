@@ -161,7 +161,7 @@ const accountMessages: Record<AccountErrorCode | "NETWORK_ERROR", string> = {
   VALIDATION_ERROR: "Revisa los datos e intenta de nuevo.",
   BUSINESS_ACCESS_DENIED:
     "No tienes acceso a este negocio. Elige otro o vuelve a entrar con Google.",
-  PERMISSION_DENIED: "Tu rol no permite esta acción. Solicita ayuda al dueño.",
+  PERMISSION_DENIED: "No tienes permiso para esta acción. Solicita ayuda al dueño.",
   INVITATION_INVALID:
     "La invitación no es válida, venció o fue revocada. Pide una nueva al dueño.",
   PAIRING_INVALID:
@@ -412,6 +412,7 @@ function AccountApp() {
           "SESSION_EXPIRED",
           "EMPLOYEE_INACTIVE",
           "BUSINESS_ACCESS_DENIED",
+          "PERMISSION_DENIED",
         ].includes(problem.code)
       )
         lockedScreen();

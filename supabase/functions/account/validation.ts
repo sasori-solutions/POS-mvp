@@ -1,4 +1,4 @@
-import type { AccountRequest, BusinessProfile, BusinessType, EmployeeRole, PaymentMethod } from '../../../src/lib/contracts.ts'
+import { businessPermissions, permissionPrerequisites, type AccountRequest, type BusinessPermission, type BusinessProfile, type BusinessType, type EmployeeRole, type PaymentMethod } from '../../../src/lib/contracts.ts'
 import { parsePosCommand } from './pos-validation.ts'
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const pinPattern = /^[0-9]{6}$/
@@ -21,6 +21,13 @@ function name(value: unknown, min = 2, max = 100) {
   return result
 }
 function role(input: Record<string, unknown>): EmployeeRole { if (!['manager', 'cashier', 'kitchen'].includes(input.role as string)) invalid(); return input.role as EmployeeRole }
+function permissions(input: Record<string, unknown>): { permissions?: BusinessPermission[] } {
+  if (!Object.hasOwn(input, 'permissions')) return {}
+  const values = input.permissions
+  if (!Array.isArray(values) || values.length > businessPermissions.length || new Set(values).size !== values.length || values.some(value => !businessPermissions.includes(value))) invalid()
+  if (values.some(value => permissionPrerequisites[value as BusinessPermission] && !values.includes(permissionPrerequisites[value as BusinessPermission]))) invalid()
+  return { permissions: businessPermissions.filter(value => values.includes(value)) }
+}
 function businessDetails(input: Record<string, unknown>) {
   if (!['cafe', 'restaurant', 'other'].includes(input.businessType as string)) invalid()
   if (typeof input.timezone !== 'string' || input.timezone.length > 100 || !/^[A-Za-z_]+\/[A-Za-z_+-]+(?:\/[A-Za-z_+-]+)?$/.test(input.timezone)) invalid()
@@ -62,13 +69,13 @@ export function parseAccountRequest(value: unknown): AccountRequest {
     case 'review_employee_device':
       exactKeys(input, [...owner, 'notificationId', 'decision']); if (input.decision !== 'approve' && input.decision !== 'reject') invalid(); return { action: input.action, ...ownerArgs(), notificationId: uuid(input, 'notificationId'), decision: input.decision }
     case 'create_employee':
-      exactKeys(input, [...owner, 'name', 'role', 'pin', 'operationId'], ['inviteWithGoogle'])
+      exactKeys(input, [...owner, 'name', 'role', 'pin', 'operationId'], ['inviteWithGoogle', 'permissions'])
       if (Object.hasOwn(input, 'inviteWithGoogle') && typeof input.inviteWithGoogle !== 'boolean') invalid()
       if (input.pin !== null) invalid()
-      return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), pin: null, operationId: uuid(input, 'operationId'), ...(Object.hasOwn(input, 'inviteWithGoogle') ? { inviteWithGoogle: input.inviteWithGoogle as boolean } : {}) }
+      return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), ...permissions(input), pin: null, operationId: uuid(input, 'operationId'), ...(Object.hasOwn(input, 'inviteWithGoogle') ? { inviteWithGoogle: input.inviteWithGoogle as boolean } : {}) }
     case 'update_employee':
-      exactKeys(input, [...owner, 'employeeId', 'name', 'role', 'active', 'pin']); if (typeof input.active !== 'boolean' || input.pin !== null) invalid()
-      return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), name: name(input.name), role: role(input), active: input.active, pin: null }
+      exactKeys(input, [...owner, 'employeeId', 'name', 'role', 'active', 'pin'], ['permissions']); if (typeof input.active !== 'boolean' || input.pin !== null) invalid()
+      return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), name: name(input.name), role: role(input), ...permissions(input), active: input.active, pin: null }
     case 'create_pin_setup':
       exactKeys(input, [...owner, 'employeeId', 'operationId']); return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), operationId: uuid(input, 'operationId') }
     case 'employee_pin_setup_details':
@@ -82,7 +89,7 @@ export function parseAccountRequest(value: unknown): AccountRequest {
         exactKeys(input, [...owner, 'employeeId', 'operationId'])
         return { action: input.action, ...ownerArgs(), employeeId: uuid(input, 'employeeId'), operationId: uuid(input, 'operationId') }
       }
-      exactKeys(input, [...owner, 'name', 'role', 'operationId']); return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), operationId: uuid(input, 'operationId') }
+      exactKeys(input, [...owner, 'name', 'role', 'operationId'], ['permissions']); return { action: input.action, ...ownerArgs(), name: name(input.name), role: role(input), ...permissions(input), operationId: uuid(input, 'operationId') }
     case 'revoke_invitation':
       exactKeys(input, [...owner, 'invitationId']); return { action: input.action, ...ownerArgs(), invitationId: uuid(input, 'invitationId') }
     case 'accept_invitation':

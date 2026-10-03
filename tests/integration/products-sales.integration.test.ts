@@ -273,7 +273,7 @@ async function business() {
 }
 function args(operator: Operator) { return { businessId: operator.business.id, operatorToken: operator.operatorToken } }
 async function cashierFor(operator: Operator) {
-  const person = data(await call<{ invitation: { invitationCode: string } }>(owner, { action: 'create_employee', ...args(operator), name: 'Caja sintética', role: 'cashier', pin: null, inviteWithGoogle: true, operationId: randomUUID() }))
+  const person = data(await call<{ invitation: { invitationCode: string } }>(owner, { action: 'create_employee', ...args(operator), name: 'Caja sintética', role: 'cashier', permissions: ['catalog.read', 'catalog.availability', 'sales.create', 'sales.read_own'], pin: null, inviteWithGoogle: true, operationId: randomUUID() }))
   return data(await call<Operator>(employee, { action: 'accept_invitation', invitationCode: person.invitation.invitationCode, pin: '024680', operationId: randomUUID() }))
 }
 async function save(operator: Operator) { return data(await pos<Product>(operator, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Café sintético', category: 'Café', priceCents: 1001 })) }
