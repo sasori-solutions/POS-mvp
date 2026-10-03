@@ -7,7 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { businessPermissions, type BusinessPermission, type OperatorSession } from '../../src/lib/contracts'
 import { emptyDetails } from '../../src/lib/product-details'
 import type { PosCommand, Product, Sale } from '../../src/lib/pos-contracts'
-import type { BalanceWaiver, CashShift, CheckoutAttempt, DiningTable, KitchenBatch, OperationalOrder, OperationsSnapshot, OrderInputLine } from '../../src/lib/operations-contracts'
+import type { BalanceWaiver, BusinessDayReport, BusinessPeriodReport, CashShift, CheckoutAttempt, DiningTable, KitchenBatch, OperationalOrder, OperationsSnapshot, OrderInputLine } from '../../src/lib/operations-contracts'
+import { businessDate } from '../../src/lib/reporting'
 import { signedRequest } from './device-proof-fixture'
 
 type Identity = { userId: string; token: string }
@@ -32,6 +33,64 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
       if (error) throw error
     }
   },60_000)
+
+  it('serves period analytics through signed Auth/Edge with exact totals, tenant isolation and revoked grants', async () => {
+    const {owner,staff} = await fixture(['reports.read'])
+    const order = await createOrder(owner)
+    await payAll(owner, order)
+    const date = businessDate(owner.operator.business.timezone)
+    const command = { command: 'report_period' as const, date, period: 'day' as const }
+    const daily = data(await pos<BusinessDayReport>(owner, { command: 'report', date }))
+    const current = data(await pos<BusinessPeriodReport>(staff, command))
+    expect(current.totals).toEqual(daily)
+    expect(current.totals).toMatchObject({ salesCents: 1001, saleCount: 1 })
+    expect(current.series.reduce((sum, point) => sum + point.salesCents, 0)).toBe(1001)
+    expect(current).toMatchObject({ partial: true, comparisonComparable: true })
+    const week = data(await pos<BusinessPeriodReport>(owner, { ...command, period: 'week' }))
+    expect(week.series).toHaveLength(7)
+    expect(week.totals.salesCents).toBe(1001)
+    expect((await pos(staff, { ...command, period: 'year' } as unknown as PosCommand)).status).toBe(400)
+    const other = await fixture([])
+    expect(data(await pos<BusinessPeriodReport>(other.owner, command)).totals.salesCents).toBe(0)
+    expect(await call(staff.identity, { action: 'pos', ...args(staff), businessId: other.owner.operator.business.id, ...command })).toMatchObject({status:401,body:{error:{code:'SESSION_INVALID'}}})
+    const employee = staff.operator.business.employee!
+    data(await call(owner.identity, { action: 'update_employee', ...args(owner), employeeId: employee.id, name: employee.name, role: 'cashier', active: true, pin: null, permissions: [] }))
+    expect(await pos(staff, command)).toMatchObject({status:401,body:{error:{code:'SESSION_INVALID'}}})
+    const fresh=data(await call<OperatorSession>(staff.identity,{action:'unlock',businessId:owner.operator.business.id,pin:employeePin}))
+    expect(await pos({...staff,operator:fresh},command)).toMatchObject({status:403,body:{error:{code:'PERMISSION_DENIED'}}})
+  }, 45_000)
+
+  it('reserves before manual collection and records a split sale plus comanda with one idempotent final action', async () => {
+    const {owner,staff,shift}=await fixture()
+    const order=await createOrder(staff,[input(await product(owner),3)])
+    const reservation=data(await pos<CheckoutAttempt>(staff,prepareCommand(order)))
+    expect(reservation.totalCents).toBe(3003)
+    const closing={command:'begin_shift_close' as const,operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision}
+    expect(await pos(owner,closing)).toMatchObject({status:409,body:{error:{code:'PENDING_COLLECTION'}}})
+    const quote=data(await pos<CheckoutAttempt>(staff,{command:'update_checkout',operationId:randomUUID(),attemptId:reservation.id,expectedRevision:reservation.revision,items:[{lineId:order.items[0].lineId,quantity:1}],paymentMethod:'cash'}))
+    expect(quote).toMatchObject({id:reservation.id,totalCents:1001,status:'prepared'})
+    expect(await pos(owner,{...closing,operationId:randomUUID()})).toMatchObject({status:409,body:{error:{code:'PENDING_COLLECTION'}}})
+    const payment={command:'record_checkout' as const,operationId:randomUUID(),attemptId:quote.id,expectedRevision:quote.revision,confirmed:true as const}
+    const replies=await Promise.all([pos<{order:OperationalOrder;attempt:CheckoutAttempt}>(staff,payment),pos<{order:OperationalOrder;attempt:CheckoutAttempt}>(staff,payment)])
+    const paid=data(replies[0]);expect(data(replies[1])).toEqual(paid)
+    expect(paid).toMatchObject({attempt:{status:'completed',totalCents:1001},order:{balanceCents:2002,paidCents:1001,items:[{paidQuantity:1,sentQuantity:1}]}})
+    expect(count(owner,'sales')).toBe(1)
+    expect((await kitchen(owner)).filter(b=>b.orderId===order.id)).toMatchObject([{items:[{quantity:1}]}])
+    const frozen=data(await pos<CashShift>(owner,{...closing,operationId:randomUUID()}))
+    data(await pos(owner,{command:'close_shift',operationId:randomUUID(),shiftId:shift.id,expectedRevision:frozen.revision,countedCents:shift.openingCents+1001}))
+    expect(data(await pos(staff,payment))).toEqual(paid)
+    expect(await pos(staff,{...prepareCommand(paid.order),operationId:randomUUID(),command:'record_payment',confirmed:true})).toMatchObject({status:409,body:{error:{code:'ATTEMPT_STATE_INVALID'}}})
+  },45_000)
+
+  it('allows refund-only grants to read shift status and recover a reversal without cash disclosure', async () => {
+    const { owner, staff } = await fixture(['sales.read_all', 'sales.reverse'])
+    const paid = await payAll(owner, await createOrder(owner))
+    const attempt = data(await pos<CheckoutAttempt>(staff, { command: 'prepare_reversal', operationId: randomUUID(), saleId: paid.saleId!, reason: 'Devolución sintética' }))
+    const snapshot = data(await pos<OperationsSnapshot>(staff, { command: 'operations' }))
+    expect(snapshot.shift).toMatchObject({ status: 'open', openingCents: 0, movements: [], expectedCents: null })
+    expect(snapshot.orders).toEqual([])
+    expect(snapshot.attempts).toEqual([attempt])
+  }, 45_000)
 
   it('deduplicates identical UUIDs, rejects conflicting payloads and never repeats a discarded financial response', async () => {
     const {owner,staff,shift} = await fixture()
@@ -190,7 +249,7 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     const {owner,staff} = await fixture()
     let order = data(await pos<OperationalOrder>(staff,{command:'send_order',operationId:randomUUID(),orderId:(await createOrder(staff,[input(await product(owner),3)])).id,expectedRevision:1}))
     const batch = data(await pos<{batches:KitchenBatch[]}>(staff,{command:'kitchen'})).batches.find(b=>b.orderId===order.id)!
-    data(await pos(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:batch.id,expectedRevision:batch.revision,status:'preparing'}))
+    data(await pos(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:batch.id,expectedRevision:batch.revision,status:'delivered'}))
     const cancelled = await pos(staff,{command:'cancel_order',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,reason:'Cliente cambió de opinión'})
     expect(cancelled.status).toBe(409)
     expect(['ORDER_LOCKED','ORDER_HAS_PAYMENTS']).toContain(cancelled.body.error?.code)
@@ -212,7 +271,7 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     expect(count(owner,'balance_waivers')).toBe(1)
     expect(data(await pos<OperationalOrder>(owner,{command:'order',orderId:order.id}))).toMatchObject({status:'waived',paidCents:1001,waivedCents:2002,balanceCents:0})
     expect(data(await pos<Sale>(owner,{command:'sale',saleId:receipt.id}))).toEqual(receipt)
-    expect(data(await pos<{batches:KitchenBatch[]}>(owner,{command:'kitchen'})).batches.some(b=>b.id===batch.id&&b.status==='preparing')).toBe(true)
+    expect(data(await pos<{batches:KitchenBatch[]}>(owner,{command:'kitchen'})).batches.some(b=>b.id===batch.id&&b.status==='delivered')).toBe(true)
   },45_000)
 
   it('cancels the older queued two units while preserving the newer prepared and paid three units', async () => {
@@ -224,7 +283,7 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     order = data(await pos<OperationalOrder>(staff,{command:'save_order',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,name:order.name,tableId:null,items:[{...input(item,5),lineId:order.items[0].lineId}]}))
     order = data(await pos<OperationalOrder>(staff,{command:'send_order',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision}))
     const newer = (await kitchen(staff)).find(b=>b.orderId===order.id&&b.id!==queued.id)!
-    const preparedBatch = data(await pos<KitchenBatch>(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:newer.id,expectedRevision:newer.revision,status:'preparing'}))
+    const preparedBatch = data(await pos<KitchenBatch>(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:newer.id,expectedRevision:newer.revision,status:'delivered'}))
     expect(preparedBatch.items[0].quantity).toBe(3)
     const rawItems = rawKitchenItems(owner,order.id)
     order = await checkoutPhase(staff,order)
@@ -266,8 +325,8 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     expect(cancelled.items).toEqual(order.items)
     let batch = (await kitchen(staff)).find(b=>b.id===original.id)!
     expect(batch).toEqual({...original,revision:original.revision+1,items:original.items.map(i=>({...i,cancelledQuantity:2}))})
-    expect((await pos(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:batch.id,expectedRevision:original.revision,status:'preparing'})).body.error?.code).toBe('BATCH_CHANGED')
-    for(const status of ['preparing','ready','delivered'] as const) {
+    expect((await pos(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:batch.id,expectedRevision:original.revision,status:'delivered'})).body.error?.code).toBe('BATCH_CHANGED')
+    for(const status of ['delivered'] as const) {
       batch = data(await pos<KitchenBatch>(staff,{command:'set_kitchen_status',operationId:randomUUID(),batchId:batch.id,expectedRevision:batch.revision,status}))
       expect(batch).toMatchObject({status,fullyCancelled:false,items:[{quantity:3,cancelledQuantity:2}]})
       expect(batch.items[0].quantity-(batch.items[0].cancelledQuantity??0)).toBe(1)
@@ -288,7 +347,7 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
       const batch = (await kitchen(staff)).find(b=>b.orderId===order.id)!
       const rawItems = rawKitchenItems(owner,order.id)
       const cancellation = {command:'cancel_order' as const,operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,reason:'Carrera de cancelación sintética'}
-      const preparation = {command:'set_kitchen_status' as const,operationId:randomUUID(),batchId:batch.id,expectedRevision:batch.revision,status:'preparing' as const}
+      const preparation = {command:'set_kitchen_status' as const,operationId:randomUUID(),batchId:batch.id,expectedRevision:batch.revision,status:'delivered' as const}
       const cancel = ()=>pos(owner,cancellation), prep = ()=>pos(staff,preparation)
       const results = await blockedRace(owner,cancellationFirst?[cancel,prep]:[prep,cancel],true)
       expect(results[0].status).toBe(200)
@@ -301,7 +360,7 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
         expect(data(await pos(owner,cancellation))).toEqual(results[0].body.data)
         expect((await pos(staff,{...preparation,operationId:randomUUID(),expectedRevision:current.revision})).body.error?.code).toBe('BATCH_CHANGED')
       } else {
-        expect(current).toMatchObject({status:'preparing',fullyCancelled:false,items:[{quantity:2,cancelledQuantity:0}]})
+        expect(current).toMatchObject({status:'delivered',fullyCancelled:false,items:[{quantity:2,cancelledQuantity:0}]})
         expect(data(await pos(staff,preparation))).toEqual(results[0].body.data)
         const waiverCommand = {command:'prepare_waiver' as const,operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,reason:'Condonar trabajo ya preparado'}
         expect((await pos(staff,waiverCommand)).body.error?.code).toBe('PERMISSION_DENIED')

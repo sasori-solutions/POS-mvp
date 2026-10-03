@@ -25,19 +25,20 @@ beforeAll(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 afterAll(() => { HTMLDialogElement.prototype.showModal = originalShow; HTMLDialogElement.prototype.close = originalClose })
 
-test('zero-total open accounts remain editable and can enter final checkout before explicit closure', async () => {
-  const request = mutation(), onSaved = vi.fn()
-  vi.mocked(request.execute).mockResolvedValue({ ...order, phase: 'checkout', revision: 2 })
-  const props = { order, business, tables: [], methods: ['cash' as const], attempts: [], mutation: request, onSaved, onEdit: vi.fn(), refresh: vi.fn().mockResolvedValue(undefined), collectionAllowed: true }
-  const { rerender } = render(<OrderDetail {...props} />)
-  expect(screen.queryByRole('button', { name: 'Cerrar cuenta y liberar mesa' })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'Finalizar cuenta para cobrar' }))
-  await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ phase: 'checkout' })))
-  rerender(<OrderDetail {...props} order={{ ...order, phase: 'checkout' }} />)
-  expect((screen.getByRole('button', { name: 'Preparar cobro completo' }) as HTMLButtonElement).disabled).toBe(false)
-  expect(screen.queryByText('Descuento de toda la cuenta')).toBeNull()
-  rerender(<OrderDetail {...props} order={{ ...order, status: 'paid', phase: 'checkout', frozen: true }} />)
-  expect(screen.getByRole('button', { name: 'Cerrar cuenta y liberar mesa' })).toBeTruthy()
+test('a zero-value account reserves before the single final payment and still records the courtesy', async () => {
+  const request = mutation(), onPaymentRecorded = vi.fn()
+  const quote: CheckoutAttempt = {...refund,id:'payment',kind:'payment',originalSaleId:null,orderId:order.id,totalCents:0,discountCents:1001,items:[{lineId:'line',productId:'product',name:'Café',quantity:1,unitPriceCents:1001,totalCents:0,discountCents:1001,taxCents:0}]}
+  vi.mocked(request.execute).mockResolvedValueOnce(quote)
+  vi.mocked(posRequest).mockResolvedValue(quote)
+  render(<OrderDetail checkoutView access={{businessId:business.id,operatorToken:'synthetic-memory-only'}} order={order} business={business} methods={['cash']} attempts={[]} mutation={request} onSaved={vi.fn()} onPaymentRecorded={onPaymentRecorded} onEdit={vi.fn()} refresh={vi.fn().mockResolvedValue(undefined)} collectionAllowed />)
+  await waitFor(() => expect((screen.getByRole('button', {name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
+  expect(request.execute).toHaveBeenCalledWith(expect.objectContaining({command:'prepare_checkout'}))
+  expect(screen.queryByRole('button', {name:'Finalizar cuenta para cobrar'})).toBeNull()
+  const paid={...order,status:'closed' as const,frozen:true,revision:4}
+  vi.mocked(request.execute).mockResolvedValueOnce({order:paid,attempt:{...quote,status:'completed'}})
+  fireEvent.click(screen.getByRole('button',{name:'Registrar pago'}))
+  await waitFor(() => expect(onPaymentRecorded).toHaveBeenCalledWith(paid))
+  expect(request.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'record_checkout',attemptId:quote.id,confirmed:true}))
 })
 
 test.each(['snapshot', 'exact-retry'] as const)('a persisted refund is recoverable from %s within sales without cash access', async source => {

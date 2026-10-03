@@ -5,7 +5,7 @@ import { posRequest, type PosAccess } from '../../lib/pos'
 import { accessErrorCodes } from '../../components/useCatalog'
 
 type Mutation = Extract<OperationsCommand, { operationId: string }>
-const commands = new Set(['activate_operations', 'open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'set_kitchen_status', 'save_table', 'move_order', 'close_order', 'begin_order_checkout', 'resume_order_service', 'prepare_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal', 'prepare_waiver', 'confirm_waiver'])
+const commands = new Set(['activate_operations', 'open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'set_kitchen_status', 'save_table', 'move_order', 'close_order', 'begin_order_checkout', 'resume_order_service', 'update_checkout','record_checkout','record_payment','prepare_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal', 'prepare_waiver', 'confirm_waiver'])
 
 /** The only durable operational payload is a mutation, never its access envelope. */
 export function readOperation(key: string): Mutation | null {
@@ -49,7 +49,7 @@ export function useOperationalMutation(access: PosAccess, employeeId: string, on
       if (alive.current) setPending(command)
       const result = await posRequest(access, command)
       await navigator.locks.request(key, () => { if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key) })
-      if (alive.current) { setPending(null); setNotice('Cambio guardado.'); setLastResult({ command: command.command, result }) }
+      if (alive.current) { setPending(null); setNotice(''); setLastResult({ command: command.command, result }) }
       return result as OperationsResponses[C]
     } catch (caught) {
       if (alive.current) {

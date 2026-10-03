@@ -41,9 +41,9 @@ export function parsePosCommand(input: Record<string, unknown>, accessKeys: stri
       return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId),
         expectedVersion: integer(input.expectedVersion, 1, 2_147_483_647), active: input.active }
     case 'set_product_sold_out':
-      keys(['operationId', 'productId', 'expectedVersion', 'soldOut'])
+      keys(['operationId', 'productId', 'expectedVersion', 'soldOut', ...(Object.hasOwn(input, 'variationId') ? ['variationId'] : [])])
       if (typeof input.soldOut !== 'boolean') invalid()
-      return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId), expectedVersion: integer(input.expectedVersion, 1, 2_147_483_647), soldOut: input.soldOut }
+      return { command: input.command, operationId: uuid(input.operationId), productId: uuid(input.productId), expectedVersion: integer(input.expectedVersion, 1, 2_147_483_647), soldOut: input.soldOut, ...(Object.hasOwn(input, 'variationId') ? {variationId: uuid(input.variationId)} : {}) }
     case 'upload_product_image':
       keys(['operationId', 'imageId', 'part', 'parts', 'data'])
       if (typeof input.data !== 'string' || !/^[A-Za-z0-9+/=]{1,4096}$/.test(input.data)) invalid()

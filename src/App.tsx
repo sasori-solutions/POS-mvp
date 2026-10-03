@@ -53,6 +53,7 @@ const NotificationsPanel = lazy(
   () => import("./components/NotificationsPanel"),
 );
 const DeviceLogin = lazy(() => import("./components/DeviceLogin"));
+const PinUnlockScreen = lazy(() => import("./components/PinUnlockScreen"));
 const loadingView = (
   <section
     className="screen flex flex-col max-compact:flex-1 loading-screen items-center gap-5 pt-18"
@@ -1120,15 +1121,15 @@ function AccountApp() {
     );
   }
 
-  async function submitPin(event: FormEvent) {
-    event.preventDefault();
+  async function submitPin(event?: FormEvent, submittedPin = pin) {
+    event?.preventDefault();
     if (busy || retryAt > Date.now()) return;
     setError("");
-    if (!/^\d{6}$/.test(pin)) {
+    if (!/^[0-9]{6}$/.test(submittedPin)) {
       setError("Ingresa un PIN de 6 dígitos.");
       return;
     }
-    if (screen === "create-pin" && confirmation !== pin) {
+    if (screen === "create-pin" && confirmation !== submittedPin) {
       setError("Los PIN no coinciden. Revísalos e intenta de nuevo.");
       return;
     }
@@ -1144,12 +1145,12 @@ function AccountApp() {
               action: "create_business",
               ...draft,
               operationId: operationId.current,
-              pin,
+              pin: submittedPin,
             },
             identity.access_token,
           )
         : await accountRequest(
-            { action: "unlock", businessId: selected!.id, pin, deviceName },
+            { action: "unlock", businessId: selected!.id, pin: submittedPin, deviceName },
             identity.access_token,
           );
       if (
@@ -1276,6 +1277,93 @@ function AccountApp() {
   ].includes(screen);
   const isHome = screen === "home" && Boolean(operator);
   const isReady = screen === "ready" && Boolean(operator);
+  const isWorkspace = Boolean(operator) && (isHome || isManagement || screen === 'change-pin');
+  const managementContent = screen === 'change-pin' && operator ? (
+    <section className="screen flex flex-col max-compact:flex-1">
+      <button
+        type="button"
+        className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
+        disabled={busy}
+        onClick={() => {
+          setCurrentPin("");
+          setPin("");
+          setConfirmation("");
+          setError("");
+          navigate("home");
+        }}
+      >
+        <ArrowLeft size={18} aria-hidden="true" />
+        Volver
+      </button>
+      <h1>Cambiar mi PIN</h1>
+      <p>Verifica tu PIN actual y elige el nuevo.</p>
+      <form onSubmit={(event) => void saveChangedPin(event)}>
+        <div className="field">
+          <label htmlFor="current-pin">PIN actual</label>
+          <input
+            id="current-pin"
+            type="password"
+            inputMode="numeric"
+            autoComplete="off"
+            value={currentPin}
+            onChange={(event) =>
+              setCurrentPin(
+                event.target.value.replace(/[^0-9]/g, "").slice(0, 6),
+              )
+            }
+            maxLength={6}
+            disabled={busy}
+            required
+          />
+        </div>
+        <p id="pin-help" className="field-help text-sm text-muted">
+          Usa seis dígitos.
+        </p>
+        <PinField
+          label="Nuevo PIN"
+          value={pin}
+          onChange={setPin}
+          disabled={busy}
+        />
+        <PinField
+          label="Confirma tu PIN"
+          value={confirmation}
+          onChange={setConfirmation}
+          confirm
+          disabled={busy}
+        />
+        {error && (
+          <p
+            className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
+            role="alert"
+          >
+            {error}
+          </p>
+        )}
+        {secondsLeft > 0 && (
+          <p role="status">
+            Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.
+          </p>
+        )}
+        <div className="screen-actions mt-10 flex flex-col gap-3">
+          <button
+            className="button primary"
+            disabled={busy || secondsLeft > 0}
+          >
+            Guardar nuevo PIN
+          </button>
+        </div>
+      </form>
+    </section>
+  ) : screen === 'settings' && operator?.business.role === 'owner' ? (
+    <BusinessSettings business={operator.business} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
+  ) : (screen === 'team' || screen === 'devices') && operator?.business.role === 'owner' ? (
+    <TeamPanel key={screen} section={screen === 'devices' ? 'devices' : 'employees'} business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
+  ) : screen === 'notifications' && operator?.business.role === 'owner' ? (
+    <NotificationsPanel businessId={operator.business.id} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} onUnreadCount={setUnreadCount} />
+  ) : undefined;
+  const managementTitle = ({team:'Empleados', devices:'Dispositivos', settings:'Configuración', notifications:'Notificaciones', 'change-pin':'Mi acceso'} as Record<string,string>)[screen];
+
   const back = () => {
     setError("");
     setPin("");
@@ -1314,7 +1402,7 @@ function AccountApp() {
 
   return (
     <div
-      className={`app-shell flex min-h-dvh flex-col ${isHome ? "pos-shell" : isReady ? "home-shell" : ""}`}
+      className={`app-shell flex min-h-dvh flex-col ${isWorkspace ? "pos-shell" : isReady ? "home-shell" : ""}`}
     >
       <a
         className="sr-only fixed top-3 left-3 z-50 rounded-lg bg-ink px-4 py-3 text-white focus:not-sr-only"
@@ -1322,7 +1410,7 @@ function AccountApp() {
       >
         Ir al contenido
       </a>
-      {!isHome && (
+      {!isWorkspace && screen !== "unlock" && (
         <header className="app-header flex h-22 shrink-0 items-center justify-between gap-4 px-10 max-compact:h-19 max-compact:px-6">
           <span className="wordmark inline-flex items-center gap-2.5 text-[17px] font-semibold tracking-tight max-compact:text-base">
             POS México
@@ -1347,13 +1435,15 @@ function AccountApp() {
         id="main-content"
         tabIndex={-1}
         className={
-          isHome
+          isWorkspace
             ? "pos-home min-w-0 w-full flex-1"
             : isReady
               ? "business-home mx-auto mt-16 w-full max-w-260 flex-1 px-10 pb-16 max-compact:mt-8 max-compact:flex max-compact:px-6 max-compact:pb-10"
               : isManagement
                 ? "management-main mx-auto mt-6 w-full max-w-260 flex-1 px-10 max-compact:mt-4 max-compact:px-6"
-                : "auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10"
+                : screen === "unlock"
+                  ? "pin-unlock-main flex w-full flex-1 bg-white"
+                  : "auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10"
         }
       >
         <Suspense fallback={loadingView}>
@@ -1708,83 +1798,6 @@ function AccountApp() {
               }}
               onSessionError={showFailure}
             />
-          ) : screen === "change-pin" && operator ? (
-            <section className="screen flex flex-col max-compact:flex-1">
-              <button
-                type="button"
-                className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-                disabled={busy}
-                onClick={() => {
-                  setCurrentPin("");
-                  setPin("");
-                  setConfirmation("");
-                  setError("");
-                  navigate("home");
-                }}
-              >
-                <ArrowLeft size={18} aria-hidden="true" />
-                Volver a Más
-              </button>
-              <h1>Cambiar mi PIN</h1>
-              <p>Verifica tu PIN actual y elige el nuevo.</p>
-              <form onSubmit={(event) => void saveChangedPin(event)}>
-                <div className="field">
-                  <label htmlFor="current-pin">PIN actual</label>
-                  <input
-                    id="current-pin"
-                    type="password"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    value={currentPin}
-                    onChange={(event) =>
-                      setCurrentPin(
-                        event.target.value.replace(/[^0-9]/g, "").slice(0, 6),
-                      )
-                    }
-                    maxLength={6}
-                    disabled={busy}
-                    required
-                  />
-                </div>
-                <p id="pin-help" className="field-help text-sm text-muted">
-                  Usa seis dígitos.
-                </p>
-                <PinField
-                  label="Nuevo PIN"
-                  value={pin}
-                  onChange={setPin}
-                  disabled={busy}
-                />
-                <PinField
-                  label="Confirma tu PIN"
-                  value={confirmation}
-                  onChange={setConfirmation}
-                  confirm
-                  disabled={busy}
-                />
-                {error && (
-                  <p
-                    className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
-                    role="alert"
-                  >
-                    {error}
-                  </p>
-                )}
-                {secondsLeft > 0 && (
-                  <p role="status">
-                    Vuelve a intentar en {Math.ceil(secondsLeft / 60)} min.
-                  </p>
-                )}
-                <div className="screen-actions mt-10 flex flex-col gap-3">
-                  <button
-                    className="button primary"
-                    disabled={busy || secondsLeft > 0}
-                  >
-                    Guardar nuevo PIN
-                  </button>
-                </div>
-              </form>
-            </section>
           ) : screen === "business" ? (
             <section className="screen flex flex-col max-compact:flex-1">
               <p className="step-label mb-3 text-sm text-muted">Tu negocio</p>
@@ -1897,118 +1910,65 @@ function AccountApp() {
                 </div>
               </form>
             </section>
-          ) : createPin || screen === "unlock" ? (
+          ) : screen === "unlock" ? (
+            <PinUnlockScreen
+              businessName={selected?.name ?? ""}
+              busy={busy}
+              error={error}
+              secondsLeft={secondsLeft}
+              onUnlock={(value) => submitPin(undefined, value)}
+              onRecover={() => {
+                setPin("");
+                setError("");
+                navigate("recover-email");
+              }}
+              onChangeBusiness={businesses.length > 1 ? changeBusiness : undefined}
+              onLogout={() => void logout()}
+            />
+          ) : createPin ? (
             <section className="screen flex flex-col max-compact:flex-1">
-              {(createPin || businesses.length > 1) && (
-                <button
-                  className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-                  onClick={back}
-                  disabled={busy}
-                >
-                  <ArrowLeft size={20} aria-hidden="true" />
-                  Volver
-                </button>
-              )}
+              <button
+                className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
+                onClick={back}
+                disabled={busy}
+              >
+                <ArrowLeft size={20} aria-hidden="true" />
+                Volver
+              </button>
               <div className="screen-icon small mb-6 grid size-12 place-items-center rounded-xl border border-line">
                 <LockKeyhole size={24} strokeWidth={1.5} aria-hidden="true" />
               </div>
-              <h1>{createPin ? "Crea tu PIN" : "Ingresa tu PIN"}</h1>
-              <p>
-                {createPin ? `Para entrar a ${draft.name}.` : selected?.name}
-              </p>
+              <h1>Crea tu PIN</h1>
+              <p>Para entrar a {draft.name}.</p>
               <form onSubmit={(event) => void submitPin(event)}>
                 <p id="pin-help" className="field-help text-sm text-muted">
                   Usa 6 dígitos.
                 </p>
-                {!createPin && selected?.role && selected.role !== "owner" && (
-                  <>
-                    <p>
-                      Tu acceso está vinculado a un navegador. Si usas otro, el
-                      dueño recibirá una solicitud para autorizar el cambio.
-                    </p>
-                    <div className="field">
-                      <label htmlFor="unlock-device-name">
-                        Nombre de este dispositivo
-                      </label>
-                      <input
-                        id="unlock-device-name"
-                        value={deviceName}
-                        required
-                        maxLength={100}
-                        onChange={(event) => setDeviceName(event.target.value)}
-                        disabled={busy}
-                      />
-                    </div>
-                  </>
-                )}
+                <PinField label="PIN" value={pin} onChange={setPin} disabled={busy || secondsLeft > 0} />
                 <PinField
-                  label={createPin ? "PIN" : "Tu PIN"}
-                  value={pin}
-                  onChange={setPin}
-                  disabled={busy || secondsLeft > 0}
+                  label="Confirma tu PIN"
+                  value={confirmation}
+                  onChange={setConfirmation}
+                  confirm
+                  disabled={busy}
                 />
-                {createPin && (
-                  <PinField
-                    label="Confirma tu PIN"
-                    value={confirmation}
-                    onChange={setConfirmation}
-                    confirm
-                    disabled={busy}
-                  />
-                )}
                 {error && (
-                  <p
-                    className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
-                    role="alert"
-                  >
+                  <p className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger" role="alert">
                     {error}
                   </p>
                 )}
                 {secondsLeft > 0 && (
-                  <p
-                    className="countdown -mt-3 text-sm"
-                    role="timer"
-                    aria-live="off"
-                  >
+                  <p className="countdown -mt-3 text-sm" role="timer" aria-live="off">
                     Podrás intentar de nuevo en {Math.floor(secondsLeft / 60)}:
                     {String(secondsLeft % 60).padStart(2, "0")}.
                   </p>
                 )}
                 <div className="screen-actions mt-10 flex flex-col gap-3">
-                  <button
-                    className="button primary"
-                    type="submit"
-                    disabled={busy || secondsLeft > 0}
-                    aria-busy={busy}
-                  >
-                    {createPin ? "Crear PIN" : "Entrar"}
+                  <button className="button primary" type="submit" disabled={busy || secondsLeft > 0} aria-busy={busy}>
+                    Crear PIN
                     <ArrowRight size={20} aria-hidden="true" />
                   </button>
                 </div>
-                {!createPin && (
-                  <>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      disabled={busy}
-                      onClick={changeBusiness}
-                    >
-                      Cambiar negocio
-                    </button>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => {
-                        setPin("");
-                        setError("");
-                        navigate("recover-email");
-                      }}
-                    >
-                      Olvidé mi PIN
-                    </button>
-                  </>
-                )}
               </form>
             </section>
           ) : screen === "choose" ? (
@@ -2167,36 +2127,12 @@ function AccountApp() {
                 </button>
               </div>
             </section>
-          ) : screen === "settings" && operator?.business.role === "owner" ? (
-            <BusinessSettings
-              business={operator.business}
-              operatorToken={operator.operatorToken}
-              onSaved={savedBusiness}
-              onBack={() => navigate("home")}
-              onSessionError={showFailure}
-            />
-          ) : (screen === "team" || screen === "devices") &&
-            operator?.business.role === "owner" ? (
-            <TeamPanel
-              key={screen}
-              section={screen === "devices" ? "devices" : "employees"}
-              business={operator.business}
-              operatorToken={operator.operatorToken}
-              onBack={() => navigate("home")}
-              onSessionError={showFailure}
-            />
-          ) : screen === "notifications" &&
-            operator?.business.role === "owner" ? (
-            <NotificationsPanel
-              businessId={operator.business.id}
-              operatorToken={operator.operatorToken}
-              onBack={() => navigate("home")}
-              onSessionError={showFailure}
-              onUnreadCount={setUnreadCount}
-            />
-          ) : isHome && operator ? (
+          ) : isWorkspace && operator ? (
             <HomeScreen
               key={operator.operatorToken}
+              managementContent={managementContent}
+              managementTitle={managementTitle}
+              managementKey={managementContent ? screen : undefined}
               business={operator.business}
               operatorToken={operator.operatorToken}
               onSessionError={showFailure}
@@ -2206,6 +2142,7 @@ function AccountApp() {
               error={error}
               destination={homeDestination}
               onDestinationChange={(value) => {
+                if (screen !== "home") navigate("home");
                 setHomeDestination(value);
                 setMoreReturn("");
                 setHomeNotice("");
@@ -2245,7 +2182,7 @@ function AccountApp() {
           )}
         </Suspense>
       </main>
-      {!isHome && (
+      {!isWorkspace && screen !== "unlock" && (
         <footer className="app-footer px-6 pt-4 pb-[calc(20px+env(safe-area-inset-bottom))] text-center text-xs text-muted">
           POS México
         </footer>

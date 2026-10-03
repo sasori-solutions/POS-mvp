@@ -12,11 +12,13 @@ export default function ProductsScreen({
   access,
   catalog,
   canManage,
+  canAvailability = false,
   onSessionError,
 }: {
   access: PosAccess;
   catalog: CatalogState;
   canManage: boolean;
+  canAvailability?: boolean;
   onSessionError?: (error: AccountClientError) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -24,6 +26,7 @@ export default function ProductsScreen({
   const [status, setStatus] = useState("active");
   const [editing, setEditing] = useState<Product | "new" | null>(null);
   const [toggling, setToggling] = useState<Product | null>(null);
+  const [availability, setAvailability] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [message, setMessage] = useState("");
   const screen = useRef<HTMLDivElement>(null);
@@ -182,6 +185,7 @@ export default function ProductsScreen({
                     {details}
                   </div>
                 )}
+                {canAvailability && product.active && <button className="pos-button pos-secondary compact" aria-label={`Disponibilidad de ${product.name}`} onClick={() => setAvailability(product)}>Disponibilidad</button>}
                 {canManage && (
                   <ProductActions
                     product={product}
@@ -195,6 +199,7 @@ export default function ProductsScreen({
           })}
         </ul>
       )}
+      {availability && <ProductAvailability product={availability} access={access} onClose={() => setAvailability(null)} onSaved={product => { catalog.upsert(product); setAvailability(product); }} onSessionError={onSessionError} />}
       {editing && (
         <ProductEditor
           product={editing === "new" ? null : editing}
@@ -456,4 +461,37 @@ function ProductActivation({
       </div>
     </PosDialog>
   );
+}
+
+function ProductAvailability({product, access, onClose, onSaved, onSessionError}: {product: Product; access: PosAccess; onClose: () => void; onSaved: (product: Product) => void; onSessionError?: (error: AccountClientError) => void}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = useRef<Extract<import('../lib/pos-contracts').PosCommand, {command: 'set_product_sold_out'}> | null>(null);
+  const alive = useRef(true);
+  const submitting = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  async function toggle(soldOut: boolean, variationId?: string) {
+    if (submitting.current) return;
+    submitting.current = true; setBusy(true); setError('');
+    const command = pending.current ?? {command: 'set_product_sold_out' as const, operationId: crypto.randomUUID(), productId: product.id, expectedVersion: product.version, soldOut, ...(variationId ? {variationId} : {})};
+    pending.current = command;
+    try { const saved = await posRequest(access, command); pending.current = null; if (alive.current) onSaved(saved); }
+    catch (caught) {
+      if (!alive.current) return;
+      setError(caught instanceof Error ? caught.message : 'No pudimos cambiar la disponibilidad.');
+      if (caught instanceof AccountClientError) {
+        if (!['NETWORK_ERROR','SERVER_ERROR'].includes(caught.code)) pending.current = null;
+        if (accessErrorCodes.includes(caught.code)) onSessionError?.(caught);
+      }
+    } finally { submitting.current = false; if (alive.current) setBusy(false); }
+  }
+  const details = productDetails(product);
+  return <PosDialog title="Disponibilidad" busy={busy || Boolean(pending.current)} onClose={onClose}>
+    <p><strong>{product.name}</strong></p>
+    <div className="ops-form"><button className="pos-button pos-secondary" disabled={busy || Boolean(pending.current)} onClick={() => void toggle(!details.soldOut)}>Producto · {details.soldOut ? 'Agotado' : 'Disponible'}</button>
+      {details.variations.map(variation => <button key={variation.id} className="pos-button pos-secondary" disabled={busy || Boolean(pending.current)} onClick={() => void toggle(!variation.soldOut, variation.id)}>{variation.name} · {variation.soldOut ? 'Agotado' : 'Disponible'}</button>)}
+      {error && <p role="alert">{error}</p>}
+      {pending.current && !busy && <button className="pos-button pos-primary" onClick={() => void toggle(pending.current!.soldOut, pending.current!.variationId)}>Reintentar cambio</button>}
+    </div>
+  </PosDialog>;
 }

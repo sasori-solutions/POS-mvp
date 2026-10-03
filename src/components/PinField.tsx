@@ -36,7 +36,16 @@ export default function PinField({
           aria-hidden="true"
         >
           {Array.from({ length: 6 }, (_, index) => (
-            <span key={index} className={value.length > index ? "filled" : ""}>
+            <span
+              key={index}
+              className={
+                value.length > index
+                  ? "filled"
+                  : value.length === index
+                    ? "current"
+                    : ""
+              }
+            >
               {value.length > index ? "●" : ""}
             </span>
           ))}

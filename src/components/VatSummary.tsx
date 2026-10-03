@@ -5,14 +5,14 @@ import { money } from "../lib/pos";
 export default function VatSummary({ lines }: { lines: VatLine[] }) {
   const summary = vatSummary(lines);
   return (
-    <>
+    <div className="sale-vat-summary">
       <div>
-        <dt>{summary.unknown ? "Importe de productos" : "Subtotal sin IVA"}</dt>
+        <dt>{summary.unknown ? "Productos" : "Subtotal sin IVA"}</dt>
         <dd>
           {money(summary.unknown ? summary.totalCents : summary.baseCents)}
         </dd>
       </div>
-      {summary.groups.map((group) => (
+      {summary.groups.filter((group) => group.cents > 0).map((group) => (
         <div key={group.treatment}>
           <dt>
             {group.label}
@@ -25,14 +25,14 @@ export default function VatSummary({ lines }: { lines: VatLine[] }) {
       ))}
       {summary.unknown && (
         <div>
-          <dt className="text-xs!">
+          <dt className="sale-vat-note">
             {lines.some((line) => line.taxTreatment === "unconfigured")
-              ? "Hay productos con IVA sin definir"
-              : "Registro anterior sin clasificación de IVA"}
+              ? "IVA sin definir"
+              : "IVA sin clasificar"}
           </dt>
           <dd />
         </div>
       )}
-    </>
+    </div>
   );
 }

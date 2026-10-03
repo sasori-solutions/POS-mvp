@@ -871,7 +871,7 @@ export default function TeamPanel({
         onClick={form ? closeForm : onBack}
       >
         <ArrowLeft size={18} aria-hidden="true" />
-        {form ? "Volver a empleados" : "Volver a Más"}
+        {form ? "Volver a empleados" : "Volver"}
       </button>
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1 ref={heading} tabIndex={-1}>

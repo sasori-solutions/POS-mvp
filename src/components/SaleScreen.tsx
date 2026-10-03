@@ -43,11 +43,12 @@ import {
   selectionLabel,
 } from "../lib/product-details";
 import ProductSelection from "./ProductSelection";
+import SaleAccountPanel from "./SaleAccountPanel";
+import CheckoutPanel from "./CheckoutPanel";
+import PaymentMethodPicker from "./PaymentMethodPicker";
 import {
-  BackToCatalog,
   CatalogFilters,
   EmptyCatalog,
-  paymentLabels,
   SaleDetail,
   PosDialog,
 } from "./PosShared";
@@ -85,7 +86,9 @@ export default function SaleScreen({
   onAccount,
   collectionReady = true,
   savedCounter,
-  onNewAccount,
+  onAccountAdd,
+  onAccountQuantity,
+  onAccountClear,
 }: {
   access: PosAccess;
   employeeId: string;
@@ -97,7 +100,9 @@ export default function SaleScreen({
   onAccount?: (cart: CartLine[]) => Promise<void>;
   collectionReady?: boolean;
   savedCounter?: OperationalOrder;
-  onNewAccount?: () => void;
+  onAccountAdd?: (product: Product, selection?: ItemSelection) => Promise<void>;
+  onAccountQuantity?: (lineId: string, change: number | 'remove') => Promise<void>;
+  onAccountClear?: () => Promise<void>;
 }) {
   const [choosing, setChoosing] = useState<Product | null>(null);
   const [availability, setAvailability] = useState<Product | null>(null);
@@ -113,6 +118,7 @@ export default function SaleScreen({
   const [category, setCategory] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [showCart, setShowCart] = useState(false);
+  const cartButton = useRef<HTMLButtonElement>(null);
   const [checkout, setCheckout] = useState(false);
   const [payment, setPayment] = useState<PaymentMethod>("cash");
   const [pending, setPending] = useState<PendingSale | null>(null);
@@ -120,6 +126,7 @@ export default function SaleScreen({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [receipt, setReceipt] = useState<Sale | null>(null);
+  const [confirmClearAccount, setConfirmClearAccount] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const mounted = useRef(true);
@@ -134,12 +141,14 @@ export default function SaleScreen({
     category,
   );
   const account = savedCounter?.status === 'open' ? savedCounter : undefined;
-  const frozen = busy || Boolean(pending) || storageError || Boolean(account);
+  const accountEditable = Boolean(account && account.phase === 'service' && !account.frozen && onAccountAdd && onAccountQuantity);
+  const frozen = busy || Boolean(pending) || storageError || Boolean(account && (!accountEditable || !collectionReady));
   useEffect(() => {
     if (savedCounter && savedCounter.status !== 'open') {
       setCart([]);
       setCheckout(false);
       setShowCart(false);
+      setConfirmClearAccount(false);
       setNotice("");
     }
   }, [savedCounter?.id, savedCounter?.status]);
@@ -278,10 +287,14 @@ export default function SaleScreen({
     !catalog.error &&
     online &&
     !frozen;
-  const canResumeAccount = Boolean(account && onAccount) && collectionReady && online && !busy && !pending && !storageError;
+  const canResumeAccount = Boolean(account?.items.length && onAccount) && collectionReady && online && !busy && !pending && !storageError;
 
   function add(product: Product, selection?: ItemSelection) {
     if (frozen || checkout || isSoldOut(product)) return;
+    if (account && onAccountAdd) {
+      void editAccount(() => onAccountAdd(product, selection));
+      return;
+    }
     const key = lineKey({ product, selection });
     const existing = cart.find((line) => lineKey(line) === key);
     if (existing && existing.quantity >= maxQuantity) {
@@ -307,10 +320,14 @@ export default function SaleScreen({
     }
     setCart(next);
     setError("");
-    setNotice(`${product.name} agregado a la venta.`);
+    setNotice("");
   }
   function quantity(key: string, change: number) {
     if (frozen) return;
+    if (account && onAccountQuantity) {
+      void editAccount(() => onAccountQuantity(key, change));
+      return;
+    }
     const next = cart
       .map((line) =>
         lineKey(line) === key
@@ -574,6 +591,7 @@ export default function SaleScreen({
 
   async function saveAccount() {
     if (!onAccount || !(canCheckout || canResumeAccount) || submitting.current) return;
+    setConfirmClearAccount(false);
     submitting.current = true;
     setBusy(true);
     setError("");
@@ -584,6 +602,30 @@ export default function SaleScreen({
     } finally {
       submitting.current = false;
       if (mounted.current) setBusy(false);
+    }
+  }
+  async function editAccount(action: () => Promise<void>) {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try { await action(); }
+    catch (caught) { if (mounted.current) setError(caught instanceof Error ? caught.message : "No pudimos actualizar la cuenta."); }
+    finally { submitting.current = false; if (mounted.current) setBusy(false); }
+  }
+  function clearAccount() {
+    if (frozen || !displayCart.length) return;
+    if (account) {
+      if (!onAccountClear || !accountEditable) return;
+      void editAccount(async () => {
+        await onAccountClear();
+        setConfirmClearAccount(false);
+      });
+    } else {
+      setCart([]);
+      setNotice("");
+      setError("");
+      setConfirmClearAccount(false);
     }
   }
 
@@ -648,10 +690,10 @@ export default function SaleScreen({
 
   return (
     <div
-      data-cart={Boolean(showCart || checkout || pending)}
-      className={`sale-workspace group/sale mt-2 grid grid-cols-[minmax(0,1fr)_360px] items-start gap-8 max-desktop:grid-cols-[minmax(0,1fr)_320px] max-desktop:gap-6 max-tablet:mt-0 max-tablet:block ${showCart || checkout || pending ? "show-cart" : ""}`}
+      data-cart={showCart}
+      className={`sale-workspace group/sale mt-2 grid grid-cols-[minmax(0,1fr)_360px] items-start gap-8 max-desktop:grid-cols-[minmax(0,1fr)_320px] max-desktop:gap-6 max-tablet:mt-0 max-tablet:block ${showCart ? "show-cart" : ""}`}
     >
-      <div className="sale-catalog min-w-0 max-tablet:group-data-[cart=true]/sale:hidden">
+      <div className="sale-catalog min-w-0 max-tablet:pb-20">
         <div
           className="sale-library-tabs flex gap-6 border-b border-line [&_button]:flex [&_button]:min-h-13 [&_button]:items-center [&_button]:gap-2 [&_button]:border-0 [&_button]:border-b-3 [&_button]:border-transparent [&_button]:bg-transparent [&_button]:py-2 [&_button]:text-[15px] [&_button]:text-muted [&_button[aria-pressed=true]]:border-brand [&_button[aria-pressed=true]]:font-medium [&_button[aria-pressed=true]]:text-ink max-tablet:gap-5 max-tablet:[&_button]:text-sm"
           role="group"
@@ -806,38 +848,32 @@ export default function SaleScreen({
         )}
         <div className="mobile-cart-action fixed bottom-[calc(76px+env(safe-area-inset-bottom))] left-1/2 z-30 w-full -translate-x-1/2 border-t border-line bg-white px-4 py-3 tablet:hidden">
           <button
+            ref={cartButton}
             className="pos-button pos-primary"
+            aria-expanded={showCart}
+            aria-controls="current-sale-account"
             onClick={() => setShowCart(true)}
             disabled={!displayCart.length && !storageError}
           >
             {displayCart.length
               ? `Ver cuenta (${displayCart.reduce((sum, line) => sum + line.quantity, 0)}) ${money(total)}`
-              : "Venta actual"}
+              : "Ver cuenta"}
           </button>
         </div>
       </div>
-      <aside
-        className="current-sale sticky top-6 flex min-w-0 h-[calc(100dvh-240px)] flex-col border-l border-line pt-3 pl-8 max-desktop:pl-6 [@media(max-height:759px)]:h-auto max-tablet:static max-tablet:hidden max-tablet:h-auto max-tablet:border-0 max-tablet:pt-4 max-tablet:pl-0 max-tablet:group-data-[cart=true]/sale:flex"
-        aria-label="Venta actual"
-      >
-        {!pending && (
-          <div className="mobile-back mt-3 tablet:hidden">
-            <BackToCatalog
-              onClick={() => {
-                setShowCart(false);
-                setCheckout(false);
-              }}
-            />
-          </div>
-        )}
-        <div className="current-sale-heading mb-4 flex shrink-0 items-center justify-between gap-3 border-b border-line pb-5 [&_h2]:text-[22px] [&_h2]:font-medium [&_span]:text-[13px] [&_span]:text-muted max-tablet:mt-3">
-          <h2>{checkout ? "Registrar pago" : "Venta actual"}</h2>
+      <SaleAccountPanel open={showCart} canClose returnFocus={cartButton} onClose={() => { setShowCart(false); if (!pending) setCheckout(false); }}>
+        <div data-account-drag className="mx-auto mb-1 h-1.5 w-14 shrink-0 touch-pan-x rounded-full bg-line tablet:hidden" aria-hidden="true" />
+        <div className="current-sale-heading mb-1 flex min-h-12 shrink-0 items-center justify-between gap-3 [&_h2]:font-medium [&_span]:text-[13px] [&_span]:text-muted">
+          <h2 className="sr-only" data-account-focus tabIndex={-1}>{checkout ? "Registrar pago" : "Venta actual"}</h2>
+          {displayCart.length > 0 && (!account || accountEditable && onAccountClear) && (
+            <button type="button" className="min-h-12 p-0 text-left text-sm font-normal text-black no-underline disabled:opacity-100" disabled={frozen} onClick={() => setConfirmClearAccount(true)}>Borrar cuenta</button>
+          )}
           <span>
             {displayCart.reduce((sum, line) => sum + line.quantity, 0)}{" "}
             artículos
           </span>
         </div>
-        <div className="current-sale-body min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [@media(max-height:759px)]:max-h-75 max-tablet:max-h-none max-tablet:overflow-visible max-tablet:p-0 max-tablet:[scrollbar-gutter:auto]">
+        <div className="current-sale-body min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [@media(min-width:47.5rem)_and_(max-height:759px)]:max-h-75 max-tablet:flex-auto max-tablet:max-h-[20dvh] max-tablet:p-0 max-tablet:[scrollbar-gutter:auto]">
           {notice && (
             <p className="pos-status my-4 text-sm text-muted" role="status">
               {notice}
@@ -865,7 +901,7 @@ export default function SaleScreen({
               <h3>Tu cuenta está vacía</h3>
             </div>
           )}
-          <ul className="cart-lines m-0 list-none p-0 [&_li]:border-b [&_li]:border-line [&_li]:py-4 [&_li>p]:mt-2 [&_li>p]:text-sm">
+          <ul className="cart-lines m-0 list-none p-0 [&_li]:py-2 [&_li>p]:mt-1 [&_li>p]:text-sm">
             {displayCart.map((line, index) => {
               const { product, quantity: amount, selection } = line,
                 savedLine = account?.items[index],
@@ -875,19 +911,18 @@ export default function SaleScreen({
               return (
                 <li key={key}>
                   <div className="cart-line-heading flex items-baseline justify-between gap-4 [&_strong]:min-w-0 [&_strong]:font-medium [&_strong]:[overflow-wrap:anywhere] [&_span]:whitespace-nowrap [&_span]:tabular-nums">
-                    <strong>{product.name}</strong>
+                    <strong>{amount} × {product.name}</strong>
                     <span>{money(savedLine?.totalCents ?? price * amount)}</span>
                   </div>
                   {label && (
                     <p>{label}</p>
                   )}
-                  <p>{money(price)} por unidad</p>
-                  {!checkout && !pending && !account ? (
-                    <div className="quantity-controls mt-3 flex items-center gap-2 [&_span]:min-w-6 [&_span]:text-center [&_span]:tabular-nums [&_button]:size-12 [&_button]:min-h-12 [&_button]:rounded-lg [&_button]:border [&_button]:border-line [&_button]:bg-white">
+                  {!checkout && !pending && (!account || accountEditable) ? (
+                    <div className="quantity-controls mt-1 flex items-center gap-0 [&_span]:min-w-6 [&_span]:text-center [&_span]:tabular-nums [&_button]:size-12 [&_button]:min-h-12 [&_button]:rounded-lg [&_button]:border-0! [&_button]:bg-transparent!">
                       <button
                         className="pos-icon-button"
                         aria-label={`Disminuir ${product.name}`}
-                        disabled={frozen}
+                        disabled={frozen || Boolean(savedLine && amount <= savedLine.sentQuantity)}
                         onClick={() => quantity(key, -1)}
                       >
                         <Minus size={18} aria-hidden="true" />
@@ -906,8 +941,12 @@ export default function SaleScreen({
                       <button
                         className="pos-icon-button cart-remove ml-auto border-transparent! bg-transparent!"
                         aria-label={`Quitar ${product.name}`}
-                        disabled={frozen}
+                        disabled={frozen || Boolean(savedLine && savedLine.sentQuantity > 0)}
                         onClick={() => {
+                          if (savedLine && onAccountQuantity) {
+                            void editAccount(() => onAccountQuantity(savedLine.lineId, 'remove'));
+                            return;
+                          }
                           setCart((previous) =>
                             previous.filter((l) => lineKey(l) !== key),
                           );
@@ -941,8 +980,8 @@ export default function SaleScreen({
             </p>
           )}
         </div>
-        <div className="cart-checkout mt-4 flex shrink-0 flex-col gap-3 border-t border-line bg-white pt-5 [&_.pos-primary]:min-h-15 [&_.pos-primary]:text-lg max-tablet:mt-6">
-          <dl className="sale-totals mb-3 flex flex-col gap-4">
+        <div className="cart-checkout mt-2 flex shrink-0 flex-col gap-2 border-t border-line bg-white pt-3 [&_.pos-primary]:min-h-15 [&_.pos-primary]:text-lg max-tablet:max-h-[32dvh] max-tablet:overflow-y-auto max-tablet:pt-2">
+          <dl className="sale-totals mb-3 flex flex-col gap-2 tablet:gap-4">
             {!pending && displayCart.length > 0 && (
               <VatSummary
                 lines={account?.items ?? cart.map((line) => {
@@ -965,29 +1004,50 @@ export default function SaleScreen({
               <div><dt>Por cobrar</dt><dd>{money(account.balanceCents)}</dd></div>
             )}
           </dl>
-          {checkout || pending ? (
+          {account ? (
             <>
-              <fieldset
-                className="sale-payment-methods m-0 grid grid-cols-1 gap-2 border-0 p-0 [&_legend]:mb-3 [&_legend]:text-sm [&_legend]:font-medium [&_label]:flex [&_label]:min-h-13 [&_label]:cursor-pointer [&_label]:items-center [&_label]:gap-3 [&_label]:rounded-lg [&_label]:border [&_label]:border-line [&_label]:bg-white [&_label]:p-3 [&_label:has(input:checked)]:border-brand [&_label:has(input:checked)]:ring-1 [&_label:has(input:checked)]:ring-brand [&_input]:size-5"
-                disabled={frozen}
-              >
-                <legend>Método de pago</legend>
-                {(pending
-                  ? [pending.paymentMethod]
-                  : catalog.paymentMethods
-                ).map((method) => (
-                  <label key={method}>
-                    <input
-                      type="radio"
-                      name="sale-payment"
-                      value={method}
-                      checked={payment === method}
-                      onChange={() => setPayment(method)}
-                    />
-                    <span>{paymentLabels[method]}</span>
-                  </label>
-                ))}
-              </fieldset>
+              <button className="pos-button pos-primary" disabled={!canResumeAccount} onClick={() => void saveAccount()}>
+                Cobrar
+              </button>
+            </>
+          ) : (
+            <button
+              className="pos-button pos-primary"
+              disabled={!canCheckout}
+              onClick={() => {
+                if (onAccount) { void saveAccount(); return; }
+                setCheckout(true);
+                setShowCart(true);
+                setNotice("");
+                setError("");
+              }}
+            >
+              Cobrar
+            </button>
+          )}
+        </div>
+      </SaleAccountPanel>
+      {(checkout || pending) && <CheckoutPanel busy={busy || Boolean(pending)} onClose={() => setCheckout(false)}>
+        <div className="checkout-layout">
+          <aside className="checkout-summary">
+            <div className="checkout-amount"><p>Total a cobrar · MXN</p><strong>{money(total)}</strong></div>
+            <h3 className="checkout-section-title">Resumen de la venta</h3>
+            <ul className="checkout-items">{displayCart.map((line, index) => <li key={index}>
+              <span><strong>{line.quantity} × {line.product.name}</strong>{selectionLabel(line.product, line.selection) && <small>{selectionLabel(line.product, line.selection)}</small>}</span>
+              <span>{money(selectedPrice(line.product, line.selection) * line.quantity)}</span>
+            </li>)}</ul>
+            {!pending && <dl className="sale-totals"><VatSummary lines={cart.map(line => {
+              const details = productDetails(line.product);
+              return { totalCents: selectedPrice(line.product, line.selection) * line.quantity, taxBps: details.taxBps, taxTreatment: productVat(details) };
+            })} /></dl>}
+          </aside>
+          <div className="checkout-controls">
+            {!online && <p role="alert">Sin conexión. Vuelve a conectarte para registrar el pago.</p>}
+            {notice && <p role="status">{notice}</p>}
+            {error && <p className="checkout-error" role="alert">{error}</p>}
+
+              <PaymentMethodPicker name="sale-payment" methods={pending ? [pending.paymentMethod] : catalog.paymentMethods}
+                value={payment} onChange={setPayment} disabled={frozen} />
               {payment === "card_external" ? (
                 <p className="payment-instructions py-2 text-sm">
                   Cobra en tu terminal y registra el pago.
@@ -1003,7 +1063,7 @@ export default function SaleScreen({
                 </p>
               )}
               <button
-                className="pos-button pos-primary"
+                className="pos-button pos-primary checkout-confirm"
                 disabled={
                   busy ||
                   storageError ||
@@ -1022,47 +1082,22 @@ export default function SaleScreen({
                       ? "Confirmar venta"
                       : "Registrar pago"}
               </button>
-              {!pending && (
-                <button
-                  className="pos-button pos-secondary"
-                  disabled={busy}
-                  onClick={() => setCheckout(false)}
-                >
-                  Editar venta
-                </button>
-              )}
-            </>
-          ) : account ? (
-            <>
-              <button className="pos-button pos-primary" disabled={!canResumeAccount} onClick={() => void saveAccount()}>
-                Continuar cobro {money(account.balanceCents)}
-              </button>
-              {onNewAccount && <button className="pos-button pos-secondary" disabled={busy || !collectionReady} onClick={() => {
-                setCart([]);
-                setCheckout(false);
-                setShowCart(false);
-                setNotice("");
-                setError("");
-                onNewAccount();
-              }}>Nueva cuenta</button>}
-            </>
-          ) : (
-            <button
-              className="pos-button pos-primary"
-              disabled={!canCheckout}
-              onClick={() => {
-                if (onAccount) { void saveAccount(); return; }
-                setCheckout(true);
-                setShowCart(true);
-                setNotice("");
-                setError("");
-              }}
-            >
-              {onAccount ? "Guardar cuenta y cobrar" : "Cobrar"} {money(total)}
-            </button>
-          )}
+          </div>
         </div>
-      </aside>
+      </CheckoutPanel>}
+
+      {confirmClearAccount && displayCart.length > 0 && (!account || accountEditable && onAccountClear) && (
+        <PosDialog title="Borrar cuenta" onClose={() => setConfirmClearAccount(false)} busy={busy}>
+          <p className="text-ink">¿Eliminar todos los artículos de esta cuenta?</p>
+          <p className="mt-2 text-sm">Se eliminarán {displayCart.reduce((sum, line) => sum + line.quantity, 0)} artículos. Esta acción no se puede deshacer.</p>
+          {error && <p className="mt-4 text-sm text-danger" role="alert">{error}</p>}
+          <div className="mt-6 flex gap-3 max-tablet:flex-col">
+            <button className="pos-button pos-secondary" disabled={busy} onClick={() => setConfirmClearAccount(false)} data-dialog-autofocus>Cancelar</button>
+            <button className="pos-button border-ink bg-ink text-white enabled:hover:border-ink-hover enabled:hover:bg-ink-hover" disabled={frozen} onClick={clearAccount}>Borrar cuenta</button>
+          </div>
+        </PosDialog>
+      )}
+
       {choosing && (
         <ProductSelection
           product={choosing}

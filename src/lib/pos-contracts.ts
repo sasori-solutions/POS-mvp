@@ -89,7 +89,7 @@ export type PosCommand =
   | ({ command: 'save_product'; operationId: string } & ProductInput)
   | { command: 'set_product_active'; operationId: string; productId: string; expectedVersion: number; active: boolean }
   | { command: 'delete_product'; operationId: string; productId: string; expectedVersion: number }
-  | { command: 'set_product_sold_out'; operationId: string; productId: string; expectedVersion: number; soldOut: boolean }
+  | { command: 'set_product_sold_out'; operationId: string; productId: string; expectedVersion: number; soldOut: boolean; variationId?: string }
   | { command: 'upload_product_image'; operationId: string; imageId: string; part: number; parts: number; data: string }
   | { command: 'complete_sale'; operationId: string; items: SaleInputLine[]; totalCents: number; paymentMethod: PaymentMethod }
   | { command: 'sales'; cursor: SaleCursor | null }

@@ -47,7 +47,15 @@ export interface BusinessDayReport {
   products: { productId: string; name: string; quantity: number; salesCents: number; taxCents: number; reversalQuantity: number; reversalCents: number; reversalTaxCents: number; netCents: number; netTaxCents: number }[]
   cashDifferences: { shiftId: string; closedAt: string; expectedCents: number; countedCents: number; differenceCents: number }[]
 }
-export interface OperationsSnapshot { enabled: boolean; shift: CashShift | null; orders: OperationalOrder[]; tables: DiningTable[]; attempts: CheckoutAttempt[] }
+export interface OperationsSnapshot { enabled: boolean; shift: CashShift | null; orders: OperationalOrder[]; tables: DiningTable[]; attempts: CheckoutAttempt[]; pendingKitchenCount?: number }
+
+export type ReportPeriod = 'day' | 'week' | 'month'
+export interface BusinessPeriodReport {
+  period: ReportPeriod; startDate: string; endDate: string; timezone: string; partial: boolean
+  comparisonStartDate: string; comparisonEndDate: string; comparisonComparable: boolean; asOf: string
+  totals: BusinessDayReport; previous: BusinessDayReport
+  series: { start: string; label: string; salesCents: number; future: boolean }[]
+}
 
 export type OperationsCommand =
   | { command: 'operations' }
@@ -73,6 +81,9 @@ export type OperationsCommand =
   | { command: 'move_order'; operationId: string; orderId: string; expectedRevision: number; tableId: string | null }
   | { command: 'close_order'; operationId: string; orderId: string; expectedRevision: number }
   | { command: 'prepare_checkout'; operationId: string; orderId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
+  | { command: 'update_checkout'; operationId: string; attemptId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
+  | { command: 'record_checkout'; operationId: string; attemptId: string; expectedRevision: number; confirmed: true }
+  | { command: 'record_payment'; operationId: string; orderId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod; confirmed: true }
   | { command: 'attempt'; attemptId: string }
   | { command: 'start_checkout'; operationId: string; attemptId: string; expectedRevision: number }
   | { command: 'mark_checkout_uncertain'; operationId: string; attemptId: string; expectedRevision: number }
@@ -81,8 +92,12 @@ export type OperationsCommand =
   | { command: 'prepare_waiver'; operationId: string; orderId: string; expectedRevision: number; reason: string }
   | { command: 'confirm_waiver'; operationId: string; waiverId: string; expectedRevision: number; confirmed: true }
   | { command: 'report'; date: string }
+  | { command: 'report_period'; date: string; period: ReportPeriod }
 
 export interface OperationsResponses {
+  update_checkout: CheckoutAttempt
+  record_checkout: { order: OperationalOrder; attempt: CheckoutAttempt }
+  record_payment: { order: OperationalOrder; attempt: CheckoutAttempt }
   operations: OperationsSnapshot; activate_operations: { enabled: true }
   shifts: { shifts: CashShift[] }; open_shift: CashShift; cash_movement: CashShift
   begin_shift_close: CashShift; abort_shift_close: CashShift; close_shift: CashShift
@@ -93,6 +108,7 @@ export interface OperationsResponses {
   prepare_checkout: CheckoutAttempt; attempt: CheckoutAttempt; start_checkout: CheckoutAttempt; mark_checkout_uncertain: CheckoutAttempt
   resolve_checkout: CheckoutAttempt; prepare_reversal: CheckoutAttempt
   prepare_waiver: BalanceWaiver; confirm_waiver: BalanceWaiver; report: BusinessDayReport
+  report_period: BusinessPeriodReport
 }
 export type OperationsErrorCode = 'OPERATIONS_DISABLED' | 'LEGACY_CHECKOUT_DISABLED' | 'SHIFT_REQUIRED' | 'SHIFT_CHANGED' | 'SHIFT_NOT_OPEN' | 'SHIFT_ALREADY_OPEN'
   | 'PENDING_COLLECTION' | 'ORDER_CHANGED' | 'ORDER_NOT_FOUND' | 'ORDER_LOCKED' | 'ORDER_HAS_PAYMENTS'

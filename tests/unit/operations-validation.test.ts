@@ -7,6 +7,23 @@ const line={lineId,productId:businessId,quantity:999,unitPriceCents:1001,version
 const order={command:'save_order',operationId,orderId:businessId,expectedRevision:null,name:'  Cuenta   sintética ',tableId:null,items:[line]}
 
 describe('operational HTTP command boundary',()=>{
+ it('requires an exact confirmed one-step payment through both authenticated transports',()=>{
+  const command={command:'record_payment',operationId,orderId:businessId,expectedRevision:1,items:[{lineId,quantity:1}],paymentMethod:'cash',confirmed:true}
+  expect(parseAccountRequest({...access,...command})).toMatchObject(command)
+  expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...command})).toMatchObject(command)
+  for(const patch of [{confirmed:false},{confirmed:undefined},{items:[]},{items:[{lineId,quantity:1},{lineId,quantity:1}]},{paymentMethod:'terminal'},{expectedRevision:null},{extra:true}]) expect(()=>parseAccountRequest({...access,...command,...patch})).toThrow()
+ })
+ it('requires exact reservation updates and a confirmed final payment through both transports',()=>{
+  const update={command:'update_checkout',operationId,attemptId:businessId,expectedRevision:1,items:[{lineId,quantity:1}],paymentMethod:'cash'}
+  const record={command:'record_checkout',operationId,attemptId:businessId,expectedRevision:2,confirmed:true}
+  for(const command of [update,record]) {
+   expect(parseAccountRequest({...access,...command})).toMatchObject(command)
+   expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...command})).toMatchObject(command)
+   for(const patch of [{attemptId:'invalid'},{expectedRevision:0},{extra:true}]) expect(()=>parseAccountRequest({...access,...command,...patch})).toThrow()
+  }
+  for(const patch of [{items:[]},{items:[{lineId,quantity:1.5}]},{items:[{lineId,quantity:1},{lineId,quantity:1}]},{paymentMethod:'terminal'}]) expect(()=>parseAccountRequest({...access,...update,...patch})).toThrow()
+  for(const confirmed of [false,undefined,'true']) expect(()=>parseAccountRequest({...access,...record,confirmed})).toThrow()
+ })
  it('parses the same typed commands through signed personal and restricted device transports',()=>{
   expect(parseAccountRequest({...access,...order})).toMatchObject({name:'Cuenta sintética',items:[line]})
   const prepare={command:'prepare_checkout',operationId,orderId:businessId,expectedRevision:1,items:[{lineId,quantity:999}],paymentMethod:'card_external'}
@@ -27,9 +44,22 @@ describe('operational HTTP command boundary',()=>{
   expect(parseAccountRequest({...access,...discount})).toMatchObject(discount)
   for(const patch of [{value:10001},{value:1.5},{kind:'owner'},{reason:''},{extra:1}]) expect(()=>parseAccountRequest({...access,...discount,discount:{...discount.discount,...patch}})).toThrow()
  })
+ it('allows empty edits of existing accounts but rejects empty creation and collection',()=>{
+  const empty={...order,expectedRevision:1,name:'Cuenta sintética',items:[]}
+  expect(parseAccountRequest({...access,...empty})).toMatchObject(empty)
+  expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...empty})).toMatchObject(empty)
+  for(const expectedRevision of [null,0,undefined,'1']) expect(()=>parseAccountRequest({...access,...empty,expectedRevision})).toThrow()
+  expect(()=>parseAccountRequest({...access,command:'prepare_checkout',operationId,orderId:businessId,expectedRevision:1,items:[],paymentMethod:'cash'})).toThrow()
+ })
  it('accepts actual calendar dates and exact read-only command keys',()=>{
   expect(parseAccountRequest({...access,command:'report',date:'2028-02-29'})).toHaveProperty('date','2028-02-29')
   for(const date of ['2026-02-29','2026-02-31','2026-13-01','2026-01-00','2026-2-01','2026-10-02T00:00:00Z']) expect(()=>parseAccountRequest({...access,command:'report',date})).toThrow()
   expect(()=>parseAccountRequest({...access,command:'operations',operationId})).toThrow()
+ })
+ it('bounds period reports and accepts them through personal and shared register transports',()=>{
+  const report={command:'report_period',date:'2028-02-29',period:'month'}
+  expect(parseAccountRequest({...access,...report})).toMatchObject(report)
+  expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...report})).toMatchObject(report)
+  for(const patch of [{period:'year'},{period:null},{date:'1999-12-31'},{date:'2101-01-01'},{date:'2026-02-29'},{timezone:'UTC'},{operationId}]) expect(()=>parseAccountRequest({...access,...report,...patch})).toThrow()
  })
 })

@@ -172,7 +172,7 @@ export default function BusinessSettings({
         onClick={onBack}
       >
         <ArrowLeft size={18} aria-hidden="true" />
-        Volver a Más
+        Volver
       </button>
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1>Datos del negocio</h1>

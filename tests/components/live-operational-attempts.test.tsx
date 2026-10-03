@@ -55,8 +55,11 @@ test('another resolver completing an open bill refreshes the attempt and release
   await act(async () => lookup.resolve({ ...payment, status: 'completed', revision: 3, resolverName: 'Otra persona sintética', saleId: sale.id, resolvedAt: business.createdAt }))
   expect(await screen.findByText(/Pago registrado\./)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Confirmar pago recibido' })).toBeNull()
+  const quote = {...payment,id:'next-payment',status:'prepared' as const,revision:1,totalCents:1001,items:[{...payment.items[0],lineId:order.items[0].lineId,quantity:1}]}
+  vi.mocked(request.execute).mockResolvedValue(quote)
+  vi.mocked(posRequest).mockResolvedValue(quote)
   fireEvent.click(screen.getByRole('button', { name: 'Continuar con la cuenta' }))
-  await waitFor(() => expect((screen.getByRole('button', { name: 'Preparar cobro completo' }) as HTMLButtonElement).disabled).toBe(false))
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Registrar pago' }) as HTMLButtonElement).disabled).toBe(false))
   expect(posRequest).toHaveBeenCalledWith(access, { command: 'attempt', attemptId: payment.id })
 })
 

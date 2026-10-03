@@ -14,7 +14,7 @@ function Permissions({disabled=false}:{disabled?:boolean}) {
 test('offers grouped action checkboxes and keeps required reading permissions in sync', () => {
   render(<Permissions />)
   expect(screen.queryAllByRole('radio')).toHaveLength(0)
-  expect(screen.getAllByRole('checkbox')).toHaveLength(19)
+  expect(screen.getAllByRole('checkbox')).toHaveLength(18)
   const manage = screen.getByRole('checkbox',{name:'Crear y editar productos'}) as HTMLInputElement
   const read = screen.getByRole('checkbox',{name:'Consultar productos'}) as HTMLInputElement
   fireEvent.click(manage)
