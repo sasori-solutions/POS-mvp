@@ -1,3 +1,23 @@
+## Lean POS MVP — current candidate, 2 October 2026
+
+Codex for the current human implementation request. The complete candidate through migration 0023 passed **44/44 unit**, **53/53 PostgreSQL migration/transaction**, **24/24 component** and **23/23 Deno** cases, lint, the production build and both Edge source/standalone typechecks. These totals belong to this source candidate, not the older dated releases below.
+
+Real loopback verification passed **14/14 operational integration** cases through 0023 with no skips; **13/13 product/sale integration** cases passed on the preceding 0022 candidate. Separate PostgreSQL connections observed waiting collection/count/movement/refund transactions and both cancellation/preparation commit orders, accepted UUID replay/conflict, current personal/register grants, exact discount/IVA splits, waivers/cancellations and tenant cleanup. Cancellation first blocks preparation; preparation first requires an owner waiver. Partial kitchen quantities remain exact after notice acknowledgment and preparation advancement. Synthetic Auth users/businesses, orphan overlays and attempts were absent after cleanup. All 12 applied 0023 statement bodies match staged/source SQL; no database reset or hosted mutation was used.
+
+The real browser smoke (`lean-operations-browser.mjs`) exercises local Auth, signed Edge requests and PostgreSQL. It verifies editable table accounts, kitchen progress, whole-order discounts, cash/card item bills, cash change, lost committed responses followed by reload/PIN/exact retry, explicit table release, blind cash closing and a refund in the next shift. Through 0023, **22 phase/viewport checks** at 390 px and 1024 px passed with no horizontal overflow, undersized visible actions or runtime errors. Queued quantity three with one paid and two canceled shows exactly one to prepare; fully canceled work appears only in history without preparation actions, and notice acknowledgments preserve those quantities. The first extended run stopped at a test fixture command typo before these added checks; its fixture was cleaned and the corrected complete run passed. OAuth is bypassed only by the existing loopback development entry; actual hosted Google, physical devices, PWA installation and payment hardware remain unverified.
+
+The updated standard development-login smoke passed twice consecutively against actual local Auth/Edge/PostgreSQL. An intermediate run returned to PIN after invitation acceptance without a captured account rejection; its cause was not established. The final two runs preserved the seeded café and removed their synthetic businesses. The separate employee-device smoke's checkbox selectors were adapted and linted, but that full smoke was not rerun for this candidate.
+
+Focused commands:
+
+```sh
+npm run test:smoke
+npx vitest run tests/sql tests/components
+deno test supabase/functions/account/*.deno.ts
+```
+
+Start this checkout's persistent stack with `npm run dev`. Configure the existing `TEST_SUPABASE_*` variables and `TEST_LOCAL_DB_CONTAINER` from that stack for real integration; never use hosted credentials. `lean-operations-browser.mjs` reads `.local-dev` and accepts `TEST_APP_ORIGIN`, `TEST_SUPABASE_WORKDIR` and `TEST_SCREENSHOT_DIRECTORY`. The standard development smoke uses `DEV_SMOKE_ORIGIN`. See [MVP delivery](../docs/lean-pos-mvp.md) and [operational contracts](../docs/lean-operations-backend.md). Review and backend-first publication follow DEPLOYMENT.md; these results do not establish a production release.
+
 ## Routine CI — small automatic gate
 
 Larios requested fewer simple tests and automatic Cloudflare deployment in session `20261002-larios-ci-simple-auto-deploy`. PRs and `main` run `npm run test:smoke` (unit tests in `tests/unit`) and `npm run build` (including TypeScript and the emitted-production-artifact guard). These checks cover money/cart invariants, request payload validation, pending-sale retry storage and isolation of development authentication; they require no browser download, Docker or Supabase service. A successful `main` run deploys its own build without repeating these checks.

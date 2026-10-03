@@ -2,14 +2,33 @@ import { signEmployeeDeviceRequest } from './employee-device'
 import type { AccountEnvelope, AccountErrorCode, AccountRequest, AccountResponses } from './contracts'
 import { supabase, supabasePublishableKey, supabaseUrl } from './supabase'
 
-const messages: Record<AccountErrorCode, string> = {
+export const accountErrorMessages: Record<AccountErrorCode, string> = {
   PRODUCT_CHANGED: 'El producto cambió. Revisa la cuenta antes de cobrar.',
   PRODUCT_UNAVAILABLE: 'Un producto ya no está disponible. Revisa los productos de la cuenta.',
   SALE_NOT_FOUND: 'No encontramos esta venta.',
   PAYMENT_METHOD_DISABLED: 'Este método de pago está desactivado. Elige otro método disponible.',
   AUTH_REQUIRED: 'Tu sesión venció. Vuelve a entrar con Google.', GOOGLE_REQUIRED: 'Entra con Google para continuar.',
   VALIDATION_ERROR: 'Revisa los datos e intenta de nuevo.', BUSINESS_ACCESS_DENIED: 'No tienes acceso a este negocio.',
-  PERMISSION_DENIED: 'Tu rol no permite esta acción. Solicita ayuda al dueño.',
+  PERMISSION_DENIED: 'No tienes permiso para esta acción. Solicita ayuda al dueño.',
+  OPERATIONS_DISABLED: 'El dueño debe activar la operación con turnos desde Caja.',
+  LEGACY_CHECKOUT_DISABLED: 'Esta caja usa el nuevo cobro con turnos. Actualiza la app y revisa los registros pendientes.',
+  SHIFT_REQUIRED: 'Abre un turno en Caja antes de cobrar.',
+  SHIFT_CHANGED: 'El turno cambió. Revisa la información actual.',
+  SHIFT_NOT_OPEN: 'La caja está en cierre. Reanuda el turno antes de mover dinero.',
+  SHIFT_ALREADY_OPEN: 'Ya hay un turno abierto en este negocio.',
+  PENDING_COLLECTION: 'Resuelve los cobros o devoluciones pendientes antes de cerrar.',
+  ORDER_CHANGED: 'La cuenta cambió en otro dispositivo. Revisa la versión actual.',
+  ORDER_NOT_FOUND: 'No encontramos esta cuenta.',
+  ORDER_LOCKED: 'La cuenta tiene un cobro pendiente o pagado. Revisa sus saldos.',
+  ORDER_HAS_PAYMENTS: 'Esta cuenta tiene pagos. Conserva las ventas y resuelve el saldo restante.',
+  ATTEMPT_NOT_FOUND: 'No encontramos este cobro o devolución.',
+  ATTEMPT_CHANGED: 'Este cobro cambió. Revisa el estado actual.',
+  ATTEMPT_STATE_INVALID: 'Revisa el estado del cobro antes de continuar.',
+  TABLE_CHANGED: 'La mesa cambió. Revisa la lista actual.',
+  TABLE_OCCUPIED: 'Esta mesa ya tiene una cuenta abierta.',
+  BATCH_CHANGED: 'La comanda cambió en otro dispositivo. Revisa la cola actual.',
+  WAIVER_CHANGED: 'La condonación cambió. Revisa el saldo actual.',
+  SALE_ALREADY_REVERSED: 'Esta venta ya tiene una devolución registrada.',
   INVITATION_INVALID: 'La invitación venció, fue revocada o ya no es válida. Pide una nueva al dueño.',
   PAIRING_INVALID: 'El código de conexión venció o ya no es válido. Pide uno nuevo al dueño.',
   DEVICE_LINK_REQUIRED: 'Usa tu acceso personal con Google desde Entrar como empleado. Permite el almacenamiento del navegador para vincularlo.',
@@ -113,7 +132,7 @@ async function sendRequest<A extends AccountRequest['action']>(
   }
   const envelope = body as AccountEnvelope<AccountResponses[A]>
   if ('error' in envelope) {
-    throw new AccountClientError(envelope.error.code, messages[envelope.error.code] ?? envelope.error.message, envelope.error.retryAfterSeconds)
+    throw new AccountClientError(envelope.error.code, accountErrorMessages[envelope.error.code] ?? envelope.error.message, envelope.error.retryAfterSeconds)
   }
   if (!response.ok || !('data' in envelope)) {
     throw new AccountClientError('SERVER_ERROR', 'No pudimos completar la solicitud. Intenta de nuevo.')

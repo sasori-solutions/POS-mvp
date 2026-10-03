@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { businessPermissions } from '../../src/lib/contracts';
 
 export const fixtureBusiness = {
   id: '8be7bbee-3947-478c-a2d2-02a6ee44432b',
@@ -9,6 +10,7 @@ export const fixtureBusiness = {
   timezone: 'America/Mexico_City',
   currency: 'MXN',
   role: 'owner',
+  permissions: [...businessPermissions],
   createdAt: '2026-10-01T12:00:00.000Z',
   profile: {
     branchName: 'Sucursal principal',
@@ -149,6 +151,8 @@ export async function mockAccount(page: Page, options: {
     };
     switch (body.action) {
     case 'pos':
+        // Isolated account UI mock only; real operations are exercised against local PostgreSQL.
+        if (body.command === 'operations') return reply({ enabled: false, shift: null, orders: [], attempts: [], tables: [] });
         if (body.command === 'catalog') return reply({ products: [], paymentMethods: ['cash', 'card_external', 'transfer'] });
         if (body.command === 'sales') return reply({ sales: [], nextCursor: null });
         return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');

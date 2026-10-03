@@ -6,6 +6,14 @@ Tailwind CSS 4 organiza tokens, estilos base y patrones compartidos en `src/styl
 
 Las notas que siguen conservan el contexto de las fases anteriores; esta corrección humana gobierna la presentación vigente.
 
+Iteración humana del 2 de octubre: Venta se dedica a tomar la orden actual; las cuentas abiertas se consultan en Comandas. En teléfono, “Ver cuenta” desliza la venta actual desde abajo, con parte del catálogo visible y sin oscurecerlo. Se oculta al tocar fuera o arrastrar el encabezado hacia abajo; no tiene botón de flecha para cerrar. El panel usa menos altura y ocupa menos espacio por producto. La cuenta lateral de tablet se conserva. GSAP es la biblioteca para las animaciones de interfaz; usa limpieza en React y omite el movimiento con `prefers-reduced-motion`.
+
+Iteración humana posterior del 2 de octubre: compactar las filas de la orden y agrupar importes de IVA por tasa, en línea con la cuenta de Square. Conservar controles táctiles grandes y quitar separadores entre artículos.
+
+El cobro abre una pantalla completa independiente con fondo negro, saldo destacado, resumen compacto y métodos de pago visuales. En tablet distribuye resumen y controles en dos columnas; en teléfono los apila. GSAP anima entrada y salida, respeta reduced motion y mantiene la cuenta montada para volver a editar. Los métodos de pago aparecen desde la entrada; no se muestran acciones de editar, enviar a cocina ni finalizar cuenta en esta pantalla. La flecha vuelve a editar y libera preparaciones sin cobro iniciado. El pago registrado envía automáticamente sus artículos a cocina.
+
+El desbloqueo por PIN ocupa toda la pantalla blanca, con nombre del negocio, seis puntos y teclado numérico integrado. Sin tarjeta, candado ni botón Entrar: completar seis dígitos inicia una sola validación con el servidor. Los controles se bloquean durante la solicitud y el cooldown; un intento fallido limpia el PIN sin reintentarlo automáticamente. Recuperación, cambio de negocio cuando corresponda y cierre de sesión son acciones discretas. GSAP realiza una entrada breve, con reduced motion y limpieza al salir. Crear un PIN conserva su confirmación explícita.
+
 ---
 
 # Alpha account and home implementation
@@ -32,3 +40,8 @@ Employee device access: the public employee entry accepts complete invitation li
 Products/sales request (1 October 2026): operational `products-sales.css` uses ivory #FAF8F2, evergreen #173B30, muted orange warnings, 14px corners and 48px touch controls. Phone separates catalog/account; tablet/desktop show them side by side. Products/sales use persisted data, while Comandas remains a later module. Cashiers can consult only their own sales. Existing access, Más, device and notification flows retain their current behavior. This extension is not a deployed release.
 
 Products/sales correction (2 October 2026): the current human request replaces the operational palette with the established ink #111111, white #FFFFFF, surface #F6F6F6, border #E4E4E4 and secondary #626262. Inherit these tokens rather than overriding the home shell. Keep 8px control corners, 48–52px touch targets, 16px body/price, 14px help, 24px headings and 8/16/24px spacing. Products are a compact, divided library with one primary Add action and row editing; availability remains explicit. Sale uses neutral outlined tiles and a bounded, independently scrollable account on tablet, with the total/action anchored below its lines. Phone retains a full account view and a fixed account button above navigation. Refresh updates data silently after initial load; errors remain visible until successful recovery. No new dependencies or passive animation.
+
+
+## Gestión y operación · decisión humana del 3 de octubre de 2026
+
+La imagen aportada por Larios y el plan aprobado en `docs/owner-employee-experience-plan.md` guían el diseño actual. Dueño: sidebar carbón, tarjetas blancas y cifras principales; empleado: navegación blanca, catálogo fotográfico, cuenta compacta y acciones negras. Inicio y Reportes comparten filtros Día/Semana/Mes y datos del servidor. Comandas usa Pendientes/Completadas. Teléfono usa navegación inferior según los destinos permitidos; desde 1024px aparece sidebar. Se conservan IBM Plex Sans, Lucide, objetivos táctiles de 48px y reduced motion. GSAP anima encabezados y los paneles existentes, sin retrasar el cobro. Las funciones de Clientes/CRM, impresión y envío de tickets de la imagen no forman parte de esta entrega.

@@ -6,6 +6,7 @@ import { accountRequest, AccountClientError } from "../lib/account";
 import type {
   BusinessContext,
   BusinessRole,
+  BusinessPermission,
   EmployeeSummary,
   EmployeeCreation,
   InvitationSummary,
@@ -21,12 +22,6 @@ interface TeamPanelProps {
 }
 
 type EmployeeRole = Exclude<BusinessRole, "owner">;
-const roles: Record<BusinessRole, string> = {
-  owner: "Dueño",
-  manager: "Encargado",
-  cashier: "Cajero",
-  kitchen: "Cocina",
-};
 const sessionErrors = [
   "AUTH_REQUIRED",
   "GOOGLE_REQUIRED",
@@ -71,6 +66,7 @@ export default function TeamPanel({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState("");
   const [role, setRole] = useState<EmployeeRole>("cashier");
+  const [permissions, setPermissions] = useState<BusinessPermission[]>([]);
   const [code, setCode] = useState<Code | null>(null);
   const [now, setNow] = useState(Date.now);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -106,9 +102,16 @@ export default function TeamPanel({
       caught instanceof AccountClientError &&
       sessionErrors.includes(caught.code)
     ) {
+      generation.current += 1;
+      requestSequence.current += 1;
+      mutationBusy.current = false;
+      setBusy(false);
+      setLoading(false);
       setDenied(true);
       setTeam(null);
       setEditing(null);
+      setForm(false);
+      setPermissions([]);
       selectedEmployee.current = null;
       setCode(null);
       operation.current = null;
@@ -249,6 +252,7 @@ export default function TeamPanel({
                 employeeId: employee.id,
                 name: employee.name,
                 role: employee.role as EmployeeRole,
+                permissions: employee.permissions ?? [],
                 active: true,
                 status: "pending",
                 expiresAt: invitation.expiresAt,
@@ -273,6 +277,7 @@ export default function TeamPanel({
     setConfirmDelete(false);
     setName(employee?.name ?? "");
     setRole(employee && employee.role !== "owner" ? employee.role : "cashier");
+    setPermissions(employee?.permissions ?? []);
     setError("");
     setNotice("");
     setCode(null);
@@ -321,6 +326,7 @@ export default function TeamPanel({
             employeeId: editing.id,
             name: employeeName,
             role,
+            permissions,
             active: editing.active,
             pin: null,
           })
@@ -330,12 +336,14 @@ export default function TeamPanel({
             operatorToken,
             name: employeeName,
             role,
+            permissions,
             pin: null,
             inviteWithGoogle: true,
             operationId: operationId({
               action: "create_employee",
               name: employeeName,
               role,
+              permissions,
               pin: null,
               inviteWithGoogle: true,
             }),
@@ -344,6 +352,7 @@ export default function TeamPanel({
       setEditing(employee);
       selectedEmployee.current = employee.id;
       setName(employee.name);
+      setPermissions(employee.permissions ?? []);
       if (employee.pinSetup)
         setCode({
           value: employee.pinSetup.setupCode,
@@ -516,6 +525,7 @@ export default function TeamPanel({
         employeeId: employee.id,
         name: employee.name,
         role: employee.role,
+        permissions: employee.permissions ?? [],
         active: true,
         pin: null,
       });
@@ -745,7 +755,7 @@ export default function TeamPanel({
   const employeeDirty = Boolean(
     editing &&
     (name.trim().replace(/\s+/g, " ") !== editing.name ||
-      role !== editing.role),
+      permissions.slice().sort().join(",") !== (editing.permissions ?? []).slice().sort().join(",")),
   );
 
   function codeCard() {
@@ -861,7 +871,7 @@ export default function TeamPanel({
         onClick={form ? closeForm : onBack}
       >
         <ArrowLeft size={18} aria-hidden="true" />
-        {form ? "Volver a empleados" : "Volver a Más"}
+        {form ? "Volver a empleados" : "Volver"}
       </button>
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1 ref={heading} tabIndex={-1}>
@@ -969,7 +979,7 @@ export default function TeamPanel({
                   <UserRound size={24} aria-hidden="true" />
                   <div>
                     <strong>{editing.name}</strong>
-                    <span>{roles[editing.role]}</span>
+                    <span>{(editing.permissions ?? []).length} permisos</span>
                   </div>
                 </div>
                 {currentCode ? (
@@ -1059,8 +1069,8 @@ export default function TeamPanel({
                     />
                   </div>
                   <EmployeeRoleFields
-                    role={role}
-                    onChange={setRole}
+                    permissions={permissions}
+                    onChange={setPermissions}
                     disabled={busy}
                   />
                   {!editing && (
@@ -1263,7 +1273,7 @@ export default function TeamPanel({
                         <div>
                           <strong>{employee.name}</strong>
                           <p>
-                            {roles[employee.role]}. {accessLabel(employee)}
+                            {(employee.permissions ?? []).length} permisos. {accessLabel(employee)}
                           </p>
                         </div>
                         <button

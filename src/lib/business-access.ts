@@ -1,8 +1,13 @@
-import type { BusinessRole, BusinessSummary } from './contracts'
+import { businessPermissions, type BusinessContext, type BusinessPermission, type BusinessRole, type BusinessSummary } from './contracts'
 
 export const employeeEntryKey = 'pos-mexico-employee-entry'
 export const roleLabels: Record<BusinessRole, string> = {
-  owner: 'Dueño', manager: 'Encargado', cashier: 'Cajero', kitchen: 'Cocina',
+  owner: 'Dueño', manager: 'Empleado', cashier: 'Empleado', kitchen: 'Empleado',
+}
+
+/** Legacy staff roles describe identities; they never substitute for live grants. */
+export function hasPermission(business: Pick<BusinessContext, 'role' | 'permissions'>, permission: BusinessPermission) {
+  return businessPermissions.includes(permission) && (business.role === 'owner' || business.permissions?.includes(permission) === true)
 }
 
 // A remembered ID selects a PIN screen only after live membership validation.

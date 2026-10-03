@@ -25,7 +25,9 @@
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@gsap/react": "^2.1.2",
     "@supabase/supabase-js": "^2.117.2",
+    "gsap": "^3.15.0",
     "jsqr": "^1.4.0",
     "lucide-react": "^1.49.0",
     "qrcode.react": "^4.2.0",

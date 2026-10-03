@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { businessPermissions } from '../../src/lib/contracts';
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture';
 import { fixtureCashier, fixtureCashierPin, fixtureDeviceToken, fixtureInvitation, fixtureKitchen, fixturePairingCode, mockOnboarding } from './onboarding-fixture';
 
@@ -90,7 +91,7 @@ test('invalid branch, payment methods and phone stay on business details before 
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).toBeVisible();
 });
 
-test('joining retries invalid invitations and applies the invited role without self selection', async ({ page }) => {
+test('joining retries invalid invitations and applies assigned permissions without self selection', async ({ page }) => {
   const { calls } = await mockOnboarding(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Unirme a un negocio', exact: true }).click();
@@ -120,6 +121,7 @@ test('joining retries invalid invitations and applies the invited role without s
   expect(accept[0]).toMatchObject({ invitationCode: fixtureInvitation, pin: fixturePin });
   expect(accept[0]).not.toHaveProperty('name');
   expect(accept[0]).not.toHaveProperty('role');
+  expect(accept[0]).not.toHaveProperty('permissions');
   await page.reload();
   await unlockOwner(page, fixturePin, 'Comandas');
   await assertNoOperatorSecrets(page);
@@ -178,13 +180,13 @@ test('a cashier cannot open business settings or employee administration', async
 
 
 
-test('a context role change removes the previously active money destination', async ({ page }) => {
-  const fixture = await mockOnboarding(page, { existingBusiness: true });
+test('a refreshed employee context removes the previously active money destination', async ({ page }) => {
+  const fixture = await mockOnboarding(page, { existingBusiness: true, role: 'cashier' });
   await page.goto('/');
   await unlockOwner(page);
   await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Ventas', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ventas', exact: true })).toBeVisible();
-  fixture.setRole('kitchen');
+  fixture.setEmployee(fixtureKitchen.id);
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   await expect(page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible();
@@ -443,10 +445,11 @@ test('employee creation has one invitation method and keeps PIN entry with the e
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
-  await expect(page.getByRole('checkbox')).toHaveCount(0);
+  const permissions = page.getByRole('group', { name: 'Permisos', exact: true });
+  await expect(permissions.getByRole('checkbox')).toHaveCount(businessPermissions.length);
+  await expect(permissions.locator('input:checked')).toHaveCount(0);
   await expect(page.getByRole('combobox')).toHaveCount(0);
-  await expect(page.getByRole('radio')).toHaveCount(3);
-  await expect(page.getByRole('radio', { name: 'Cajero', exact: true })).toBeChecked();
+  await expect(page.getByRole('radio')).toHaveCount(0);
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
   await expect(page.getByText('Recibirás un enlace y un QR para compartir. El empleado entrará con Google, creará su PIN y vinculará su dispositivo.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).toHaveCount(1);
@@ -460,7 +463,8 @@ test('Google employee creation saves one pending person without requesting their
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cocina invitada');
-  await page.getByRole('radio', { name: 'Cocina', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
+  await expect(page.getByRole('checkbox', { name: 'Consultar cocina', exact: true })).toBeChecked();
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
@@ -468,7 +472,7 @@ test('Google employee creation saves one pending person without requesting their
   await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('list', { name: 'Empleados' })).not.toBeVisible();
   expect(calls.filter((call) => call.action === 'create_employee')).toHaveLength(1);
-  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Cocina invitada', role: 'kitchen', pin: null, inviteWithGoogle: true });
+  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Cocina invitada', role: 'cashier', permissions: ['kitchen.read', 'kitchen.operate'], pin: null, inviteWithGoogle: true });
   expect(calls.filter((call) => call.action === 'create_invitation')).toHaveLength(0);
   await capture(page, testInfo.project.name, 'unified-google-employee');
   await assertNoOperatorSecrets(page);
@@ -524,12 +528,13 @@ test('a lost Google employee response retries the same atomic creation without a
   expect(attempts).toHaveLength(2);
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
   expect(attempts.every((call) => call.pin === null && call.inviteWithGoogle === true)).toBe(true);
+  expect(attempts.every((call) => JSON.stringify(call.permissions) === '[]')).toBe(true);
   expect(calls.filter((call) => call.action === 'create_invitation')).toHaveLength(0);
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Administrar Empleado con reintento', exact: true })).toHaveCount(1);
 });
 
-test('all role choices keep the same invitation method and employee-owned PIN', async ({ page }, testInfo) => {
+test('permission choices keep the same invitation method and employee-owned PIN', async ({ page }, testInfo) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
@@ -537,18 +542,21 @@ test('all role choices keep the same invitation method and employee-owned PIN', 
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado sin PIN oculto');
-  await page.getByRole('radio', { name: 'Cocina', exact: true }).check();
-  await page.getByRole('radio', { name: 'Encargado', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Crear y editar productos', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Consultar cocina', exact: true }).uncheck();
+  await expect(page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true })).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Consultar productos', exact: true })).toBeChecked();
   await capture(page, testInfo.project.name, 'unified-google-form');
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
   await expect(page.getByLabel('Confirmar PIN del empleado', { exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
-  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ pin: null, inviteWithGoogle: true });
+  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ permissions: ['catalog.read', 'catalog.manage'], pin: null, inviteWithGoogle: true });
   await assertNoOperatorSecrets(page);
 });
 
-test('the owner creates employee access and invitations with assigned roles', async ({ page }, testInfo) => {
+test('the owner creates employee access and invitations with explicit permissions', async ({ page }, testInfo) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
@@ -559,7 +567,8 @@ test('the owner creates employee access and invitations with assigned roles', as
   await capture(page, testInfo.project.name, 'team-management');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cajera');
-  await page.getByRole('radio', { name: 'Cajero', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Cobrar ventas', exact: true }).check();
+  await expect(page.getByRole('checkbox', { name: 'Consultar productos', exact: true })).toBeChecked();
   await expect(page.getByRole('radio', { name: /dueño/i })).toHaveCount(0);
   await page.getByLabel('Nombre del empleado', { exact: true }).fill(' ');
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
@@ -570,23 +579,23 @@ test('the owner creates employee access and invitations with assigned roles', as
   await page.getByRole('button', { name: 'Administrar empleado', exact: true }).click();
   await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveValue('Nueva cajera');
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cajera actualizada');
-  await page.getByRole('radio', { name: 'Encargado', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Crear y editar productos', exact: true }).check();
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Administrar Cajera actualizada', exact: true })).toBeVisible();
-  await expect(page.getByText('Encargado. Invitación pendiente', { exact: true })).toBeVisible();
+  await expect(page.getByText('3 permisos. Invitación pendiente', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cocina');
-  await page.getByRole('radio', { name: 'Cocina', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   await page.getByRole('button', { name: 'Administrar empleado', exact: true }).click();
   await page.getByRole('button', { name: 'Cancelar invitación', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Cancelar invitación', exact: true })).not.toBeVisible();
   await expect(page.getByText('Invitación cancelada', { exact: true })).toBeVisible();
-  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Nueva cajera', role: 'cashier', pin: null });
-  expect(calls.find((call) => call.action === 'update_employee')).toMatchObject({ name: 'Cajera actualizada', role: 'manager', active: true, pin: null });
-  expect(calls.filter((call) => call.action === 'create_employee')[1]).toMatchObject({ name: 'Nueva cocina', role: 'kitchen', pin: null, inviteWithGoogle: true });
+  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Nueva cajera', role: 'cashier', permissions: ['catalog.read', 'sales.create'], pin: null });
+  expect(calls.find((call) => call.action === 'update_employee')).toMatchObject({ name: 'Cajera actualizada', role: 'cashier', permissions: ['catalog.read', 'catalog.manage', 'sales.create'], active: true, pin: null });
+  expect(calls.filter((call) => call.action === 'create_employee')[1]).toMatchObject({ name: 'Nueva cocina', role: 'cashier', permissions: ['kitchen.read', 'kitchen.operate'], pin: null, inviteWithGoogle: true });
   expect(calls.filter((call) => call.action === 'create_invitation')).toHaveLength(0);
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await page.getByRole('button', { name: 'Volver a Más', exact: true }).click();
