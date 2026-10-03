@@ -34,23 +34,38 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/*', (route) => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort())
 })
 
-test('role choices show included and restricted sections and work by keyboard', async ({ page }, info) => {
+test('grouped permissions start empty and work by keyboard with prerequisites', async ({ page }, info) => {
   await mockOnboarding(page, { existingBusiness: true })
   if (info.project.name === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
   await openCreation(page)
-  const included = page.getByRole('region', { name: 'Puede abrir', exact: true })
-  const restricted = page.getByRole('region', { name: 'Sin acceso', exact: true })
-  await expect(included.getByRole('listitem')).toHaveText(['Venta', 'Comandas', 'Ventas', 'Productos'])
-  await expect(restricted.getByRole('listitem')).toHaveText(['Datos del negocio', 'Empleados y dispositivos'])
-  await page.getByRole('radio', { name: 'Cajero', exact: true }).focus()
-  await page.keyboard.press('ArrowRight')
-  await expect(page.getByRole('radio', { name: 'Cocina', exact: true })).toBeChecked()
-  await expect(included.getByRole('listitem')).toHaveText(['Comandas'])
-  await page.keyboard.press('ArrowRight')
-  await expect(page.getByRole('radio', { name: 'Encargado', exact: true })).toBeChecked()
-  await expect(included.getByRole('listitem')).toHaveText(['Venta', 'Comandas', 'Ventas', 'Productos'])
-  await expect(restricted.getByRole('listitem')).toHaveText(['Datos del negocio', 'Empleados y dispositivos'])
-  await page.getByRole('radio', { name: 'Cajero', exact: true }).check()
+  const permissions = page.getByRole('group', { name: 'Permisos', exact: true })
+  await expect(permissions.getByRole('checkbox')).toHaveCount(19)
+  await expect(permissions.getByRole('checkbox', { checked: true })).toHaveCount(0)
+  await expect(page.getByRole('radio')).toHaveCount(0)
+  for (const name of ['Catálogo', 'Ventas', 'Comandas y mesas', 'Cocina', 'Caja', 'Reportes']) {
+    await expect(permissions.getByRole('group', { name, exact: true })).toBeVisible()
+  }
+  await expect(permissions.getByText('Administrar empleados y el negocio corresponde al dueño.', { exact: false })).toBeVisible()
+  const catalogRead = permissions.getByRole('checkbox', { name: 'Consultar productos', exact: true })
+  const catalogManage = permissions.getByRole('checkbox', { name: 'Crear y editar productos', exact: true })
+  const collectSales = permissions.getByRole('checkbox', { name: 'Cobrar ventas', exact: true })
+  await collectSales.focus()
+  await page.keyboard.press('Space')
+  await expect(collectSales).toBeChecked()
+  await expect(catalogRead).toBeChecked()
+  await catalogRead.focus()
+  await page.keyboard.press('Space')
+  await expect(catalogRead).not.toBeChecked()
+  await expect(collectSales).not.toBeChecked()
+  await page.keyboard.press('Tab')
+  await expect(catalogManage).toBeFocused()
+  await page.keyboard.press('Space')
+  await expect(catalogManage).toBeChecked()
+  await expect(catalogRead).toBeChecked()
+  await permissions.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).focus()
+  await page.keyboard.press('Space')
+  await expect(permissions.getByRole('checkbox', { name: 'Consultar cocina', exact: true })).toBeChecked()
+  await expect(permissions.getByRole('checkbox', { checked: true })).toHaveCount(4)
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Ana de prueba')
   await page.screenshot({ path: `/tmp/pos-employee-${info.project.name}-form.png`, fullPage: true })
   for (const y of [0, 350, 700]) {
@@ -60,7 +75,7 @@ test('role choices show included and restricted sections and work by keyboard', 
   if (info.project.name === 'mobile') {
     await page.setViewportSize({ width: 320, height: 640 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    for (const label of await page.locator('.employee-role-choices label').all()) {
+    for (const label of await page.locator('.employee-permission-fields label').all()) {
       expect((await label.boundingBox())!.height).toBeGreaterThanOrEqual(48)
     }
   }
@@ -71,6 +86,7 @@ test('creation leads to sharing one invitation and copy failure leaves a selecta
   await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('Clipboard denied')) } }))
   await openCreation(page)
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Ana de prueba')
+  await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check()
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Invitación lista', exact: true })).toBeFocused()
   await expect(page.getByLabel('Nombre del empleado', { exact: true })).toHaveCount(0)
@@ -82,7 +98,7 @@ test('creation leads to sharing one invitation and copy failure leaves a selecta
   await page.getByLabel('Enlace de invitación').focus()
   expect(await page.getByLabel('Enlace de invitación').evaluate((input: HTMLInputElement) => input.selectionEnd! - input.selectionStart!)).toBeGreaterThan(64)
   expect(calls.filter((call) => call.action === 'create_employee')).toHaveLength(1)
-  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Ana de prueba', role: 'cashier', inviteWithGoogle: true, pin: null })
+  expect(calls.find((call) => call.action === 'create_employee')).toMatchObject({ name: 'Ana de prueba', role: 'cashier', permissions: ['kitchen.read', 'kitchen.operate'], inviteWithGoogle: true, pin: null })
   await page.getByRole('button', { name: 'Listo', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toBeFocused()
   await expect(page.getByRole('button', { name: 'Administrar Ana de prueba', exact: true })).toHaveCount(1)

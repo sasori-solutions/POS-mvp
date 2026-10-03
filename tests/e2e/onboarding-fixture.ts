@@ -77,9 +77,11 @@ export async function mockOnboarding(page: Page, options: {
     }
     switch (body.action) {
       case 'pos': case 'device_pos':
-        // Isolated onboarding UI mock only.
+        // Isolated onboarding UI mock only; this does not establish operational backend behavior.
+        if (body.command === 'operations') return reply({ enabled: false, shift: null, orders: [], attempts: [], tables: [] });
         if (body.command === 'catalog') return reply({ products: [], paymentMethods: business.profile.paymentMethods });
         if (body.command === 'sales') return reply({ sales: [], nextCursor: null });
+        if (body.command === 'kitchen') return reply({ batches: [] });
         return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');
       case 'notifications': return reply({ notifications: [], unreadCount: 0 });
       case 'status': return reply({ businesses: hasBusiness ? [summary()] : [] });

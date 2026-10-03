@@ -151,6 +151,8 @@ export async function mockAccount(page: Page, options: {
     };
     switch (body.action) {
     case 'pos':
+        // Isolated account UI mock only; real operations are exercised against local PostgreSQL.
+        if (body.command === 'operations') return reply({ enabled: false, shift: null, orders: [], attempts: [], tables: [] });
         if (body.command === 'catalog') return reply({ products: [], paymentMethods: ['cash', 'card_external', 'transfer'] });
         if (body.command === 'sales') return reply({ sales: [], nextCursor: null });
         return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');

@@ -110,10 +110,10 @@ async function deleteThroughApp(page, name, employeeId) {
   await expect(page.getByRole('button', { name: `Administrar ${name}`, exact: true })).toHaveCount(0)
 }
 
-async function invitationFromQr(page, name, role) {
+async function invitationFromQr(page, name, permissionLabels) {
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
   await page.getByLabel('Nombre del empleado', { exact: true }).fill(name)
-  await page.getByRole('radio', { name: role, exact: true }).check()
+  for (const label of permissionLabels) await page.getByRole('checkbox', { name: label, exact: true }).check()
   const response = accountResponse(page, 'create_employee')
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click()
   const person = data(await response)
@@ -162,7 +162,7 @@ try {
   const business = data(await request(ownerBrowser.page, owner.token, { action: 'create_business', name: 'Device browser smoke', businessType: 'cafe', timezone: 'America/Mexico_City', pin: '583927', operationId: randomUUID() }))
   businessIds.push(business.business.id)
   const ownerArgs = { businessId: business.business.id, operatorToken: business.operatorToken }
-  const person = data(await request(ownerBrowser.page, owner.token, { action: 'create_employee', ...ownerArgs, name: 'Empleado browser smoke', role: 'cashier', pin: null, inviteWithGoogle: true, operationId: randomUUID() }))
+  const person = data(await request(ownerBrowser.page, owner.token, { action: 'create_employee', ...ownerArgs, name: 'Empleado browser smoke', role: 'cashier', permissions: ['catalog.read', 'catalog.availability', 'sales.create', 'sales.read_own'], pin: null, inviteWithGoogle: true, operationId: randomUUID() }))
 
   stage = 'browser accepts invitation with its persisted private key'
   const accepted = data(await request(first.page, employee.token, { action: 'accept_invitation', invitationCode: person.invitation.invitationCode, pin: '024680', operationId: randomUUID(), deviceName: 'Navegador inicial' }))
@@ -206,7 +206,8 @@ try {
   await openOwnerTeam(ownerBrowser.page)
   await deleteThroughApp(ownerBrowser.page, 'Empleado browser smoke', person.id)
   assert.equal(sql(`select count(*) from app_private.employees where id=${uuid(person.id)};`), '0')
-  const linkedInvitation = await invitationFromQr(ownerBrowser.page, 'Empleado nuevo', 'Cocina')
+  const linkedInvitation = await invitationFromQr(ownerBrowser.page, 'Empleado nuevo', ['Consultar cocina', 'Actualizar preparación'])
+  assert.deepEqual(linkedInvitation.person.permissions, ['kitchen.operate', 'kitchen.read'])
   assert.notEqual(linkedInvitation.person.id, person.id)
   await second.page.goto(linkedInvitation.link)
   await expect(second.page.getByRole('heading', { name: 'Acepta tu invitación', exact: true })).toBeVisible()
@@ -220,7 +221,7 @@ try {
   await second.page.getByRole('button', { name: 'Unirme', exact: true }).click()
   const fresh = data(await freshAcceptance)
   assert.equal(fresh.business.employee.id, linkedInvitation.person.id)
-  assert.equal(fresh.business.employee.role, 'kitchen')
+  assert.deepEqual(fresh.business.employee.permissions, linkedInvitation.person.permissions)
   await expect(second.page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
   await assertConsumedInvitation(second.page)
   assert.equal(sql(`select count(*) from app_private.employees where business_id=${uuid(business.business.id)} and user_id is not null and role<>'owner';`), '1')
@@ -231,7 +232,8 @@ try {
   await ownerBrowser.page.reload()
   await openOwnerTeam(ownerBrowser.page)
   await deleteThroughApp(ownerBrowser.page, 'Empleado nuevo', linkedInvitation.person.id)
-  const movedInvitation = await invitationFromQr(ownerBrowser.page, 'Empleado en otro equipo', 'Cocina')
+  const movedInvitation = await invitationFromQr(ownerBrowser.page, 'Empleado en otro equipo', ['Consultar cocina', 'Actualizar preparación'])
+  assert.deepEqual(movedInvitation.person.permissions, ['kitchen.operate', 'kitchen.read'])
   const third = await pageWithDevice()
   await third.page.setViewportSize({ width: 390, height: 844 })
   await third.page.goto(movedInvitation.link)
@@ -245,6 +247,7 @@ try {
   await third.page.getByRole('button', { name: 'Unirme', exact: true }).click()
   const moved = data(await movedAcceptance)
   assert.equal(moved.business.employee.id, movedInvitation.person.id)
+  assert.deepEqual(moved.business.employee.permissions, movedInvitation.person.permissions)
   assert.notEqual(moved.business.employee.id, linkedInvitation.person.id)
   await expect(third.page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
   await assertConsumedInvitation(third.page)

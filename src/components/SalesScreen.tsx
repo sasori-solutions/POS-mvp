@@ -5,15 +5,30 @@ import type { Sale, SaleCursor, SaleSummary } from "../lib/pos-contracts";
 import { money, posRequest, saleDate, type PosAccess } from "../lib/pos";
 import { paymentLabels, PosDialog, SaleDetail } from "./PosShared";
 import { accessErrorCodes } from "./useCatalog";
+import type { CheckoutAttempt } from "../lib/operations-contracts";
+import type { OperationalMutation } from "../features/operations/useOperations";
+import AttemptPanel from "../features/operations/AttemptPanel";
+import { useCurrentAttempt } from "../features/operations/useCurrentAttempt";
+const noAttempts: CheckoutAttempt[] = [];
 
 export default function SalesScreen({
   access,
   ownOnly,
   onSessionError,
+  canReverse = false,
+  attempts = noAttempts,
+  mutation,
+  onOperationSaved,
+  collectionAllowed = true,
 }: {
   access: PosAccess;
   ownOnly: boolean;
   onSessionError?: (error: AccountClientError) => void;
+  canReverse?: boolean;
+  attempts?: CheckoutAttempt[];
+  mutation?: OperationalMutation;
+  onOperationSaved?: () => Promise<void>;
+  collectionAllowed?: boolean;
 }) {
   const [sales, setSales] = useState<SaleSummary[]>([]);
   const [cursor, setCursor] = useState<SaleCursor | null>(null);
@@ -150,6 +165,11 @@ export default function SalesScreen({
           saleId={selectedId}
           onClose={() => setSelectedId(null)}
           onSessionError={onSessionError}
+          canReverse={canReverse}
+          attempts={attempts}
+          mutation={mutation}
+          onOperationSaved={onOperationSaved}
+          collectionAllowed={collectionAllowed}
         />
       )}
     </div>
@@ -161,16 +181,37 @@ function SaleDetailDialog({
   saleId,
   onClose,
   onSessionError,
+  canReverse,
+  attempts,
+  mutation,
+  onOperationSaved,
+  collectionAllowed = true,
 }: {
   access: PosAccess;
   saleId: string;
   onClose: () => void;
   onSessionError?: (error: AccountClientError) => void;
+  canReverse?: boolean;
+  attempts: CheckoutAttempt[];
+  mutation?: OperationalMutation;
+  onOperationSaved?: () => Promise<void>;
+  collectionAllowed?: boolean;
 }) {
   const [sale, setSale] = useState<Sale | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const mounted = useRef(true);
+  const [reason, setReason] = useState("");
+  const [attempt, setAttempt] = useState<CheckoutAttempt | null>(null);
+  useEffect(() => {
+    const recovered = mutation?.lastResult?.result as CheckoutAttempt | undefined;
+    if (recovered?.kind === 'reversal' && recovered.originalSaleId === saleId) setAttempt(recovered);
+  }, [saleId, mutation?.lastResult]);
+  const persistedAttempt = attempts.find(a => a.kind === 'reversal' && a.originalSaleId === saleId);
+  useEffect(() => { if (persistedAttempt && (!attempt || persistedAttempt.id !== attempt.id || persistedAttempt.revision > attempt.revision)) setAttempt(persistedAttempt); }, [persistedAttempt, attempt]);
+  const selectedAttempt = persistedAttempt && persistedAttempt.id !== attempt?.id ? persistedAttempt : attempt ?? persistedAttempt;
+  const current = useCurrentAttempt(access, selectedAttempt, attempts, onSessionError);
+  const currentAttempt = current.attempt;
   useEffect(() => {
     mounted.current = true;
     void load();
@@ -201,7 +242,7 @@ function SaleDetailDialog({
     }
   }
   return (
-    <PosDialog title="Detalle de venta" onClose={onClose}>
+    <PosDialog title="Detalle de venta" onClose={onClose} busy={mutation?.busy}>
       {loading && <p role="status">Cargando venta…</p>}
       {error && (
         <div
@@ -219,6 +260,13 @@ function SaleDetailDialog({
         </div>
       )}
       {sale && <SaleDetail sale={sale} />}
+      {sale && canReverse && mutation && <div className="ops-section">
+        {mutation.error && <p role="alert">{mutation.error}</p>}
+        {mutation.pending && <><p>Reintenta el registro pendiente sin repetir la devolución.</p><button className="pos-button pos-secondary" disabled={mutation.busy} onClick={() => { const command = mutation.pending; if (command) void mutation.execute(command).then(() => onOperationSaved?.()).catch(() => {}) }}>Reintentar solicitud guardada</button></>}
+        {current.loading && <p role="status">Consultando el estado del intento…</p>}
+        {current.error && <p role="alert">{current.error}<button className="pos-button pos-secondary" onClick={current.retry}>Reintentar consulta</button></p>}
+        {currentAttempt ? <><AttemptPanel attempt={currentAttempt} mutation={{ ...mutation, busy: mutation.busy || current.blocked }} collectionAllowed={collectionAllowed} onSaved={a => { setAttempt(a); void onOperationSaved?.(); }} />{currentAttempt.status === 'aborted' && <button className="pos-button pos-secondary" disabled={mutation.busy || Boolean(mutation.pending)} onClick={() => { void Promise.resolve(onOperationSaved?.()).then(() => setAttempt(null)); }}>Preparar otra devolución</button>}</> : <details><summary>Devolver venta completa</summary><div className="ops-form"><p>La venta original se conserva. El efectivo devuelto se registra en el turno abierto actual.</p>{!collectionAllowed && <p>Abre o reanuda el turno en Caja antes de devolver dinero.</p>}<label>Motivo<input value={reason} maxLength={160} onChange={e => setReason(e.target.value)} disabled={mutation.busy || Boolean(mutation.pending)} /></label><button className="pos-button pos-secondary" disabled={!collectionAllowed || mutation.busy || Boolean(mutation.pending) || !reason.trim()} onClick={() => { void (async () => { try { setAttempt(await mutation.execute({ command: 'prepare_reversal', operationId: crypto.randomUUID(), saleId: sale.id, reason: reason.trim() })); await onOperationSaved?.(); } catch { /* Recovery remains visible. */ } })() }}>Preparar devolución completa</button></div></details>}
+      </div>}
     </PosDialog>
   );
 }

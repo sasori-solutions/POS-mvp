@@ -81,6 +81,9 @@ export default function SaleScreen({
   onHistory,
   onSessionError,
   canAvailability = true,
+  onAccount,
+  collectionReady = true,
+  savedCounterId,
 }: {
   access: PosAccess;
   employeeId: string;
@@ -89,6 +92,9 @@ export default function SaleScreen({
   onHistory: () => void;
   onSessionError?: (error: AccountClientError) => void;
   canAvailability?: boolean;
+  onAccount?: (cart: CartLine[]) => Promise<void>;
+  collectionReady?: boolean;
+  savedCounterId?: string;
 }) {
   const [choosing, setChoosing] = useState<Product | null>(null);
   const [availability, setAvailability] = useState<Product | null>(null);
@@ -125,6 +131,7 @@ export default function SaleScreen({
     category,
   );
   const frozen = busy || Boolean(pending) || storageError;
+  useEffect(() => { if (savedCounterId) { setCart([]); setCheckout(false); setShowCart(false); } }, [savedCounterId]);
 
   async function clearStoredOperation(operationId: string) {
     if (navigator.locks)
@@ -244,6 +251,7 @@ export default function SaleScreen({
       );
     });
   const canCheckout =
+    collectionReady &&
     cart.length > 0 &&
     !outdated &&
     !totalError &&
@@ -538,6 +546,22 @@ export default function SaleScreen({
         )
           onSessionError?.(caught);
       }
+    } finally {
+      submitting.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  }
+
+  async function saveAccount() {
+    if (!onAccount || !canCheckout || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await onAccount(cart);
+      if (mounted.current) { setCart([]); setCheckout(false); setShowCart(false); }
+    } catch (caught) {
+      if (mounted.current) setError(caught instanceof Error ? caught.message : "No pudimos guardar la cuenta.");
     } finally {
       submitting.current = false;
       if (mounted.current) setBusy(false);
@@ -989,13 +1013,14 @@ export default function SaleScreen({
               className="pos-button pos-primary"
               disabled={!canCheckout}
               onClick={() => {
+                if (onAccount) { void saveAccount(); return; }
                 setCheckout(true);
                 setShowCart(true);
                 setNotice("");
                 setError("");
               }}
             >
-              Cobrar {money(total)}
+              {onAccount ? "Guardar cuenta y cobrar" : "Cobrar"} {money(total)}
             </button>
           )}
         </div>
