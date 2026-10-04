@@ -121,6 +121,35 @@ export const TemporalChart = memo(function TemporalChart({ report, metric, anima
   </>
 })
 
+function DailySalesTooltip({ active, payload, timezone }: TooltipPayload & { timezone: string }) {
+  const datum = payload?.[0]?.payload as TemporalDatum | undefined
+  if (!active || !datum) return null
+  return <TooltipBox title={intervalLabel(datum.currentPoint, timezone)}>
+    <TooltipLine label="Neto" value={metricValue(datum.current, 'netCents')} color={colors.card_external} />
+  </TooltipBox>
+}
+
+export const DailySalesChart = memo(function DailySalesChart({ report }: { report: BusinessPeriodReport }) {
+  const data = useMemo(() => buildTemporalChartData(report, 'netCents'), [report])
+  const fingerprint = JSON.stringify(data.map(point => [point.slot, point.current]))
+  const ticks = useMemo(() => {
+    const step = Math.max(1, Math.ceil((data.length - 1) / 4))
+    return data.filter((_, index) => index === 0 || index === data.length - 1 || index % step === 0).map(point => point.slot)
+  }, [data])
+  const labels = useMemo(() => new Map(data.map(point => [point.slot, point.label])), [data])
+  const dot = isolatedPointDot(data, 'current', colors.card_external)
+  return <ChartFrame height={216} fingerprint={fingerprint} revision={data} identity={`${report.startDate}:${report.timezone}:net`} label="Ventas por hora de hoy">
+    {(width, height, animate) => <AreaChart width={width} height={height} data={data} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+      <CartesianGrid vertical={false} stroke="#E4E4E4" strokeDasharray="3 5" />
+      <XAxis dataKey="slot" ticks={ticks} tickFormatter={(slot: string) => labels.get(slot) ?? slot} tick={axisTick} axisLine={false} tickLine={false} minTickGap={0} />
+      <YAxis tickFormatter={moneyTick} tick={axisTick} axisLine={false} tickLine={false} width={52} domain={[(minimum: number) => Math.min(0, minimum), (maximum: number) => Math.max(maximum, 100)]} />
+      <ReferenceLine y={0} stroke="#C9C9C9" />
+      <Tooltip content={props => <DailySalesTooltip active={props.active} payload={props.payload} timezone={report.timezone} />} trigger={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 'click' : 'hover'} isAnimationActive={false} cursor={{ stroke: '#B8B8B8', strokeDasharray: '4 4' }} />
+      <Area<TemporalDatum, number | null> dataKey="current" name="Ventas netas" type="linear" stroke={colors.card_external} strokeWidth={2.5} fill={colors.card_external} fillOpacity={0.08} connectNulls={false} dot={dot} activeDot={{ r: 5, stroke: '#FFFFFF', strokeWidth: 2 }} {...animation} animationMatchBy={matchByDataKey('slot')} isAnimationActive={animate} />
+    </AreaChart>}
+  </ChartFrame>
+})
+
 function PaymentTooltip({ active, payload, net = false }: TooltipPayload & { net?: boolean }) {
   const payment = payload?.[0]?.payload as Payment | undefined
   if (!active || !payment) return null

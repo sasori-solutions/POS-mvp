@@ -1,9 +1,11 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { createContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { gsap } from 'gsap'
 import { useGSAP } from '@gsap/react'
 
 gsap.registerPlugin(useGSAP)
+
+export const CheckoutClosingContext = createContext(false)
 
 /** A separate, modal payment surface; the account underneath remains mounted. */
 export default function CheckoutPanel({ title = 'Cobrar', busy = false, completed = false, beforeClose, onClose, children }: {
@@ -18,6 +20,7 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
   if (!completed) displayedChildren.current = children
   const panel = useRef<HTMLDialogElement>(null)
   const closing = useRef(false)
+  const [isClosing, setIsClosing] = useState(false)
   const titleId = useId()
   const { contextSafe } = useGSAP(() => {
     if (!window.matchMedia) return
@@ -52,6 +55,7 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
   useEffect(() => {
     if (completed && !closing.current) {
       closing.current = true
+      setIsClosing(true)
       finishClose()
     }
   }, [completed, finishClose])
@@ -59,15 +63,17 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
   async function close() {
     if (busy || closing.current) return
     closing.current = true
+    setIsClosing(true)
     if (panel.current) panel.current.inert = true
     try {
       if (beforeClose && !await beforeClose()) {
         closing.current = false
+        setIsClosing(false)
         if (panel.current) { panel.current.inert = false; panel.current.querySelector<HTMLButtonElement>('.checkout-back')?.focus() }
         return
       }
       finishClose()
-    } catch { closing.current = false; if (panel.current) panel.current.inert = false }
+    } catch { closing.current = false; setIsClosing(false); if (panel.current) panel.current.inert = false }
   }
 
   return <dialog ref={panel} className="checkout-screen" aria-labelledby={titleId}
@@ -78,6 +84,6 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
       </button>
       <h2 id={titleId} tabIndex={-1} data-checkout-focus>{title}</h2>
     </header>
-    <div className="checkout-body">{displayedChildren.current}</div>
+    <div className="checkout-body"><CheckoutClosingContext.Provider value={isClosing}>{displayedChildren.current}</CheckoutClosingContext.Provider></div>
   </dialog>
 }

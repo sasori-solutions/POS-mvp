@@ -3,12 +3,15 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 import HomeScreen from '../../src/components/HomeScreen'
 import { posRequest } from '../../src/lib/pos'
+import { accountRequest, deviceRequest } from '../../src/lib/account'
 import { useCatalog, type CatalogState } from '../../src/components/useCatalog'
 import { useOperations, useOperationalMutation, type OperationalMutation } from '../../src/features/operations/useOperations'
 import type { BusinessContext } from '../../src/lib/contracts'
 import type { OperationalOrder, OperationsSnapshot, CheckoutAttempt } from '../../src/lib/operations-contracts'
 import type { Product } from '../../src/lib/pos-contracts'
+import { checkoutTotals } from '../../src/lib/checkout-selection'
 
+vi.mock('../../src/lib/account', async original => ({ ...await original<object>(), accountRequest: vi.fn(), deviceRequest: vi.fn() }))
 vi.mock('../../src/lib/pos', async original => ({ ...await original<object>(), posRequest: vi.fn() }))
 vi.mock('../../src/components/useCatalog', async original => ({ ...await original<object>(), useCatalog: vi.fn() }))
 vi.mock('../../src/features/operations/useOperations', async original => ({ ...await original<object>(), useOperations: vi.fn(), useOperationalMutation: vi.fn() }))
@@ -24,9 +27,12 @@ beforeAll(() => {
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
 })
 beforeEach(() => {
+  vi.stubGlobal('matchMedia', vi.fn().mockImplementation(query => ({matches:query === '(prefers-reduced-motion: reduce)',addEventListener:vi.fn(),removeEventListener:vi.fn()})))
   localStorage.clear()
+  vi.mocked(accountRequest).mockResolvedValue({business, expiresAt:'2026-10-03T22:00:00Z'})
+  vi.mocked(deviceRequest).mockResolvedValue({business, expiresAt:'2026-10-03T22:00:00Z'})
   catalog = { products: [product], paymentMethods: ['cash'], loaded: true, loading: false, error: '', refresh, upsert: vi.fn(), remove: vi.fn() }
-  snapshot = { enabled: true, shift: null, orders: [], tables: [], attempts: [] }
+  snapshot = { enabled: true, shift: { id: 'shift', status: 'open' } as OperationsSnapshot['shift'], orders: [], tables: [], attempts: [] }
   mutation = { execute: vi.fn(), pending: null, busy: false, error: '', notice: '', lastResult: null, clearNotice: vi.fn() }
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command === 'prepare_checkout') {
@@ -41,7 +47,7 @@ beforeEach(() => {
   vi.mocked(useOperations).mockImplementation(() => ({ snapshot, loading: false, error: '', refresh }))
   vi.mocked(useOperationalMutation).mockImplementation(() => mutation)
 })
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals() })
 afterAll(() => { HTMLDialogElement.prototype.showModal = originalShow; HTMLDialogElement.prototype.close = originalClose })
 function currentSale() { return within(screen.getByRole('complementary', { name: 'Venta actual' })) }
 async function saveAndClose() {
@@ -49,7 +55,20 @@ async function saveAndClose() {
   fireEvent.click(screen.getByRole('button', { name: 'Cobrar' }))
   const dialog = await screen.findByRole('dialog', { name: 'Cobrar' })
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }))
+  await waitFor(()=>expect(screen.queryByRole('dialog',{name:'Cobrar'})).toBeNull())
 }
+
+test('Home refreshes personal presence with the personal context endpoint', async () => {
+  render(<HomeScreen {...props} destination="Inicio" />)
+  await waitFor(() => expect(accountRequest).toHaveBeenCalledWith({ action: 'context', businessId: business.id, operatorToken: props.operatorToken }))
+  expect(deviceRequest).not.toHaveBeenCalled()
+})
+
+test('Home refreshes a shared owner device with device_context without sending its token to personal context', async () => {
+  render(<HomeScreen {...props} destination="Inicio" deviceToken="synthetic-device-memory-only" />)
+  await waitFor(() => expect(deviceRequest).toHaveBeenCalledWith({ action: 'device_context', deviceToken: 'synthetic-device-memory-only', operatorToken: props.operatorToken }))
+  expect(accountRequest).not.toHaveBeenCalled()
+})
 
 test('opening checkout shows payment methods immediately and has no manual edit, kitchen or finalization steps', async () => {
   render(<HomeScreen {...props} />)
@@ -62,7 +81,64 @@ test('opening checkout shows payment methods immediately and has no manual edit,
   expect(vi.mocked(mutation.execute).mock.calls[0][0].command).toBe('save_order')
 })
 
-test('one click registers payment and returns to an empty sale without preparation or confirmation steps', async () => {
+test('a closed shift disables checkout without discarding the draft or registering a payment', () => {
+  snapshot = { ...snapshot, shift: null }
+  const onDestinationChange = vi.fn()
+  const view = render(<HomeScreen {...props} onDestinationChange={onDestinationChange} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
+  const checkout = currentSale().getByRole('button', { name: 'Cobrar' }) as HTMLButtonElement
+  expect(checkout.disabled).toBe(true)
+  fireEvent.click(checkout)
+  expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull()
+  expect(mutation.execute).not.toHaveBeenCalled()
+  expect(currentSale().getByText('1 × Café')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Turno cerrado. Ir a Caja' }))
+  expect(onDestinationChange).toHaveBeenCalledWith('Caja')
+  snapshot = { ...snapshot, shift: { id: 'shift', status: 'open' } as OperationsSnapshot['shift'] }
+  view.rerender(<HomeScreen {...props} onDestinationChange={onDestinationChange} />)
+  expect((currentSale().getByRole('button', { name: 'Cobrar' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('closing before reservation starts cancels its debounce throughout the exit animation', async () => {
+  vi.mocked(matchMedia).mockImplementation(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList))
+  render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
+  fireEvent.click(currentSale().getByRole('button', { name: 'Cobrar' }))
+  const dialog = await screen.findByRole('dialog', { name: 'Cobrar' })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull())
+  expect(mutation.execute).toHaveBeenCalledTimes(1)
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'save_order' }))
+  expect((currentSale().getByRole('button', { name: 'Aumentar Café' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('cancelling a prepared checkout exit restores reservation updates without aborting the payment', async () => {
+  catalog = { ...catalog, paymentMethods: ['cash', 'transfer'] }
+  const view = render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
+  fireEvent.click(currentSale().getByRole('button', { name: 'Cobrar' }))
+  const dialog = within(await screen.findByRole('dialog', { name: 'Cobrar' }))
+  await waitFor(() => expect((dialog.getByRole('button', { name: 'Registrar pago' }) as HTMLButtonElement).disabled).toBe(false))
+  const saved = await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
+  const quote = await vi.mocked(mutation.execute).mock.results[1].value as CheckoutAttempt
+  snapshot = { ...snapshot, orders: [{ ...saved, revision: 2, phase: 'checkout' }], attempts: [quote] }
+  view.rerender(<HomeScreen {...props} />)
+  fireEvent.click(dialog.getByRole('button', { name: 'Cerrar' }))
+  const confirmation = within(await screen.findByRole('dialog', { name: '¿Volver a la cuenta?' }))
+  fireEvent.click(confirmation.getByRole('button', { name: 'Continuar cobrando' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '¿Volver a la cuenta?' })).toBeNull())
+  vi.mocked(mutation.execute).mockImplementationOnce(async command => {
+    if (command.command !== 'update_checkout') throw new Error('Expected reservation update')
+    return { ...quote, revision: 2, paymentMethod: command.paymentMethod }
+  })
+  fireEvent.click(dialog.getByRole('radio', { name: 'Transferencia' }))
+  await waitFor(() => expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'update_checkout', paymentMethod: 'transfer' })))
+  expect(screen.getByRole('dialog', { name: 'Cobrar' })).toBeTruthy()
+  expect(vi.mocked(mutation.execute).mock.calls.some(([command]) => command.command === 'resolve_checkout')).toBe(false)
+})
+
+test.each([true, false])('one click completes payment without an exit reservation (reduced motion: %s)', async reducedMotion => {
+  if (!reducedMotion) vi.mocked(matchMedia).mockImplementation(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList))
   snapshot = { ...snapshot, shift: { id: 'shift', status: 'open' } as OperationsSnapshot['shift'] }
   render(<HomeScreen {...props} />)
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
@@ -71,7 +147,8 @@ test('one click registers payment and returns to an empty sale without preparati
   const saved = await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
   const paid = { ...saved, status: 'closed' as const, revision: 4, frozen: true, paidCents: 3500, balanceCents: 0 }
   await waitFor(() => expect((dialog.getByRole('button', {name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
-  vi.mocked(mutation.execute).mockResolvedValueOnce({ order: paid, attempt: { status: 'completed' } })
+  const quote = await vi.mocked(mutation.execute).mock.results[1].value as CheckoutAttempt
+  vi.mocked(mutation.execute).mockResolvedValueOnce({ order: paid, attempt: { ...quote, status: 'completed' } })
   fireEvent.click(dialog.getByRole('button', { name: 'Registrar pago' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull())
   expect(mutation.execute).toHaveBeenCalledTimes(3)
@@ -80,6 +157,58 @@ test('one click registers payment and returns to an empty sale without preparati
   expect(screen.queryByRole('button', { name: 'Confirmar pago recibido' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Continuar con la cuenta' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Aumentar Café' })).toBeNull()
+})
+
+test('a partial payment returns only unpaid items and starts the next collection with its remaining balance',async()=>{
+  snapshot={...snapshot,shift:{id:'shift',status:'open'} as OperationsSnapshot['shift']}
+  const double={...order,items:order.items.map(line=>({...line,quantity:2,grossCents:7000,totalCents:7000,taxCents:966})),grossCents:7000,totalCents:7000,taxCents:966,balanceCents:7000}
+  vi.mocked(mutation.execute).mockImplementationOnce(async command=>{
+    if(command.command!=='save_order') throw new Error('Expected save')
+    return {...double,id:command.orderId}
+  }).mockImplementationOnce(async command=>{
+    if(command.command!=='prepare_checkout') throw new Error('Expected preparation')
+    const quote={id:'reserved-attempt',revision:1,kind:'payment',status:'prepared',orderId:command.orderId,shiftId:'shift',paymentMethod:command.paymentMethod,...checkoutTotals(double,command.items),items:command.items,createdAt:business.createdAt} as CheckoutAttempt
+    vi.mocked(posRequest).mockResolvedValue(quote)
+    return quote
+  })
+  render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button',{name:'Agregar Café, $35.00'}))
+  fireEvent.click(screen.getByRole('button',{name:'Agregar Café, $35.00'}))
+  fireEvent.click(currentSale().getByRole('button',{name:'Cobrar'}))
+  const dialog=within(await screen.findByRole('dialog',{name:'Cobrar'}))
+  const saved=await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
+  await waitFor(()=>expect((dialog.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
+  const quote=await vi.mocked(mutation.execute).mock.results[1].value as CheckoutAttempt
+  vi.mocked(mutation.execute).mockImplementationOnce(async command=>{
+    if(command.command!=='update_checkout') throw new Error('Expected update')
+    const selected={...quote,revision:2,...checkoutTotals(saved,command.items),items:command.items}
+    vi.mocked(posRequest).mockResolvedValue(selected)
+    return selected
+  })
+  fireEvent.click(dialog.getByRole('radio',{name:'Dividir cuenta'}))
+  fireEvent.click(dialog.getByRole('button',{name:'Añadir Café a este cobro'}))
+  await waitFor(()=>expect((dialog.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
+  const partial={...saved,revision:3,phase:'checkout' as const,frozen:true,paidCents:3500,balanceCents:3500,items:saved.items.map(line=>({...line,paidQuantity:1}))}
+  vi.mocked(mutation.execute).mockResolvedValueOnce({order:partial,attempt:{...quote,status:'completed'}})
+  fireEvent.click(dialog.getByRole('button',{name:'Registrar pago'}))
+  await waitFor(()=>expect(dialog.getByRole('list').textContent).toContain('1 × Café'))
+  expect(screen.getByRole('dialog',{name:'Cobrar'})).toBeTruthy()
+  expect(screen.queryByRole('button',{name:'Aumentar Café'})).toBeNull()
+  expect(currentSale().getByText('1 × Café')).toBeTruthy()
+  expect(currentSale().getByText('$4.83')).toBeTruthy()
+  expect(currentSale().queryByText('$70.00')).toBeNull()
+  expect((dialog.getByRole('radio',{name:'Dividir cuenta'}) as HTMLInputElement).checked).toBe(true)
+  expect(dialog.getByText('Este cobro · MXN')).toBeTruthy()
+  await waitFor(()=>expect((dialog.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
+  const secondQuote:CheckoutAttempt={...quote,id:'second-reservation',revision:1,totalCents:3500,taxCents:483,items:quote.items.map(line=>({...line,quantity:1,totalCents:3500,taxCents:483}))}
+  vi.mocked(posRequest).mockResolvedValue(secondQuote)
+  vi.mocked(mutation.execute).mockImplementation(async command=>{
+    if(command.command==='prepare_checkout') return secondQuote
+    if(command.command==='record_checkout') return {order:{...partial,revision:4,status:'closed',balanceCents:0,paidCents:7000,items:partial.items.map(line=>({...line,paidQuantity:2}))},attempt:{...secondQuote,status:'completed'}}
+    throw new Error('Unexpected mutation')
+  })
+  fireEvent.click(dialog.getByRole('button',{name:'Registrar pago'}))
+  await waitFor(()=>expect(screen.queryByRole('dialog',{name:'Cobrar'})).toBeNull())
 })
 
 test('a lost registration response retains the account and retries the same payment operation', async () => {
@@ -154,6 +283,10 @@ test('partial payment retains the account; only its resolved status clears it', 
   snapshot = { ...snapshot, orders: [{ ...saved, id: 'another-account', status: 'paid' }, partial] }
   view.rerender(<HomeScreen {...props} />)
   expect(currentSale().getByRole('button', { name: 'Cobrar' })).toBeTruthy()
+  expect(currentSale().getByText('1 × Café')).toBeTruthy()
+  expect(currentSale().queryByText('2 × Café')).toBeNull()
+  expect(currentSale().getByText('$4.83')).toBeTruthy()
+  expect(currentSale().queryByText('$70.00')).toBeNull()
   snapshot = { ...snapshot, orders: [{ ...partial, revision: 3, status: 'paid', paidCents: 7000, balanceCents: 0, items: partial.items.map(line => ({ ...line, paidQuantity: 2 })) }] }
   view.rerender(<HomeScreen {...props} />)
   await waitFor(() => expect(currentSale().getByText('Tu cuenta está vacía')).toBeTruthy())
@@ -161,6 +294,64 @@ test('partial payment retains the account; only its resolved status clears it', 
   view.rerender(<HomeScreen {...props} />)
   expect(currentSale().getByText('Tu cuenta está vacía')).toBeTruthy()
   expect(mutation.execute).toHaveBeenCalledTimes(1)
+})
+
+test('closing the shift during collection and returning from Caja preserves the selected unpaid items', async () => {
+  const onDestinationChange=vi.fn()
+  catalog={...catalog,paymentMethods:['cash','transfer']}
+  vi.mocked(mutation.execute).mockImplementationOnce(async command=>{
+    if(command.command!=='save_order') throw new Error('Expected save')
+    return {...order,id:command.orderId,items:order.items.map(line=>({...line,quantity:2,grossCents:7000,totalCents:7000,taxCents:966})),grossCents:7000,totalCents:7000,taxCents:966,balanceCents:7000}
+  })
+  const view=render(<HomeScreen {...props} onDestinationChange={onDestinationChange} />)
+  fireEvent.click(screen.getByRole('button',{name:'Agregar Café, $35.00'}))
+  fireEvent.click(screen.getByRole('button',{name:'Agregar Café, $35.00'}))
+  fireEvent.click(currentSale().getByRole('button',{name:'Cobrar'}))
+  const dialog=within(await screen.findByRole('dialog',{name:'Cobrar'}))
+  fireEvent.click(dialog.getByRole('radio',{name:'Dividir cuenta'}))
+  fireEvent.click(dialog.getByRole('button',{name:'Añadir Café a este cobro'}))
+  fireEvent.click(dialog.getByRole('radio',{name:'Transferencia'}))
+  snapshot = { ...snapshot, shift: null }
+  view.rerender(<HomeScreen {...props} onDestinationChange={onDestinationChange} />)
+  fireEvent.click(dialog.getByRole('button',{name:'Ir a Caja'}))
+  await waitFor(()=>expect(onDestinationChange).toHaveBeenCalledWith('Caja'))
+  expect(screen.queryByRole('dialog',{name:'Cobrar'})).toBeNull()
+  expect(mutation.execute).toHaveBeenCalledTimes(1)
+  snapshot={...snapshot,shift:{id:'shift',status:'open'} as OperationsSnapshot['shift']}
+  view.rerender(<HomeScreen {...props} onDestinationChange={onDestinationChange} />)
+  fireEvent.click(currentSale().getByRole('button',{name:'Cobrar'}))
+  const returned=within(await screen.findByRole('dialog',{name:'Cobrar'}))
+  expect((returned.getByRole('radio',{name:'Dividir cuenta'}) as HTMLInputElement).checked).toBe(true)
+  expect((returned.getByRole('spinbutton',{name:'Cantidad a cobrar de Café'}) as HTMLInputElement).value).toBe('1')
+  expect((returned.getByRole('radio',{name:'Transferencia'}) as HTMLInputElement).checked).toBe(true)
+  await waitFor(()=>expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'prepare_checkout',paymentMethod:'transfer',items:[{lineId:'accepted-line',quantity:1}]})))
+})
+
+test('fully paid lines disappear without mixing the remaining item snapshots or IVA',async()=>{
+  const view=render(<HomeScreen {...props} />)
+  await saveAndClose()
+  const saved=await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
+  snapshot={...snapshot,orders:[{...saved,revision:2,phase:'checkout',frozen:true,grossCents:6500,totalCents:6500,taxCents:897,paidCents:3500,balanceCents:3000,items:[
+    {...saved.items[0],paidQuantity:1},
+    {...saved.items[0],lineId:'remaining-tea',productId:'tea',name:'Té',selectionLabel:'Grande',unitPriceCents:1500,quantity:2,grossCents:3000,totalCents:3000,taxCents:414},
+  ]}]}
+  view.rerender(<HomeScreen {...props} />)
+  expect(currentSale().getByText('2 × Té')).toBeTruthy()
+  expect(currentSale().getByText('Grande')).toBeTruthy()
+  expect(currentSale().getByText('$4.14')).toBeTruthy()
+  expect(currentSale().queryByText('1 × Café')).toBeNull()
+  expect(currentSale().queryByText('Chico')).toBeNull()
+  expect(currentSale().queryByText('$65.00')).toBeNull()
+})
+
+test('inactive operational checkout explains activation instead of offering a legacy payment without a shift',()=>{
+  snapshot={...snapshot,enabled:false}
+  render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button',{name:'Agregar Café, $35.00'}))
+  expect((currentSale().getByRole('button',{name:'Cobrar'}) as HTMLButtonElement).disabled).toBe(true)
+  expect(currentSale().getByText('Activa los turnos en Caja para cobrar y dividir por artículos.')).toBeTruthy()
+  expect(currentSale().getByRole('button',{name:'Ir a Caja'})).toBeTruthy()
+  expect(mutation.execute).not.toHaveBeenCalled()
 })
 
 test('the draft survives management screens and clearing asks for confirmation', () => {
