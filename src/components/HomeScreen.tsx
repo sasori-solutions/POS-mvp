@@ -34,6 +34,12 @@ import OrdersScreen from "../features/operations/OrdersScreen";
 import ReportsScreen from "../features/operations/ReportsScreen";
 import OrderDetail from "../features/operations/OrderDetail";
 import OrderEditor from "../features/operations/OrderEditor";
+import PointSetup from './PointSetup';
+import PointDashboard from './PointDashboard';
+import PointPayment from './PointPayment';
+import { usePoint } from './usePoint';
+import type { PointCheckout } from '../lib/point-contracts';
+import { pointRequest, takePointOAuthReturn } from '../lib/point-client';
 
 interface HomeScreenProps {
   business: BusinessContext;
@@ -116,6 +122,26 @@ export default function HomeScreen({
   const [saleVisited, setSaleVisited] = useState(active === 'Venta');
   useEffect(() => { if (active === 'Venta') setSaleVisited(true); }, [active]);
   const access = { businessId: business.id, operatorToken, deviceToken };
+  const point = usePoint(access, isOwner || hasPermission(business, 'sales.create') || hasPermission(business, 'reports.read'), onSessionError);
+  const [pointPage, setPointPage] = useState<'setup' | 'admin' | null>(null);
+  const [pointReport, setPointReport] = useState(false);
+  const [recoverPoint, setRecoverPoint] = useState<PointCheckout | null>(null);
+  const [pointBlocked, setPointBlocked] = useState(false);
+  const [pointNotice, setPointNotice] = useState('');
+  const pointScope = useRef(operatorScope);
+  pointScope.current = operatorScope;
+  useEffect(() => {
+    const callback = takePointOAuthReturn();
+    if (!callback) return;
+    setPointPage('setup');
+    if ('rejected' in callback) { setPointNotice('La autorización de Mercado Pago fue rechazada o está incompleta. Puedes conectar de nuevo.'); return; }
+    const captured = operatorScope;
+    void pointRequest(access, {command: 'oauth_callback', ...callback}).then(settings => {
+      if (pointScope.current !== captured) return;
+      point.setSettings(settings); setPointNotice('error' in callback ? 'Autorización rechazada. Puedes conectar de nuevo.' : 'Autorización recibida. Verifica credenciales y configuración de la terminal antes de activar.');
+    }).catch(caught => { if (pointScope.current === captured) setPointNotice(caught instanceof Error ? caught.message : 'La autorización venció. Reconecta Mercado Pago.'); });
+    return () => { pointScope.current = ''; };
+  }, [operatorScope]);
   const [reportTab, setReportTab] = useState<ReportTab>('sales');
   const analytics = useReportController(access, business.timezone, onSessionError,
     !managementContent && (active === 'Inicio' || active === 'Reportes'), hasPermission(business, 'reports.read'));
@@ -203,6 +229,7 @@ export default function HomeScreen({
   async function prepareBackToOrder(): Promise<boolean> {
     backOrder.current = null;
     setBackError("");
+    if (pointBlocked) { setBackError('Consulta o cancela el mismo intento integrado antes de volver a editar. Cerrar la pantalla no cancela el cargo.'); return false; }
     if (!order || mutation.pending) return !mutation.pending;
     const live = snapshot?.attempts.find(attempt => attempt.orderId === order.id && attempt.kind === 'payment');
     const accepted = mutation.lastResult?.result as CheckoutAttempt | undefined;
@@ -250,6 +277,7 @@ export default function HomeScreen({
   const OrderPanel = checkoutView ? CheckoutPanel : PosDialog;
   const more = useRef<HTMLDivElement>(null);
   function setActive(next: Destination) {
+    setPointPage(null);
     if (isOwner && (next === 'Inicio' || next === 'Productos' || next === 'Reportes' || next === 'Caja')) setOperating(false);
     if (next === 'Venta' || next === 'Comandas') setOperating(true);
     setLocalDestination(next);
@@ -297,15 +325,20 @@ export default function HomeScreen({
       </button>
     );
   }
-  const title = managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
+  const title = pointPage === 'setup' ? 'Mercado Pago Point' : pointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
   return (
-    <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent} title={title} busy={busy}
+    <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent && !pointPage} title={title} busy={busy}
       onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin}
-      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={managementKey}>
+      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={pointPage ?? managementKey}
+      onPointSetup={isOwner && !deviceToken ? () => setPointPage('setup') : undefined} onPointAdmin={point.settings?.permissions.admin ? () => setPointPage('admin') : undefined}>
+      {pointPage && <div className="workspace-management">
+        {pointNotice && <p role="status" className="mb-4">{pointNotice}</p>}
+        {pointPage === 'setup' ? <PointSetup access={access} controller={point} onBack={() => setPointPage(null)} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
+      </div>}
       {managementContent && <div className="workspace-management">{managementContent}</div>}
       <section
         className="pos-content flex min-w-0 flex-1 flex-col"
-        hidden={Boolean(managementContent)}
+        hidden={Boolean(managementContent || pointPage)}
         aria-labelledby="pos-section-title"
       >
         {notice && (
@@ -313,6 +346,7 @@ export default function HomeScreen({
             {notice}
           </p>
         )}
+        {Boolean(point.settings?.pending.length) && <section className="ops-message" aria-label="Cobros integrados pendientes"><p>Hay cobros integrados por confirmar. Recupera el mismo intento sin cobrar de nuevo.</p>{point.settings!.pending.map(checkout => <button key={checkout.id} className="pos-button pos-secondary" onClick={() => setRecoverPoint(checkout)}>Recuperar cobro {checkout.id.slice(0, 8).toUpperCase()}</button>)}</section>}
         {error && (
           <p
             className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
@@ -349,7 +383,10 @@ export default function HomeScreen({
         {active === "Inicio" && !managementContent ? (
           <ReportDashboard controller={analytics} onOpenReport={tab => { setReportTab(tab); setActive('Reportes'); }} />
         ) : active === "Reportes" && !managementContent ? (
-          <ReportsScreen controller={analytics} tab={reportTab} onTabChange={setReportTab} />
+          <>
+            {point.settings?.permissions.reports && <div role="group" aria-label="Tipo de reporte" className="analytics-metric-switch mb-4"><button aria-pressed={!pointReport} onClick={() => setPointReport(false)}>Operación del POS</button><button aria-pressed={pointReport} onClick={() => setPointReport(true)}>Pagos integrados</button></div>}
+            {pointReport && point.settings?.permissions.reports ? <PointDashboard access={access} timezone={business.timezone} settings={point.settings} onSessionError={onSessionError} /> : <ReportsScreen controller={analytics} tab={reportTab} onTabChange={setReportTab} />}
+          </>
         ) : active === "Caja" ? (
           snapshot ? <CashScreen business={business} access={access} snapshot={snapshot} mutation={mutation} refresh={operation.refresh} onSessionError={onSessionError} /> : <p role="status">Cargando caja…</p>
         ) : active === "Productos" ? (
@@ -425,18 +462,19 @@ export default function HomeScreen({
           </div>
         ) : null}
       </section>
-      {(editingOrder || order) && <OrderPanel {...(checkoutView ? { completed: paymentComplete } : {})} title={editingOrder ? editingOrder.order ? 'Editar cuenta' : 'Abrir cuenta' : checkoutView ? 'Cobrar' : order!.name} busy={mutation.busy} beforeClose={checkoutView ? prepareBackToOrder : undefined} onClose={closeOrderPanel}>
+      {(editingOrder || order) && <OrderPanel {...(checkoutView ? { completed: paymentComplete } : {})} title={editingOrder ? editingOrder.order ? 'Editar cuenta' : 'Abrir cuenta' : checkoutView ? 'Cobrar' : order!.name} busy={mutation.busy || pointBlocked} beforeClose={checkoutView ? prepareBackToOrder : undefined} onClose={closeOrderPanel}>
         <div className="ops-section">
           {backError && !mutation.error && <p role="alert">{backError}</p>}
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} />}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked} />}
         </div>
       </OrderPanel>}
       {confirmUnpaid && <PosDialog title="¿Volver a la cuenta?" busy={false} onClose={() => { setConfirmUnpaid(false); unpaidDecision.current?.(false); }}>
         <p>Confirma que aún no recibiste el pago. Si ya recibiste dinero, registra o recupera ese pago antes de editar.</p>
         <div className="dialog-actions"><button className="pos-button pos-primary" onClick={() => { setConfirmUnpaid(false); unpaidDecision.current?.(true); }}>Volver sin haber recibido pago</button><button className="pos-button pos-secondary" onClick={() => { setConfirmUnpaid(false); unpaidDecision.current?.(false); }}>Continuar cobrando</button></div>
       </PosDialog>}
+      {recoverPoint && <CheckoutPanel title="Recuperar cobro integrado" busy={pointBlocked} onClose={() => setRecoverPoint(null)}><PointPayment access={access} initialCheckout={recoverPoint} settings={point.settings} onSessionError={onSessionError} onBlocked={setPointBlocked} onResolved={() => { void operation.refresh(); void point.refresh(); }} onDone={() => { setRecoverPoint(null); setPointBlocked(false); void operation.refresh(); void point.refresh(); }} /></CheckoutPanel>}
 
 
     </WorkspaceShell>

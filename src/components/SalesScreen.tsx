@@ -9,6 +9,7 @@ import type { CheckoutAttempt } from "../lib/operations-contracts";
 import type { OperationalMutation } from "../features/operations/useOperations";
 import AttemptPanel from "../features/operations/AttemptPanel";
 import { useCurrentAttempt } from "../features/operations/useCurrentAttempt";
+import PointRefund from './PointRefund';
 const noAttempts: CheckoutAttempt[] = [];
 
 export default function SalesScreen({
@@ -260,7 +261,8 @@ function SaleDetailDialog({
         </div>
       )}
       {sale && <SaleDetail sale={sale} />}
-      {sale && canReverse && mutation && <div className="ops-section">
+      {sale?.paymentMethod === 'card_integrated' && canReverse && <PointRefund access={access} saleId={sale.id} onSessionError={onSessionError} />}
+      {sale && sale.paymentMethod !== 'card_integrated' && canReverse && mutation && <div className="ops-section">
         {mutation.error && <p role="alert">{mutation.error}</p>}
         {mutation.pending && <><p>Reintenta el registro pendiente sin repetir la devolución.</p><button className="pos-button pos-secondary" disabled={mutation.busy} onClick={() => { const command = mutation.pending; if (command) void mutation.execute(command).then(() => onOperationSaved?.()).catch(() => {}) }}>Reintentar solicitud guardada</button></>}
         {current.loading && <p role="status">Consultando el estado del intento…</p>}

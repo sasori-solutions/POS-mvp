@@ -67,7 +67,7 @@ export function parsePointCommand(input: Record<string, unknown>, accessKeys: st
     }
     case 'merchant_report': case 'admin_report': {
       keys(['from','to', ...(input.command === 'admin_report' && Object.hasOwn(input,'cursor') ? ['cursor'] : [])]); const from = date(input.from), to = date(input.to)
-      if (to <= from || Date.parse(to) - Date.parse(from) > 366 * 86400000) invalid()
+      if (to < from || Date.parse(to) - Date.parse(from) > 365 * 86400000) invalid()
       if (input.command === 'admin_report' && Object.hasOwn(input,'cursor')) return { command: input.command, from, to, cursor: input.cursor === null ? null : uuid(input.cursor) }
       return { command: input.command, from, to }
     }
@@ -75,11 +75,11 @@ export function parsePointCommand(input: Record<string, unknown>, accessKeys: st
       keys(['operationId','period']); if (typeof input.period !== 'string' || !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(input.period)) invalid()
       return { command: input.command, operationId: operation(), period: input.period }
     case 'mark_statement_invoiced':
-      keys(['operationId','statementId','evidence']); return { command: input.command, operationId: operation(), statementId: uuid(input.statementId), evidence: text(input.evidence,500) }
+      keys(['operationId','statementId','evidence']); return { command: input.command, operationId: operation(), statementId: uuid(input.statementId), evidence: text(input.evidence,300) }
     case 'record_commission_payment': {
       keys(['operationId','statementId','amountCents','paidAt','evidence'])
       if (typeof input.paidAt !== 'string' || input.paidAt.length > 40 || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(input.paidAt) || !Number.isFinite(Date.parse(input.paidAt))) invalid()
-      return { command: input.command, operationId: operation(), statementId: uuid(input.statementId), amountCents: integer(input.amountCents,1), paidAt: input.paidAt, evidence: text(input.evidence,500) }
+      return { command: input.command, operationId: operation(), statementId: uuid(input.statementId), amountCents: integer(input.amountCents,1), paidAt: input.paidAt, evidence: text(input.evidence,300) }
     }
     default: return invalid()
   }

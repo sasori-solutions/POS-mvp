@@ -32,7 +32,8 @@ describe('Point HTTP trust boundary', () => {
   it('bounds reports by full range and validates real dates before aggregation', () => {
     const request = { ...owner, command: 'merchant_report', from: '2026-01-01', to: '2026-02-01' }
     expect(parseAccountRequest(request)).toEqual(request)
-    for (const changed of [{ from: '2026-02-30' }, { to: '2026-01-01' }, { to: '2028-01-01' }, { pageSize: 999999 }, { businessIds: [randomUUID()] }]) {
+    expect(parseAccountRequest({ ...request, to: request.from })).toMatchObject({ from: request.from, to: request.from })
+    for (const changed of [{ from: '2026-02-30' }, { to: '2025-12-31' }, { to: '2028-01-01' }, { pageSize: 999999 }, { businessIds: [randomUUID()] }]) {
       expect(() => parseAccountRequest({ ...request, ...changed })).toThrow(RequestValidationError)
     }
   })

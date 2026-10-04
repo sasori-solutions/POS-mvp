@@ -43,6 +43,8 @@ import {
 } from "./lib/business-access";
 const InvitationScanner = lazy(() => import("./components/InvitationScanner"));
 import type { Destination } from "./components/HomeScreen";
+// Capture/scrub the Point return before Auth initialization and PIN entry, including lazy Home loading.
+import "./lib/point-client";
 const HomeScreen = lazy(() => import("./components/HomeScreen"));
 import PinField from "./components/PinField";
 import RequestPinRecovery from "./components/RequestPinRecovery";

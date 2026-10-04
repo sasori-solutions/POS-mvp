@@ -143,6 +143,7 @@ export default function SaleScreen({
   const account = savedCounter?.status === 'open' ? savedCounter : undefined;
   const accountEditable = Boolean(account && account.phase === 'service' && !account.frozen && onAccountAdd && onAccountQuantity);
   const frozen = busy || Boolean(pending) || storageError || Boolean(account && (!accountEditable || !collectionReady));
+  const manualMethods = catalog.paymentMethods.filter(method => method !== 'card_integrated');
   useEffect(() => {
     if (savedCounter && savedCounter.status !== 'open') {
       setCart([]);
@@ -459,6 +460,7 @@ export default function SaleScreen({
   }
 
   async function register() {
+    if (payment === 'card_integrated') return;
     if (submitting.current || storageError || !online) return;
     let command = pendingRef.current;
     if (!command && (!canCheckout || !catalog.paymentMethods.includes(payment)))
@@ -1046,7 +1048,7 @@ export default function SaleScreen({
             {notice && <p role="status">{notice}</p>}
             {error && <p className="checkout-error" role="alert">{error}</p>}
 
-              <PaymentMethodPicker name="sale-payment" methods={pending ? [pending.paymentMethod] : catalog.paymentMethods}
+              <PaymentMethodPicker name="sale-payment" methods={pending ? [pending.paymentMethod] : manualMethods}
                 value={payment} onChange={setPayment} disabled={frozen} />
               {payment === "card_external" ? (
                 <p className="payment-instructions py-2 text-sm">

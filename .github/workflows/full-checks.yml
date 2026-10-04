@@ -1,4 +1,4 @@
-name: Full checks (manual)
+name: Full checks
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: deno test --allow-net=127.0.0.1,localhost supabase/functions/account/*.deno.ts supabase/functions/point/*.deno.ts
+      - run: deno test --allow-net=127.0.0.1,localhost supabase/functions/account/*.deno.ts tests/provider/adapter.deno.ts
       - run: deno check supabase/functions/account/index.ts
       - run: deno check supabase/functions/point/index.ts supabase/functions/point-webhook/index.ts supabase/functions/point-worker/index.ts
       - name: Verify standalone account packaging

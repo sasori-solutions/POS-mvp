@@ -22,7 +22,7 @@ type Metric = 'salesCents' | 'netCents' | 'saleCount'
 type ProductSort = 'quantity' | 'reversalQuantity' | 'netCents'
 const periods = [['day', 'Día'], ['week', 'Semana'], ['month', 'Mes']] as const
 const tabs = [['sales', 'Ventas'], ['products', 'Productos'], ['finances', 'Finanzas']] as const
-const colors = { cash: '#0F766E', card_external: '#2563EB', transfer: '#7C3AED' }
+const colors = { cash: '#0F766E', card_external: '#2563EB', card_integrated: '#111111', transfer: '#7C3AED' }
 const quantity = (value: number) => value.toLocaleString('es-MX')
 
 function Help({ label, children }: { label: string; children: ReactNode }) {

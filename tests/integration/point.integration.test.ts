@@ -77,7 +77,7 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     // suppress their test-only deletion triggers within the cleanup transaction.
     if(businesses.length) {
       const ids=businesses.map(id=>`${literal(id)}::uuid`).join(',')
-      const tables=['point_statement_lines','point_commission_payments','point_statements','point_fee_ledger','point_jobs','point_refunds','point_refund_requests','point_terminal_reservations','point_incidents','point_operations','point_checkouts','point_attempts','point_terminals','point_oauth_states','point_connections','point_settings']
+      const tables=['point_event_inbox','point_statement_lines','point_commission_payments','point_statements','point_fee_ledger','point_jobs','point_refunds','point_refund_requests','point_terminal_reservations','point_incidents','point_operations','point_checkouts','point_attempts','point_terminals','point_oauth_states','point_connections','point_settings']
       sql(`begin;set local session_replication_role=replica;${tables.map(table=>`delete from app_private.${table} where business_id in (${ids});`).join('')}set local session_replication_role=origin;delete from app_private.businesses where id in (${ids});commit;`)
     }
     for(const id of users){const deleted=await admin!.auth.admin.deleteUser(id);if(deleted.error)throw deleted.error}

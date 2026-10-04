@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { accountRequest, AccountClientError } from "../lib/account";
+import PointSetup from './PointSetup';
+import { usePoint } from './usePoint';
 import type {
   BusinessContext,
   BusinessProfile,
@@ -26,7 +28,8 @@ const timezones = [
 ];
 const paymentOptions: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Efectivo" },
-  { value: "card_external", label: "Tarjeta en terminal" },
+  { value: "card_external", label: "Tarjeta externa" },
+  { value: "card_integrated", label: "Tarjeta integrada (Mercado Pago Point)" },
   { value: "transfer", label: "Transferencia" },
 ];
 const emptyProfile: BusinessProfile = {
@@ -59,6 +62,9 @@ export default function BusinessSettings({
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [denied, setDenied] = useState(business.role !== "owner");
+  const [pointSetup, setPointSetup] = useState(false);
+  const pointAccess = { businessId: business.id, operatorToken };
+  const point = usePoint(pointAccess, business.role === 'owner', onSessionError);
   const saving = useRef(false);
   const mounted = useRef(true);
 
@@ -163,6 +169,7 @@ export default function BusinessSettings({
     JSON.stringify(profile) !==
       JSON.stringify({ ...emptyProfile, ...business.profile });
 
+  if (pointSetup) return <PointSetup access={pointAccess} controller={point} onBack={() => setPointSetup(false)} onSessionError={onSessionError} />;
   return (
     <div className="management-shell w-full max-w-160 pb-16 max-compact:pb-10">
       <button
@@ -383,9 +390,10 @@ export default function BusinessSettings({
               </label>
             ))}
             <p className="field-help text-sm text-muted">
-              Selecciona las formas de pago que aceptas. La tarjeta se cobra en
-              tu terminal. Esta selección no conecta la terminal a la app.
+              La tarjeta externa se registra después de cobrar por tu cuenta.
+              La tarjeta integrada exige conexión y terminal verificadas, además de activación.
             </p>
+            <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Configurar Mercado Pago Point</button>
           </fieldset>
           <div className="management-actions mt-1 flex flex-wrap gap-3 max-compact:flex-col">
             <button

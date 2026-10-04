@@ -2,7 +2,7 @@ import { ArrowLeftRight, Banknote, CreditCard } from 'lucide-react'
 import type { PaymentMethod } from '../lib/contracts'
 import { paymentLabels } from './PosShared'
 
-const icons = { cash: Banknote, card_external: CreditCard, transfer: ArrowLeftRight }
+const icons = { cash: Banknote, card_external: CreditCard, card_integrated: CreditCard, transfer: ArrowLeftRight }
 
 export default function PaymentMethodPicker({ methods, value, onChange, disabled, name }: {
   methods: PaymentMethod[]
