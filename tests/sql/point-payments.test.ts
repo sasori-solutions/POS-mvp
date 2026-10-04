@@ -457,6 +457,60 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     expect((await db.query<{ status: string; last_error: string }>('select status,last_error from app_private.point_jobs where id=$1', [job.id])).rows[0]).toEqual({ status: 'queued', last_error: 'UNCERTAIN' })
   })
 
+  it.each(['pending', 'sent_to_terminal', 'processing', 'unknown_review'])('reconciles a recent %s virtual attempt without a webhook or an open browser', async state => {
+    // Earlier isolation cases deliberately retain a virtual-terminal lock.
+    // Finish only those synthetic attempts before this independent scenario.
+    const prior = (await db.query<{ id: string; remote_order_id: string | null }>("select id,remote_order_id from app_private.point_attempts where terminal_id='NEWLAND_N950__SBX0000001' and sale_state<>'materialized' and state in ('pending','sent_to_terminal','processing','unknown_review')")).rows
+    for (const attempt of prior) {
+      const evidence = await facts(attempt.id)
+      await service('apply_order', { ...evidence, remoteOrderId: attempt.remote_order_id ?? evidence.remoteOrderId, state: 'cancelled' })
+    }
+    const { actor, checkout } = await setup(1000, 'sandbox', true)
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    await db.query("update app_private.point_attempts set observed_at=clock_timestamp()-interval '30 seconds',last_reconciled_at=clock_timestamp()-interval '30 seconds' where id=$1", [started.attemptId])
+    await service('pending_sweep', { limit: 500 })
+    await service('pending_sweep', { limit: 500 })
+    const jobs = (await db.query<{ id: string; kind: string }>("select id,kind from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0].kind).toBe('reconcile_order')
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ state, saleState: 'pending', totalCents: 1000, remoteOrderId: evidence.remoteOrderId })
+    // Isolate this synthetic queue entry; claiming it uses the original identity
+    // and GET reconciliation, never another create/collection request.
+    await db.query("update app_private.point_jobs set status='done' where id<>$1", [jobs[0].id])
+    const claimed = await service<{ jobs: { id: string; kind: string; leaseToken: string; payload: { remoteOrderId: string; amountCents: number } }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: false })
+    expect(claimed.jobs[0]).toMatchObject({ id: jobs[0].id, kind: 'reconcile', payload: { remoteOrderId: evidence.remoteOrderId, amountCents: 1000 } })
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status in ('queued','leased')", [started.attemptId])).rows[0].n).toBe(1)
+    await service('apply_order', { ...evidence, state: 'approved_verified', jobId: jobs[0].id, leaseToken: claimed.jobs[0].leaseToken })
+    await service('complete_job', { id: jobs[0].id, leaseToken: claimed.jobs[0].leaseToken })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ state: 'approved_verified', saleState: 'materialized', totalCents: 1000 })
+    expect((await db.query<{ n: number }>('select count(*)::integer n from app_private.sales where business_id=$1', [actor.businessId])).rows[0].n).toBe(1)
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status in ('queued','leased')", [started.attemptId])).rows[0].n).toBe(0)
+  })
+
+  it('throttles recent live reads and preserves queued-job backoff and terminal locks', async () => {
+    const { actor, checkout } = await setup(1000)
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'pending' })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows[0].n).toBe(0)
+    await db.query("update app_private.point_attempts set observed_at=clock_timestamp()-interval '30 seconds',last_reconciled_at=clock_timestamp()-interval '30 seconds' where id=$1", [started.attemptId])
+    await service('pending_sweep', { limit: 500 })
+    const job = (await db.query<{ id: string }>("select id from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows[0]
+    expect(job).toBeDefined()
+    await db.query("update app_private.point_jobs set available_at=clock_timestamp()+interval '10 minutes',last_error='UNCERTAIN' where id=$1", [job.id])
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows[0].n).toBe(1)
+    expect((await db.query<{ reserved: boolean }>('select exists(select 1 from app_private.point_terminal_reservations where attempt_id=$1) reserved', [started.attemptId])).rows[0].reserved).toBe(true)
+    for (const role of ['anon', 'authenticated', 'service_role']) expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'public.point_service_before_prompt_reconciliation(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+  })
+
   it('uses inclusive local dates at midnight and preserves complete global detail across pages', async () => {
     const {actor,checkout}=await setup(1001)
     const started=await point<PointCheckout>(actor,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})
