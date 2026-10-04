@@ -1,5 +1,5 @@
 import { challenge, digest, randomSecret, TokenVault } from './crypto.ts'
-import { cents, identifier, MercadoPagoPoint, ProviderError, record, verifyOrder } from './provider.ts'
+import { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, verifyOrder } from './provider.ts'
 import type { Environment, ExpectedOrder, PointAdapter, TokenSet } from './provider.ts'
 export interface RpcClient { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> }
 export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string; testAccessToken?: string; localSimulator?: boolean; oauthAvailable?: boolean }
@@ -223,7 +223,10 @@ async function readOrder(config: Configuration, token: TokenSet, remoteOrderId: 
   const reference = payment?.reference_id ?? (payment?.reference ? record(payment.reference).id : undefined)
   // Orders can omit currency/live_mode. A completed payment supplies the monetary evidence.
   if (!['processed', 'refunded'].includes(String(order.status)) && !order.currency && !order.currency_id) order.currency = order.country_code === 'MEX' ? 'MXN' : undefined
-  const proof = reference !== undefined ? await config.adapter.request(token, `/v1/payments/${identifier(reference)}`) : undefined
+  // Virtual-device references are synthetic and GET /payments returns 404. Only
+  // the verified server test account + standard virtual terminal use Orders alone.
+  const proof = reference !== undefined && !officialVirtualOrder(order, expected, token)
+    ? await config.adapter.request(token, `/v1/payments/${identifier(reference)}`) : undefined
   return { order, evidence: verifyOrder(order, expected, token, proof) }
 }
 function withinReplayWindow(firstSentAt: unknown): boolean {

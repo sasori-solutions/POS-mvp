@@ -52,6 +52,16 @@ export function mapState(status: string, detail: string, txStatus: string, txDet
   if (status === 'failed' && ['failed', 'rejected'].includes(detail) && txStatus === 'failed' && definitive.includes(txDetail)) return 'rejected'
   return 'review'
 }
+/** The official virtual device returns synthetic payment references, not Payments API records. */
+export function officialVirtualOrder(order: Json, expected: ExpectedOrder, token: TokenSet): boolean {
+  return token.source === 'server_test' && token.environment === 'sandbox' && expected.environment === 'sandbox'
+    && expected.terminalId === 'NEWLAND_N950__SBX0000001' && order.type === 'point'
+    && typeof order.id === 'string' && /^ORDTST[A-Za-z0-9]+$/.test(order.id)
+    && String(order.user_id) === token.receiverId && token.receiverId === expected.receiverId
+    && order.country_code === 'MEX' && order.currency === 'MXN' && expected.currency === 'MXN'
+    && (order.live_mode === undefined || order.live_mode === false)
+    && record(record(order.config).point).terminal_id === expected.terminalId
+}
 export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenSet, monetaryProof?: unknown): OrderEvidence {
   const order = record(raw), transactions = record(order.transactions)
   if (!Array.isArray(transactions.payments) || transactions.payments.length !== 1) throw new ProviderError('INVALID_RESPONSE')
@@ -81,7 +91,7 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
   }
   const observedAt = typeof order.last_updated_date === 'string' && Number.isFinite(Date.parse(order.last_updated_date)) ? order.last_updated_date : ''
   if (!observedAt) throw new ProviderError('INVALID_RESPONSE')
-  if (financiallyVerified && !proof && order.live_mode === undefined) throw new ProviderError('INVALID_RESPONSE')
+  if (financiallyVerified && !proof && order.live_mode === undefined && !officialVirtualOrder(order, expected, token)) throw new ProviderError('INVALID_RESPONSE')
   // This checkout reserves merchandise only. A terminal-added tip needs an explicit allocation,
   // and a short payment must never settle the whole snapshot.
   if (payment.tip_amount !== undefined && cents(payment.tip_amount) !== 0) throw new ProviderError('INVALID_RESPONSE')

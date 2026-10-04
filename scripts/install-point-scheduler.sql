@@ -15,10 +15,10 @@ begin
 end $$;
 select cron.schedule('sasori-point-reconcile','* * * * *',$job$
   select net.http_post(
-    url=(select decrypted_secret from vault.decrypted_secrets where name='sasori_point_worker_url'),
-    headers=jsonb_build_object('Content-Type','application/json','Authorization','Bearer ' ||
+    url:=(select decrypted_secret from vault.decrypted_secrets where name='sasori_point_worker_url'),
+    headers:=jsonb_build_object('Content-Type','application/json','Authorization','Bearer ' ||
       (select decrypted_secret from vault.decrypted_secrets where name='sasori_point_worker_secret')),
-    body='{"limit":20}'::jsonb,
+    body:='{"limit":20}'::jsonb,
     timeout_milliseconds:=50000
   );
 $job$);

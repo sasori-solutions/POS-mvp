@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const namespaces = { crypto: 'PointCrypto', provider: 'PointProvider', service: 'PointService', http: 'PointHttp', webhook: 'PointWebhook' }
 const aliases = {
-  service: "const { challenge, digest, randomSecret, TokenVault } = PointCrypto; type TokenVault = PointCrypto.TokenVault; const { cents, identifier, MercadoPagoPoint, ProviderError, record, verifyOrder } = PointProvider; type Environment = PointProvider.Environment; type ExpectedOrder = PointProvider.ExpectedOrder; type PointAdapter = PointProvider.PointAdapter; type TokenSet = PointProvider.TokenSet;",
+  service: "const { challenge, digest, randomSecret, TokenVault } = PointCrypto; type TokenVault = PointCrypto.TokenVault; const { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, verifyOrder } = PointProvider; type Environment = PointProvider.Environment; type ExpectedOrder = PointProvider.ExpectedOrder; type PointAdapter = PointProvider.PointAdapter; type TokenSet = PointProvider.TokenSet;",
   webhook: 'const { digest } = PointCrypto;',
 }
 export function buildPointModules(modules = ['crypto', 'provider', 'service']) {
