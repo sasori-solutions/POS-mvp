@@ -163,7 +163,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
         <span className="workspace-mobile-business" title={business.name}>{business.name}</span>
         {owner && !operating && <button type="button" className="workspace-mobile-mode" disabled={busy} onClick={() => onSelect('Venta')}>Punto de Venta<ArrowRight size={17}/></button>}
         <div className="workspace-header-actions">
-          {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link workspace-mobile-mode-icon" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
+          {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
           {owner && onNotifications && <button type="button" className="pos-icon-button" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} disabled={busy} data-workspace-action="notifications" onClick={onNotifications}><span className="workspace-icon"><Bell size={21} aria-hidden="true"/>{unreadCount > 0 && <span className="workspace-badge workspace-notification-badge" aria-hidden="true">{unreadCount > 99 ? '99+' : unreadCount}</span>}</span></button>}
           <button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><LockKeyhole size={21}/></button>
         </div>

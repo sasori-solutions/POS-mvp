@@ -118,7 +118,7 @@
   .workspace-header-actions { @apply ml-auto flex items-center gap-0; }
   .workspace-header-actions .pos-icon-button { @apply justify-items-end; }
   .workspace-mobile-mode { @apply flex min-h-12 shrink-0 items-center gap-1 rounded-lg border-0 bg-surface px-3 text-xs text-ink min-[64rem]:hidden; }
-  .workspace-mobile-mode-icon { @apply grid size-13 min-h-13 place-items-end bg-white px-0; }
+  .workspace-header-actions .workspace-dashboard-link { @apply bg-white; }
   .workspace-page-heading { @apply mt-3 mb-5 flex min-h-9 flex-wrap items-center justify-between gap-3; }
   .workspace-page-heading h1 { @apply m-0 text-[26px] font-medium tracking-tight; }
   .workspace-heading-meta { @apply ml-auto flex min-w-0 items-center gap-3; }

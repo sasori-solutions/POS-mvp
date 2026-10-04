@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import { Minus, Plus } from 'lucide-react'
 import type { BusinessContext, PaymentMethod } from '../../lib/contracts'
 import { hasPermission } from '../../lib/business-access'
 import type { BalanceWaiver, CheckoutAttempt, OperationalOrder, OrderDiscount } from '../../lib/operations-contracts'
 import { money, parsePrice, posRequest, type PosAccess } from '../../lib/pos'
 import MoneyInput from '../../components/MoneyInput'
+import { CheckoutClosingContext } from '../../components/CheckoutPanel'
 import { PosDialog } from '../../components/PosShared'
 import { paymentLabels } from '../../components/PosShared'
 import PaymentMethodPicker from '../../components/PaymentMethodPicker'
@@ -16,6 +17,7 @@ import { checkoutTotals, checkoutSelectionKey, type CheckoutDraft } from '../../
 import { useCurrentAttempt } from './useCurrentAttempt'
 
 export default function OrderDetail({ order, business, methods, attempts, mutation, onSaved, onPaymentRecorded, onEdit, refresh, collectionAllowed, access, onSessionError, checkoutView = false, onOpenCash, draft, onDraftChange }: { checkoutView?: boolean; order: OperationalOrder; business: BusinessContext; methods: PaymentMethod[]; attempts: CheckoutAttempt[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onPaymentRecorded?: (order: OperationalOrder) => void; onEdit: () => void; refresh: () => Promise<void>; collectionAllowed: boolean; access?: PosAccess; onSessionError?: (error: AccountClientError) => void; onOpenCash?: () => void; draft?: CheckoutDraft; onDraftChange?: (draft: CheckoutDraft) => void }) {
+  const checkoutClosing = useContext(CheckoutClosingContext)
   const recovered = useRef(attempts.find(a => a.orderId === order.id && a.kind === 'payment'))
   const initialDraft = useRef(draft?.orderId === order.id ? draft : undefined)
   const selectionAttemptId = useRef(recovered.current?.id ?? null)
@@ -85,7 +87,7 @@ export default function OrderDetail({ order, business, methods, attempts, mutati
   const reservationMatches = Boolean(currentAttempt?.status === 'prepared' && currentAttempt.paymentMethod === method && checkoutSelectionKey(currentAttempt.items) === selectionKey)
   const editableReservation = !currentAttempt || currentAttempt.status === 'prepared'
   useEffect(() => {
-    if (adoptingReservation || settled || !allowed('sales.create') || !collectionAllowed || !methods.includes(method) || !items.length || disabled || !editableReservation || current.blocked) return
+    if (checkoutClosing || adoptingReservation || settled || !allowed('sales.create') || !collectionAllowed || !methods.includes(method) || !items.length || disabled || !editableReservation || current.blocked) return
     if (reservationMatches) return
     const requestKey = `${order.id}:${currentAttempt?.id ?? order.revision}:${currentAttempt?.revision ?? 0}:${method}:${selectionKey}:${reservationRetry}`
     if (requested.current === requestKey) return
@@ -104,7 +106,7 @@ export default function OrderDetail({ order, business, methods, attempts, mutati
       reserveTimer.current = null
       if (requested.current === requestKey) requested.current = ''
     }
-  }, [order.id, order.revision, selectionKey, method, disabled, collectionAllowed, currentAttempt?.id, currentAttempt?.revision, current.blocked, editableReservation, reservationMatches, settled, reservationRetry, adoptingReservation])
+  }, [order.id, order.revision, selectionKey, method, disabled, collectionAllowed, checkoutClosing, currentAttempt?.id, currentAttempt?.revision, current.blocked, editableReservation, reservationMatches, settled, reservationRetry, adoptingReservation])
   const selectionLocked = Boolean(mutation.pending && !mutation.busy && mutation.error) || Boolean(current.error) || !editableReservation || settled
   const parsedDiscount = discountKind === 'fixed' ? parseOperationalMoney(discountValue) : parsePrice(discountValue)
   async function transition(command: 'resume_order_service' | 'cancel_order' | 'close_order') {

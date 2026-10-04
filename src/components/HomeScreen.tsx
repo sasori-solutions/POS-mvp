@@ -21,7 +21,7 @@ import { hasPermission } from "../lib/business-access";
 import type { OperationsResponses, OperationalOrder, OrderInputLine, CheckoutAttempt } from "../lib/operations-contracts";
 import type { CartLine, ItemSelection, Product } from "../lib/pos-contracts";
 import { lineKey, selectedPrice } from "../lib/product-details";
-import { AccountClientError, accountRequest } from "../lib/account";
+import { AccountClientError, accountRequest, deviceRequest } from "../lib/account";
 import ProductsScreen from "./ProductsScreen";
 import SaleScreen from "./SaleScreen";
 import CheckoutPanel from "./CheckoutPanel";
@@ -126,7 +126,7 @@ export default function HomeScreen({
   const [datePulse, setDatePulse] = useState(0);
   const today = businessDate(business.timezone);
   const presenceScope = `${business.id}:${operatorToken}:${deviceToken ?? ''}`;
-  const [presenceSnapshot, setPresenceSnapshot] = useState<{ scope: string; employees: NonNullable<BusinessContext['connectedEmployees']> } | null>(null);
+  const [presenceSnapshot, setPresenceSnapshot] = useState<{ scope: string; employees: BusinessContext['connectedEmployees'] } | null>(null);
   const presence = business.connectedEmployees ?? (presenceSnapshot?.scope === presenceScope ? presenceSnapshot.employees : undefined);
   const homeAnalytics = useReportController(access, business.timezone, onSessionError,
     !managementContent && active === 'Inicio', hasPermission(business, 'reports.read'));
@@ -139,15 +139,18 @@ export default function HomeScreen({
   useEffect(() => {
     if (business.role !== 'owner' || managementContent || active !== 'Inicio') return;
     let alive = true;
-    void accountRequest({ action: 'context', businessId: business.id, operatorToken })
+    const request = deviceToken
+      ? deviceRequest({ action: 'device_context', deviceToken, operatorToken })
+      : accountRequest({ action: 'context', businessId: business.id, operatorToken });
+    void request
       .then(context => {
-        if (alive && context.business.id === business.id) setPresenceSnapshot({ scope: presenceScope, employees: context.business.connectedEmployees ?? [] });
+        if (alive && context.business.id === business.id) setPresenceSnapshot({ scope: presenceScope, employees: context.business.connectedEmployees });
       })
       .catch(caught => {
         if (alive && caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) sessionErrorHandler.current?.(caught);
       });
     return () => { alive = false; };
-  }, [business.id, business.role, managementContent, active, operatorToken, presenceScope]);
+  }, [business.id, business.role, managementContent, active, operatorToken, deviceToken, presenceScope]);
   useEffect(() => {
     if (homeAnalytics.date !== today || homeAnalytics.period !== 'day') {
       homeAnalytics.setDate(today);
@@ -408,6 +411,7 @@ export default function HomeScreen({
               collectionReady={Boolean(snapshot) && !operation.error && !mutation.pending && !mutation.busy}
               collectionAllowed={snapshot?.shift?.status === 'open'}
               activationRequired={snapshot?.enabled === false}
+              onOpenCash={hasPermission(business, 'cash.read') ? () => setActive('Caja') : undefined}
               savedCounter={counter ?? undefined}
               onAccountAdd={addCounterItem}
               onAccountQuantity={changeCounterQuantity}

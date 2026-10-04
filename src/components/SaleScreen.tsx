@@ -90,6 +90,7 @@ export default function SaleScreen({
   collectionReady = true,
   collectionAllowed = true,
   activationRequired = false,
+  onOpenCash,
   savedCounter,
   onAccountAdd,
   onAccountQuantity,
@@ -107,6 +108,7 @@ export default function SaleScreen({
   collectionReady?: boolean;
   collectionAllowed?: boolean;
   activationRequired?: boolean;
+  onOpenCash?: () => void;
   savedCounter?: OperationalOrder;
   onAccountAdd?: (product: Product, selection?: ItemSelection) => Promise<void>;
   onAccountQuantity?: (lineId: string, change: number | 'remove') => Promise<void>;
@@ -824,7 +826,7 @@ export default function SaleScreen({
             description="Prueba otro nombre o categoría."
           />
         ) : (
-          <div className="touch-catalog grid grid-cols-4 gap-x-4 gap-y-5 max-desktop:grid-cols-3 max-[60rem]:grid-cols-2 max-tablet:gap-x-3 max-tablet:gap-y-4">
+          <div className="touch-catalog grid grid-cols-2 gap-x-4 gap-y-5 tablet:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] max-tablet:gap-x-3 max-tablet:gap-y-4">
             {filtered.map((product) => {
               const amount = displayCart
                 .filter((line) => line.product.id === product.id)
@@ -1071,6 +1073,8 @@ export default function SaleScreen({
               <div><dt>Pagado</dt><dd>{money(account.paidCents)}</dd></div>
             )}
           </dl>
+          {activationRequired && <p className="text-sm text-muted" role="status">Activa los turnos en Caja para cobrar y dividir por artículos.</p>}
+          {activationRequired && onOpenCash && <button type="button" className="pos-button pos-secondary" disabled={busy || Boolean(pending)} onClick={onOpenCash}>Ir a Caja</button>}
           {account ? (
             <>
               <button className="pos-button pos-primary" disabled={!canResumeAccount} onClick={() => void saveAccount()}>
