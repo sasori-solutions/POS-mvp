@@ -33,7 +33,11 @@ export async function mockPoint(page: Page, options: { state?: 'approved_verifie
   }
   async function attach(target: Page) {
     await target.route('**/*', route => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort('blockedbyclient'))
-    await mockAccount(target, { existingBusiness: true })
+    await mockAccount(target, {
+      existingBusiness: true,
+      sessionOverrides: backend.session,
+      business: { ...fixtureBusiness, profile: { ...fixtureBusiness.profile, paymentMethods: ['cash', 'card_external', 'transfer', 'card_integrated'] } },
+    })
     await target.route('http://127.0.0.1:54321/functions/v1/account', async route => {
       const raw = route.request().postDataJSON()
       if (raw?.action !== 'point' && raw?.action !== 'pos') return route.fallback()

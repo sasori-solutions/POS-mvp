@@ -1,5 +1,5 @@
 import { submitPinIfPresent } from './workspace-flow'
-import { openOperationalMore } from './workspace-flow'
+import { openOperationalMore, openOwnerTask } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test';
 import { businessPermissions } from '../../src/lib/contracts';
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture';
@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
 test('a new Google account chooses whether to create or join a business', async ({ page }, testInfo) => {
   await mockOnboarding(page);
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '¿Qué quieres hacer?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tu negocio' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Crear mi negocio', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Unirme a un negocio', exact: true })).toBeVisible();
   await expect(page.getByLabel('Nombre del negocio')).not.toBeVisible();
@@ -45,20 +45,18 @@ test('creation saves branch, register and progressive profile for later editing'
     branchName: 'Centro', registerName: 'Mostrador', city: 'Guadalajara', state: 'Jalisco',
     paymentMethods: ['cash', 'card_external', 'transfer'],
   } });
-  await page.getByRole('button', { name: 'Ir al inicio', exact: true }).click();
-  await openMore(page);
-  await page.getByRole('button', { name: 'Datos del negocio', exact: true }).click();
+  await page.getByRole('button', { name: 'Abrir Dashboard', exact: true }).click();
+  await openOwnerTask(page, 'Datos del negocio');
   await expect(page.getByLabel('Sucursal', { exact: true })).toHaveValue('Centro');
   await expect(page.getByLabel(/^Ciudad/)).toHaveValue('Guadalajara');
   await page.getByLabel(/^Dirección/).fill('Calle de prueba 100');
   await page.getByRole('textbox',{name:'Caja',exact:true}).fill('Barra');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('Cambios guardados.');
-  await expect(page.getByRole('heading', { name: 'Datos del negocio', exact: true })).toBeVisible();
+  await expect(page.locator('#pos-section-title')).toHaveText('Configuración');
   await page.reload();
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Datos del negocio', exact: true }).click();
+  await openOwnerTask(page, 'Datos del negocio');
   await expect(page.getByRole('textbox',{name:'Caja',exact:true})).toHaveValue('Barra');
   await expect(page.getByLabel(/^Dirección/)).toHaveValue('Calle de prueba 100');
   await capture(page, testInfo.project.name, 'business-settings');
@@ -77,7 +75,7 @@ test('invalid branch, payment methods and phone stay on business details before 
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   await page.getByLabel('Sucursal', { exact: true }).fill('Principal');
   await page.getByLabel('Efectivo', { exact: true }).uncheck();
-  await page.getByLabel('Tarjeta en terminal externa', { exact: true }).uncheck();
+  await page.getByLabel('Tarjeta en terminal', { exact: true }).uncheck();
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/método|pago/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
@@ -206,8 +204,7 @@ test('logout during PIN change discards and revokes a late operator response', a
   });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Cambiar mi PIN', exact: true }).click();
+  await openOwnerTask(page, 'Cambiar mi PIN');
   await page.getByLabel('PIN actual', { exact: true }).fill(fixturePin);
   await fillAccountPin(page, '068214');
   await page.getByRole('button', { name: 'Guardar nuevo PIN', exact: true }).click();
@@ -229,9 +226,8 @@ test('employee management gives each person one action and separates devices', a
   await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Empleados', exact: true })).toBeVisible();
+  await openOwnerTask(page, 'Empleados');
+  await expect(page.locator('#pos-section-title')).toHaveText('Empleados');
   await expect(page.getByRole('list', { name: 'Empleados' }).getByText('Persona de prueba', { exact: true })).not.toBeVisible();
   const people = page.getByRole('list', { name: 'Empleados' });
   await expect(people.getByRole('listitem')).toHaveCount(2);
@@ -240,8 +236,7 @@ test('employee management gives each person one action and separates devices', a
   await expect(page.getByRole('heading', { name: 'Invitaciones', exact: true })).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Vincular dispositivo', exact: true })).not.toBeVisible();
   await capture(page, testInfo.project.name, 'focused-employees');
-  await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click();
-  await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click();
+  await openOwnerTask(page, 'Dispositivos de caja');
   await expect(people).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Vincular dispositivo', exact: true })).toBeVisible();
 });
@@ -250,8 +245,7 @@ test('employee forms focus on one person and keep their PIN private', async ({ p
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await expect(page.getByRole('list', { name: 'Empleados' })).not.toBeVisible();
   await expect(page.getByRole('tab', { name: 'Dispositivos', exact: true })).not.toBeVisible();
@@ -272,8 +266,7 @@ test('employee deletion permanently removes business access without a restore ac
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await page.getByRole('button', { name: 'Eliminar empleado', exact: true }).click();
   await expect(page.getByRole('heading', { name: `¿Eliminar a ${fixtureCashier.name}?`, exact: true })).toBeVisible();
@@ -306,8 +299,7 @@ for (const entry of [
     }] });
     await page.goto('/');
     await unlockOwner(page);
-    await openMore(page);
-    await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+    await openOwnerTask(page, 'Empleados');
     await page.getByRole('button', { name: /(?:Administrar|Editar) Caja de prueba/ }).click();
     await expect(page.getByText(entry.expected, { exact: true })).toBeVisible();
     await expect(page.getByText(/revocada o utilizada/)).not.toBeVisible();
@@ -323,8 +315,7 @@ test('a pending invited employee keeps one setup path without a second PIN flow'
   }] });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await expect(page.getByRole('button', { name: 'Crear código para PIN', exact: true })).toHaveCount(0);
   await expect(page.getByText('Lo creará al aceptar la invitación.')).toBeVisible();
@@ -341,8 +332,7 @@ test('opening employee details does not offer to save unchanged data', async ({ 
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await expect(page.getByRole('button', { name: 'Guardar cambios', exact: true })).toBeDisabled();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill(`  ${fixtureCashier.name}  `);
@@ -356,8 +346,7 @@ test('returning to employee details refreshes an invitation accepted elsewhere',
   const fixture = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
@@ -379,8 +368,7 @@ test('a created invitation remains shareable when refreshing the employee list f
   });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Enlace conservado');
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
@@ -397,8 +385,7 @@ test('an invitation expiring in open details stops offering the old link', async
   }] });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
   await page.clock.runFor(31_000);
@@ -407,28 +394,54 @@ test('an invitation expiring in open details stops offering the old link', async
   await expect(page.getByRole('button', { name: 'Renovar invitación', exact: true })).toBeVisible();
 });
 
-test('Más entries work by keyboard and return focus to the previous task', async ({ page }) => {
+test('owner management tasks work by keyboard and preserve focus in nested controls', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  for (const name of ['Empleados', 'Dispositivos de caja', 'Datos del negocio', 'Cambiar mi PIN']) {
-    const entry = page.getByRole('button', { name, exact: true });
+  for (const name of ['Empleados', 'Dispositivos', 'Configuración']) {
+    const menu = page.getByRole('button', { name: 'Abrir menú', exact: true });
+    if (await menu.isVisible()) await menu.click();
+    const navigation = page.getByRole('navigation', { name: 'Navegación del dueño' }).filter({ visible: true }).first();
+    const entry = navigation.getByRole('button', { name, exact: true });
     await entry.focus();
     await entry.press('Enter');
-    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
-    await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Más', exact: true })).toBeVisible();
-    await expect(entry).toBeFocused();
+    await expect(page.locator('#pos-section-title')).toHaveText(name);
+    if (await menu.isVisible()) {
+      await menu.click();
+      await expect(navigation.getByRole('button', { name, exact: true })).toHaveAttribute('aria-current', 'page');
+      await page.keyboard.press('Escape');
+      await expect(menu).toBeFocused();
+    } else {
+      await expect(entry).toHaveAttribute('aria-current', 'page');
+    }
   }
+  await openOwnerTask(page, 'Empleados');
+  const add = page.getByRole('button', { name: 'Agregar empleado', exact: true });
+  await add.focus();
+  await add.press('Enter');
+  await expect(page.getByLabel('Nombre del empleado', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(add).toBeFocused();
+  const menu = page.getByRole('button', { name: 'Abrir menú', exact: true });
+  if (await menu.isVisible()) await menu.click();
+  const account = page.getByRole('button', { name: /^Opciones de cuenta:/ }).filter({ visible: true }).first();
+  await account.focus();
+  await account.press('Enter');
+  await page.keyboard.press('Escape');
+  await expect(account).toBeFocused();
+  await account.press('Enter');
+  const changePin = page.getByRole('button', { name: 'Cambiar mi PIN', exact: true }).filter({ visible: true });
+  await changePin.focus();
+  await changePin.press('Enter');
+  await expect(page.locator('#pos-section-title')).toHaveText('Mi acceso');
+  await expect(page.getByLabel('PIN actual', { exact: true })).toBeVisible();
 });
 
 test('a person removed elsewhere cannot remain in an editable employee detail', async ({ page }) => {
   const fixture = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   fixture.deleteEmployeeElsewhere(fixtureCashier.id);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -443,8 +456,7 @@ test('employee creation has one invitation method and keeps PIN entry with the e
   await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toHaveCount(1);
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   const permissions = page.getByRole('group', { name: 'Permisos', exact: true });
@@ -453,7 +465,7 @@ test('employee creation has one invitation method and keeps PIN entry with the e
   await expect(page.getByRole('combobox')).toHaveCount(0);
   await expect(page.getByRole('radio')).toHaveCount(0);
   await expect(page.locator('.management-shell input[type="password"]')).toHaveCount(0);
-  await expect(page.getByText('Recibirás un enlace y un QR para compartir. El empleado entrará con Google, creará su PIN y vinculará su dispositivo.')).toBeVisible();
+  await expect(page.getByText('Comparte la invitación. El empleado elige su PIN y vincula su dispositivo.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Crear invitación', exact: true })).toHaveCount(1);
 });
 
@@ -461,8 +473,7 @@ test('Google employee creation saves one pending person without requesting their
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cocina invitada');
   await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
@@ -494,8 +505,7 @@ test('Google linking targets the existing employee and retries a lost response w
   });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}`, exact: true }).click();
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
@@ -516,8 +526,7 @@ test('a lost Google employee response retries the same atomic creation without a
   const { calls } = await mockOnboarding(page, { existingBusiness: true, createEmployeeResponseLosses: 1 });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado con reintento');
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
@@ -540,8 +549,7 @@ test('permission choices keep the same invitation method and employee-owned PIN'
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
+  await openOwnerTask(page, 'Empleados');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado sin PIN oculto');
   await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
@@ -562,9 +570,8 @@ test('the owner creates employee access and invitations with explicit permission
   const { calls } = await mockOnboarding(page, { existingBusiness: true });
   await page.goto('/');
   await unlockOwner(page);
-  await openMore(page);
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Empleados' })).toBeVisible();
+  await openOwnerTask(page, 'Empleados');
+  await expect(page.locator('#pos-section-title')).toHaveText('Empleados');
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toBeVisible();
   await capture(page, testInfo.project.name, 'team-management');
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
@@ -585,7 +592,7 @@ test('the owner creates employee access and invitations with explicit permission
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Administrar Cajera actualizada', exact: true })).toBeVisible();
-  await expect(page.getByText('3 permisos. Invitación pendiente', { exact: true })).toBeVisible();
+  await expect(page.getByText('3 permisos · Invitación pendiente', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Nueva cocina');
   await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
@@ -600,8 +607,7 @@ test('the owner creates employee access and invitations with explicit permission
   expect(calls.filter((call) => call.action === 'create_employee')[1]).toMatchObject({ name: 'Nueva cocina', role: 'cashier', permissions: ['kitchen.read', 'kitchen.operate'], pin: null, inviteWithGoogle: true });
   expect(calls.filter((call) => call.action === 'create_invitation')).toHaveLength(0);
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
-  await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click();
-  await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click();
+  await openOwnerTask(page, 'Dispositivos de caja');
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
   await expect(page.getByLabel('Código para vincular dispositivo', { exact: true })).toHaveValue(fixturePairingCode);
   await assertNoOperatorSecrets(page);
@@ -613,11 +619,11 @@ test('employee pairing, PIN switch and reload keep only the restricted device cr
   await page.getByRole('button', { name: 'Abrir caja compartida', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
   await capture(page, testInfo.project.name, 'employee-pairing');
-  await page.getByLabel('Código para vincular dispositivo', { exact: true }).fill('ff'.repeat(32));
+  await page.getByLabel('Código de vinculación', { exact: true }).fill('ff'.repeat(32));
   await page.getByLabel('Nombre del dispositivo', { exact: true }).fill('Tablet mostrador');
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/código/i);
-  await page.getByLabel('Código para vincular dispositivo', { exact: true }).fill(fixturePairingCode);
+  await page.getByLabel('Código de vinculación', { exact: true }).fill(fixturePairingCode);
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Elige tu nombre' })).toBeVisible();
   await capture(page, testInfo.project.name, 'employee-roster');
@@ -630,7 +636,9 @@ test('employee pairing, PIN switch and reload keep only the restricted device cr
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin);
   await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
-  await expect(page.getByText(fixtureBusiness.name, { exact: true }).filter({visible:true}).first()).toBeVisible();
+  const businessName = page.locator('.workspace-mobile-business, .workspace-brand > span:last-child').filter({ visible: true }).first();
+  await expect(businessName).toBeVisible();
+  await expect(businessName).toContainText(fixtureBusiness.name);
   const priorOperator = fixture.deviceOperator();
   await openMore(page);
   await page.getByRole('button', { name: 'Cambiar empleado', exact: true }).click();
@@ -657,7 +665,7 @@ test('employee pairing, PIN switch and reload keep only the restricted device cr
 test('a revoked shared device loses access and cannot resume an employee session', async ({ page }) => {
   const fixture = await mockOnboarding(page, { authenticated: false });
   await page.goto('/register');
-  await page.getByLabel('Código para vincular dispositivo', { exact: true }).fill(fixturePairingCode);
+  await page.getByLabel('Código de vinculación', { exact: true }).fill(fixturePairingCode);
   await page.getByLabel('Nombre del dispositivo', { exact: true }).fill('Tablet revocable');
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Elige tu nombre' })).toBeVisible();

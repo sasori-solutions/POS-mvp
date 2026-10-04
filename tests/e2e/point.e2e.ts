@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import { fixturePin } from './account-fixture'
 import { mockPoint } from './point-fixture'
-import { enterOperations } from './workspace-flow'
+import { enterOperations, openOwnerTask } from './workspace-flow'
 
 async function unlock(page: Page) { await page.goto('/'); await page.getByTestId('pin-input').fill(fixturePin); await expect(page.getByRole('heading',{name:'Inicio',exact:true})).toBeVisible() }
 async function sell(page: Page) {
@@ -25,9 +25,7 @@ test('Point linked SQL payment creates one sale and reports verified volume; own
     expect((await backend.execute({command:'merchant_report',from:'2026-01-01',to:'2026-12-31'})).paymentCount).toBe(1)
     expect((await backend.db.query<{count:string}>(`select count(*)::text count from app_private.sales`)).rows[0].count).toBe('1')
     await page.getByRole('button',{name:'Continuar'}).click()
-    await page.getByRole('button',{name:'Dashboard',exact:true}).filter({visible:true}).first().click()
-    const menu=page.getByRole('button',{name:'Abrir menú',exact:true});if(await menu.isVisible())await menu.click()
-    await page.getByRole('button',{name:'Reportes',exact:true}).first().click()
+    await openOwnerTask(page, 'Reportes')
     await page.getByRole('button',{name:'Pagos integrados',exact:true}).click()
     await expect(page.getByRole('heading',{name:'Pagos integrados y comisión'})).toBeVisible()
     await expect(page.getByText(/Un pago verificado no demuestra depósito/)).toBeVisible()
@@ -49,10 +47,13 @@ test('uncertain action_required blocks cart/payment changes and restores through
     await expect(page.getByText('Consulta este cobro antes de intentar otro.')).toBeVisible()
     await unlock(other); await other.getByRole('button',{name:/^Recuperar cobro/}).click()
     await expect(other.getByRole('heading',{name:'Pago por confirmar'})).toBeVisible()
-    const recovered = (await backend.execute({command:'recover'})).checkouts[0]
-    await backend.apply(recovered.id,'approved_verified')
+    // Exercise manual reads while unresolved, then let both views observe the provider's final state.
     await page.getByRole('button',{name:'Consultar estado'}).click()
     await other.getByRole('button',{name:'Consultar estado'}).click()
+    await expect(page.getByRole('heading',{name:'Pago por confirmar'})).toBeVisible()
+    await expect(other.getByRole('heading',{name:'Pago por confirmar'})).toBeVisible()
+    const recovered = (await backend.execute({command:'recover'})).checkouts[0]
+    await backend.apply(recovered.id,'approved_verified')
     await expect(page.getByRole('heading',{name:'Pago aprobado'})).toBeVisible()
     await expect(other.getByRole('heading',{name:'Pago aprobado'})).toBeVisible()
     expect(backend.remoteCharges()).toBe(1)
@@ -78,8 +79,7 @@ for (const width of [320,390,768,1024,1440]) test(`Point setup and reports retai
   const backend = await mockPoint(page,{physicalPending:true,enabled:false})
   try {
     await unlock(page)
-    const menu = page.getByRole('button',{name:'Abrir menú'}); if (await menu.isVisible()) await menu.click()
-    await page.getByRole('button',{name:'Vincular una terminal',exact:true}).first().click()
+    await openOwnerTask(page, 'Vincular una terminal')
     await expect(page.getByRole('heading',{name:'Elige tu terminal',exact:true})).toBeFocused()
     await expect(page.getByRole('button',{name:/^SN-SYNTHETIC-01/})).toHaveAttribute('aria-pressed','true')
     await expect(page.getByText('En la terminal, confirma la sucursal y caja y activa el modo Punto de venta.')).toBeVisible()

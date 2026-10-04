@@ -13,6 +13,7 @@ import type {
 interface BusinessSettingsProps {
   business: BusinessContext;
   operatorToken: string;
+  focusPaymentMethods?: boolean;
   onSaved: (business: BusinessContext) => void;
   onBack: () => void;
   onSessionError?: (error: AccountClientError) => void;
@@ -45,6 +46,7 @@ const emptyProfile: BusinessProfile = {
 export default function BusinessSettings({
   business,
   operatorToken,
+  focusPaymentMethods = false,
   onSaved,
   onSessionError,
 }: BusinessSettingsProps) {
@@ -62,6 +64,8 @@ export default function BusinessSettings({
   const [saved, setSaved] = useState(false);
   const [denied, setDenied] = useState(business.role !== "owner");
   const [pointSetup, setPointSetup] = useState(false);
+  const paymentMethodInput = useRef<HTMLInputElement>(null);
+  const paymentFocusPending = useRef(false);
   const pointAccess = { businessId: business.id, operatorToken };
   const point = usePoint(pointAccess, business.role === 'owner', onSessionError);
   const saving = useRef(false);
@@ -73,6 +77,14 @@ export default function BusinessSettings({
       mounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!pointSetup && (focusPaymentMethods || paymentFocusPending.current)) {
+      paymentMethodInput.current?.focus();
+      paymentMethodInput.current?.scrollIntoView?.({ block: 'center' });
+      paymentFocusPending.current = false;
+    }
+  }, [pointSetup, focusPaymentMethods]);
 
   function changeProfile<K extends keyof BusinessProfile>(
     key: K,
@@ -168,7 +180,7 @@ export default function BusinessSettings({
     JSON.stringify(profile) !==
       JSON.stringify({ ...emptyProfile, ...business.profile });
 
-  if (pointSetup) return <PointSetup access={pointAccess} controller={point} onBack={() => setPointSetup(false)} onSessionError={onSessionError} />;
+  if (pointSetup) return <PointSetup access={pointAccess} controller={point} paymentMethodEnabled={business.profile.paymentMethods.includes('card_integrated')} onOpenPaymentMethods={() => { paymentFocusPending.current = true; setPointSetup(false); }} onBack={() => setPointSetup(false)} onSessionError={onSessionError} />;
   return (
     <div className="management-shell management-polish settings-polish">
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
@@ -361,6 +373,7 @@ export default function BusinessSettings({
               >
                 <input
                   type="checkbox"
+                  ref={value === "card_integrated" ? paymentMethodInput : undefined}
                   checked={profile.paymentMethods.includes(value)}
                   disabled={busy}
                   onChange={(event) =>

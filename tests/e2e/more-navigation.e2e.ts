@@ -1,5 +1,4 @@
-import { submitPinIfPresent } from './workspace-flow'
-import { openOperationalMore } from './workspace-flow'
+import { openOperationalMore, openOwnerTask, submitPinIfPresent } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import { fixturePin } from './account-fixture'
 import { fixtureCashier, fixtureDeviceId, fixturePairingCode, mockOnboarding } from './onboarding-fixture'
@@ -8,28 +7,27 @@ test.beforeEach(async ({ page }) => {
   await page.route('**/*', (route) => ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort('blockedbyclient'))
 })
 
-async function openMore(page: Page) {
+async function unlock(page: Page) {
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
   await submitPinIfPresent(page);
-  await openOperationalMore(page);
 }
 
 async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 }
 
-test('More and its subpages have readable task groups and fit the viewport', async ({ page }, info) => {
+test('owner management tasks fit the viewport and remain directly navigable', async ({ page }, info) => {
   await mockOnboarding(page, { existingBusiness: true })
   if (info.project.name === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
-  await openMore(page)
-  await expect(page.getByRole('heading', { name: 'Negocio', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
+  await unlock(page)
+  await expect(page.locator('#pos-section-title')).toHaveText('Inicio')
   await noOverflow(page)
   await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-menu.png` })
   for (const task of ['Datos del negocio', 'Empleados', 'Dispositivos de caja', 'Cambiar mi PIN']) {
-    await page.getByRole('button', { name: task, exact: true }).click()
-    await expect(page.getByRole('heading', { name: task, exact: true })).toBeVisible()
+    await openOwnerTask(page, task)
+    const titles: Record<string, string> = { 'Datos del negocio': 'Configuración', 'Dispositivos de caja': 'Dispositivos', 'Cambiar mi PIN': 'Mi acceso' }
+    await expect(page.locator('#pos-section-title')).toHaveText(titles[task] ?? task)
     await noOverflow(page)
     await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-${['Datos del negocio', 'Empleados', 'Dispositivos de caja', 'Cambiar mi PIN'].indexOf(task)}.png`, fullPage: true })
     if (task === 'Datos del negocio') {
@@ -45,13 +43,15 @@ test('More and its subpages have readable task groups and fit the viewport', asy
       await noOverflow(page)
       await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-employee-new.png`, fullPage: true })
       await page.getByRole('button', { name: 'Volver a empleados' }).click()
+      await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toBeFocused()
       await page.getByRole('button', { name: `Administrar ${fixtureCashier.name}` }).click()
-      await expect(page.getByRole('heading', { name: 'Invitación' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: fixtureCashier.name, exact: true })).toBeVisible()
       await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-employee-detail.png`, fullPage: true })
       await page.getByRole('button', { name: 'Volver a empleados' }).click()
+      await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toBeFocused()
     }
-    await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click()
-    await expect(page.getByRole('button', { name: task, exact: true })).toBeFocused()
+    await openOwnerTask(page, 'Inicio', { keyboard: true })
+    await expect(page.locator('#pos-section-title')).toHaveText('Inicio')
   }
   if (info.project.name === 'mobile') {
     await page.setViewportSize({ width: 320, height: 640 })
@@ -59,10 +59,21 @@ test('More and its subpages have readable task groups and fit the viewport', asy
   }
 })
 
+test('employee More retains access and session groups within the viewport', async ({ page }) => {
+  await mockOnboarding(page, { existingBusiness: true, role: 'cashier' })
+  await unlock(page)
+  await openOperationalMore(page)
+  await expect(page.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sesión', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Cambiar mi PIN', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).toHaveCount(0)
+  await noOverflow(page)
+})
+
 test('device removal requires confirmation and pairing explains where to use the code', async ({ page }) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true, devices: [{ id: fixtureDeviceId, name: 'Tablet de prueba', registerName: 'Mostrador', active: true }] })
-  await openMore(page)
-  await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click()
+  await unlock(page)
+  await openOwnerTask(page, 'Dispositivos de caja')
   await page.getByRole('button', { name: 'Desvincular Tablet de prueba' }).click()
   await expect(page.getByRole('heading', { name: '¿Desvincular Tablet de prueba?' })).toBeVisible()
   expect(calls.filter((call) => call.action === 'revoke_device')).toHaveLength(0)
@@ -76,5 +87,6 @@ test('device removal requires confirmation and pairing explains where to use the
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   await expect(page.getByLabel('Código para vincular dispositivo')).toHaveValue(fixturePairingCode)
   await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()
-  await expect(page.getByText('Abre el enlace o escanea el QR en el dispositivo de caja.')).toBeVisible()
+  await expect(page.getByText('Escanéalo desde la caja que vas a vincular.')).toBeVisible()
+  await expect(page.getByText('Abre el enlace en la caja y asígnale un nombre.')).toBeVisible()
 })

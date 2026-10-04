@@ -64,7 +64,7 @@ test('an employee sees newly created products automatically and can refresh imme
   await openOperationalMore(page)
   await page.getByRole('button', { name: 'Productos', exact: true }).filter({visible:true}).first().click()
   products[0] = { ...products[0], name: 'Café actualizado por el dueño', version: 2 }
-  await page.getByRole('button', { name: 'Actualizar productos', exact: true }).click()
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(page.getByRole('list', { name: 'Catálogo de productos' }).getByText('Café actualizado por el dueño', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Agregar producto', exact: true })).toHaveCount(0)
 })

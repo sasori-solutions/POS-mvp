@@ -172,7 +172,7 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     expect((await account(null,login)).body.error?.code).toBe('PIN_LOCKED');
     sql(`update app_private.shared_employee_credentials set locked_until=now()-interval '1 second' where employee_id=${sqlUuid(employeeId)};`);
     const unlocked=await account<BusinessSession>(null,login); expect(unlocked.status).toBe(200); expect(unlocked.body.data?.business.role).toBe('cashier');
-    expect(unlocked.body.data?.business.permissions).toEqual(['kitchen.read','kitchen.operate']);
+    expect(unlocked.body.data?.business.permissions.slice().sort()).toEqual(['kitchen.read','kitchen.operate'].sort());
     expect((await account(owner,{ action:'team',businessId:business.business.id,operatorToken:unlocked.body.data!.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
     expect((await account(owner,{ action:'update_employee',...ownerArgs,employeeId,name:'Cocina sintética',role:'kitchen',active:false,pin:null })).status).toBe(200);
     expect((await account(null,{ action:'device_context',deviceToken:device.deviceToken,operatorToken:unlocked.body.data!.operatorToken })).body.error?.code).toBe('SESSION_INVALID');

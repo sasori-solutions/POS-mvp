@@ -1,5 +1,5 @@
 import { submitPinIfPresent } from './workspace-flow'
-import { ownerAccountMenu } from './workspace-flow'
+import { openOwnerNavigation, openOwnerTask, ownerAccountMenu } from './workspace-flow'
 import { expect, test } from '@playwright/test';
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin, mockAccount, type FixtureAuthLogoutState } from './account-fixture';
 
@@ -59,12 +59,12 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   });
   expect(create?.operationId).toMatch(/^[0-9a-f-]{36}$/);
   await assertNoPersistedOperatorSecrets(page);
-  await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Ir al inicio', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Abrir Dashboard', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Abrir Dashboard', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await expect(page).toHaveURL('http://127.0.0.1:5174/');
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
-  await expect(page.getByText(fixtureBusiness.name, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(fixtureBusiness.name, { exact: true }).filter({ visible: true }).first()).toBeVisible();
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(1);
   await page.screenshot({ path: `/tmp/pos-mexico-${testInfo.project.name}-home.png`, fullPage: true });
   await page.getByRole('button', { name: 'Bloquear', exact: true }).click();
@@ -76,7 +76,7 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   await page.getByTestId('pin-input').fill(fixturePin);
   await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Abrir Dashboard', exact: true })).not.toBeVisible();
   await logoutFromHome(page);
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
   await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), fixtureAuthKey)).toBeNull();
@@ -107,7 +107,7 @@ test('a lost business-creation response can be retried with the same operation i
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Abrir Dashboard', exact: true })).not.toBeVisible();
   await page.getByTestId('pin-input').fill(fixturePin);
   await page.getByTestId('pin-confirm-input').fill(fixturePin);
   await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
@@ -115,7 +115,7 @@ test('a lost business-creation response can be retried with the same operation i
   const attempts = calls.filter((call) => call.action === 'create_business');
   expect(attempts).toHaveLength(2);
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
-  await page.getByRole('button', { name: 'Ir al inicio', exact: true }).click();
+  await page.getByRole('button', { name: 'Abrir Dashboard', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(2);
 });
@@ -142,16 +142,16 @@ test('business creation exposes the home transition only after the API succeeds'
     await seen;
     await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
     await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'Abrir Dashboard', exact: true })).not.toBeVisible();
     release?.();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
-    const home = page.getByRole('button', { name: 'Ir al inicio', exact: true });
+    const home = page.getByRole('button', { name: 'Abrir Dashboard', exact: true });
     await home.focus();
     await expect(home).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
-    await expect(page.getByText(fixtureBusiness.name, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText(fixtureBusiness.name, { exact: true }).filter({ visible: true }).first()).toBeVisible();
     expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(1);
     expect(calls.filter((call) => call.action === 'unlock')).toHaveLength(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -203,29 +203,27 @@ test('home navigation is keyboard-accessible and preserves the unlocked business
   await page.getByTestId('pin-input').fill(fixturePin);
   await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
-  const menu = page.getByRole('button', {name:'Abrir menú'}); if (await menu.isVisible()) await menu.click();
-  const navigation = page.getByRole('navigation', { name: 'Navegación del dueño' }).filter({visible:true}).first();
+  await expect(page.getByRole('button', { name: 'Abrir Dashboard', exact: true })).not.toBeVisible();
+  await openOwnerNavigation(page);
+  const navigation = page.getByRole('navigation', { name: 'Navegación del dueño' }).filter({ visible: true }).first();
   await expect(navigation).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'Inicio', exact: true })).toHaveAttribute('aria-current', 'page');
-  await navigation.getByRole('button', { name: 'Productos', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Productos', exact: true })).toBeVisible();
+  await openOwnerTask(page, 'Productos');
+  await expect(page.locator('#pos-section-title')).toHaveText('Productos');
   for (const label of ['Ventas', 'Productos', 'Caja', 'Reportes']) {
-    if (await menu.isVisible()) await menu.click();
-    const target = navigation.getByRole('button', { name: label, exact: true });
-    await target.focus();
-    await expect(target).toBeFocused();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
-    await expect(target).toHaveAttribute('aria-current', 'page');
-    await expect(page.getByText(fixtureBusiness.name, { exact: true }).first()).toBeVisible();
+    await openOwnerTask(page, label, { keyboard: true });
+    await expect(page.locator('#pos-section-title')).toHaveText(label);
+    await openOwnerNavigation(page);
+    await expect(navigation.getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByText(fixtureBusiness.name, { exact: true }).filter({ visible: true }).first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const closeMenu = page.getByRole('button', { name: 'Cerrar menú', exact: true });
+    if (await closeMenu.isVisible()) await closeMenu.click();
   }
   await page.screenshot({ path: `/tmp/pos-mexico-${testInfo.project.name}-home-more.png`, fullPage: true });
   expect(calls.filter((call) => call.action === 'unlock')).toHaveLength(1);
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
   await assertNoPersistedOperatorSecrets(page);
-  if (await menu.isVisible()) await page.getByRole('button',{name:'Cerrar menú'}).click();
   await page.getByRole('button', { name: 'Bloquear', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await expect(navigation).not.toBeVisible();
@@ -337,7 +335,7 @@ test('Google provider tokens are omitted from persisted OAuth sessions', async (
   await page.route('http://127.0.0.1:54321/auth/v1/token?grant_type=pkce', (route) =>
     route.fulfill({ contentType: 'application/json', body: JSON.stringify(returnedSession) }));
   await startGoogleCallback(page);
-  await expect(page.getByRole('heading', { name: '¿Qué quieres hacer?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Tu negocio' })).toBeVisible();
   await assertNoPersistedGoogleProviderTokens(page);
 });
 

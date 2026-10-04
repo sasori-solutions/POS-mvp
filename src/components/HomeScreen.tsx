@@ -60,7 +60,7 @@ interface HomeScreenProps {
   focusOnReturn?: string;
   onNotifications?: () => void;
   unreadCount?: number;
-  onSettings?: () => void;
+  onSettings?: (section?: 'payment-methods') => void;
   onTeam?: () => void;
   onDevices?: () => void;
   onSwitchBusiness?: () => void;
@@ -418,7 +418,7 @@ export default function HomeScreen({
         : undefined}>
       {pointPage && <div className="workspace-management">
         {pointNotice && <p role="status" className="mb-4">{pointNotice}</p>}
-        {pointPage === 'setup' ? <PointSetup access={access} controller={point} readyToCharge={Boolean(snapshot?.enabled && snapshot.shift?.status === 'open')} onOpenCash={() => { setPointNotice(''); setActive('Caja'); }} onStartSale={() => { setPointNotice(''); setActive('Venta'); }} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
+        {pointPage === 'setup' ? <PointSetup access={access} controller={point} paymentMethodEnabled={business.profile.paymentMethods.includes('card_integrated')} onOpenPaymentMethods={onSettings ? () => { setPointNotice(''); setPointPage(null); onSettings('payment-methods'); } : undefined} readyToCharge={Boolean(snapshot?.enabled && snapshot.shift?.status === 'open')} onOpenCash={() => { setPointNotice(''); setActive('Caja'); }} onStartSale={() => { setPointNotice(''); setActive('Venta'); }} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
       </div>}
       {managementContent && <div className="workspace-management">{managementContent}</div>}
       {point.settings?.sandbox?.testBusiness && !pointPage && !managementContent && <p className="mb-4 text-sm text-muted" role="status">Negocio de pruebas · Los cobros con Mercado Pago son simulados.</p>}

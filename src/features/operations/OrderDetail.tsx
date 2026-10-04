@@ -50,6 +50,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   const acceptedDiscountResults = useRef(new WeakSet<object>())
   const handledDiscountResult = useRef(mutation.lastResult)
   const [registeringPayment, setRegisteringPayment] = useState(false)
+  const paymentSubmission = useRef<number | null>(null)
   const [lastPartialPayment, setLastPartialPayment] = useState<{ amountCents: number; method: PaymentMethod } | null>(null)
   useEffect(() => {
     lockCheckoutInteraction?.(discountApplying || registeringPayment)
@@ -273,10 +274,12 @@ export default function OrderDetail({ order, business, methods: configuredMethod
     } else setAttempt(result.attempt)
   }
   async function recordPayment() {
-    if (method === 'card_integrated') return
-    if (disabled || registeringPayment || adjustingDiscount || !collectionAllowed || !allowed('sales.create') || !methods.includes(method) || !items.length || !currentAttempt || !reservationMatches || current.blocked) return
-    setRegisteringPayment(true)
     const generation = workflowGeneration.current
+    if (method === 'card_integrated' || paymentSubmission.current === generation) return
+    if (disabled || registeringPayment || adjustingDiscount || !collectionAllowed || !allowed('sales.create') || !methods.includes(method) || !items.length || !currentAttempt || !reservationMatches || current.blocked) return
+    // Guard synchronously: a second tap can arrive before React commits the disabled state.
+    paymentSubmission.current = generation
+    setRegisteringPayment(true)
     try {
       const result = await mutation.execute({ command: 'record_checkout', operationId: crypto.randomUUID(), attemptId: currentAttempt.id, expectedRevision: currentAttempt.revision, confirmed: true })
       if (generation !== workflowGeneration.current || closingRef.current) return
@@ -285,7 +288,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
       else onSaved(result.order)
       void refresh()
     } catch { /* Retry the same persisted payment; never request payment again. */ }
-    finally { if (generation === workflowGeneration.current) setRegisteringPayment(false) }
+    finally { if (generation === workflowGeneration.current) { paymentSubmission.current = null; setRegisteringPayment(false) } }
   }
   const [pointResultError, setPointResultError] = useState('')
   async function finishPoint(value: PointCheckout) {

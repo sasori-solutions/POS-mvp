@@ -1354,7 +1354,7 @@ function AccountApp() {
       </form>
     </section>
   ) : screen === 'settings' && operator?.business.role === 'owner' ? (
-    <BusinessSettings business={operator.business} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
+    <BusinessSettings business={operator.business} focusPaymentMethods={moreReturn === "payment-methods"} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
   ) : (screen === 'team' || screen === 'devices') && operator?.business.role === 'owner' ? (
     <TeamPanel key={screen} section={screen === 'devices' ? 'devices' : 'employees'} business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
   ) : screen === 'notifications' && operator?.business.role === 'owner' ? (
@@ -2088,7 +2088,7 @@ function AccountApp() {
               }}
               focusOnReturn={moreReturn}
               notice={homeNotice}
-              onSettings={() => openMoreScreen("settings", "settings")}
+              onSettings={(section) => openMoreScreen("settings", section ?? "settings")}
               onTeam={() => openMoreScreen("team", "employees")}
               onDevices={() => openMoreScreen("devices", "devices")}
               onSwitchBusiness={changeBusiness}

@@ -13,8 +13,8 @@ export default function PointSetup(props: Parameters<typeof PointSetupSession>[0
   return <PointSetupSession key={`${props.access.businessId}:${props.access.operatorToken}:${props.access.deviceToken ?? ''}`} {...props} />
 }
 
-function PointSetupSession({ access, controller, onSessionError, onStartSale, onOpenCash, onBack, readyToCharge = true }: {
-  access: PosAccess; controller: PointController; onBack?: () => void; onStartSale?: () => void; onOpenCash?: () => void; readyToCharge?: boolean; onSessionError?: (error: AccountClientError) => void
+function PointSetupSession({ access, controller, onSessionError, onStartSale, onOpenCash, onOpenPaymentMethods, onBack, readyToCharge = true, paymentMethodEnabled = true }: {
+  access: PosAccess; controller: PointController; onBack?: () => void; onStartSale?: () => void; onOpenCash?: () => void; onOpenPaymentMethods?: () => void; readyToCharge?: boolean; paymentMethodEnabled?: boolean; onSessionError?: (error: AccountClientError) => void
 }) {
   const settings = controller.settings
   const connection = settings?.connection
@@ -41,6 +41,8 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
   const connectionKey = `${connection?.id ?? ''}:${connection?.environment ?? ''}:${connection?.status ?? ''}:${connection?.verifiedAt ?? ''}:${settings?.permissions.manage}`
   const currentConnection = useRef(connectionKey); currentConnection.current = connectionKey
   const step = !verified ? 0 : !readyTerminal || changingTerminal ? 1 : 2
+  const needsPaymentMethod = Boolean(settings?.enabled && !paymentMethodEnabled)
+  const activationComplete = Boolean(settings?.enabled && readyTerminal && paymentMethodEnabled)
   const disabled = busy || !online
   const linked = settings?.terminals.find(t => t.serial === normalizedSerial && t.branchId === branchId && t.registerId === registerId)
   const selected = resources?.terminals.find(t => t.serial === normalizedSerial)
@@ -134,7 +136,7 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
   return <div className="terminal-setup">
     {onBack && <div className="terminal-settings-heading"><button type="button" className="terminal-text-button" onClick={onBack} disabled={busy}><ChevronLeft size={18} aria-hidden="true" />Configuración</button><h2>Vincular una terminal</h2></div>}
     <div className="terminal-provider"><span><CreditCard size={20} aria-hidden="true" />Mercado Pago</span>{sandbox && <span className="terminal-test-badge"><FlaskConical size={15} aria-hidden="true" />Modo prueba</span>}</div>
-    <ol className="terminal-progress" aria-label="Pasos para vincular una terminal">{stepNames.map((name, index) => <li key={name} data-complete={index < step || index === 2 && settings?.enabled && Boolean(readyTerminal)} aria-current={step === index ? 'step' : undefined}><span aria-hidden="true">{index < step || index === 2 && settings?.enabled && readyTerminal ? <Check size={15} /> : index + 1}</span>{name}</li>)}</ol>
+    <ol className="terminal-progress" aria-label="Pasos para vincular una terminal">{stepNames.map((name, index) => <li key={name} data-complete={index < step || index === 2 && activationComplete} aria-current={step === index ? 'step' : undefined}><span aria-hidden="true">{index < step || index === 2 && activationComplete ? <Check size={15} /> : index + 1}</span>{name}</li>)}</ol>
     {!online && <p role="alert" className="terminal-error">Sin conexión. Tus avances están guardados.</p>}
     {(error || controller.error) && <p role="alert" className="terminal-error">{error || controller.error}</p>}
     {notice && <p role="status" className="terminal-notice">{notice}</p>}
@@ -142,8 +144,8 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
       : !settings.permissions.manage ? <p>El dueño del negocio puede vincular una terminal.</p> : <>
       <section className="terminal-stage" key={step} aria-labelledby="terminal-step-heading">
         <header className="terminal-stage-heading"><span className="terminal-stage-icon" aria-hidden="true">{step === 0 ? <Link2 size={26} /> : step === 1 ? <Smartphone size={26} /> : <Check size={26} />}</span>
-          <h2 ref={stepHeading} tabIndex={-1} id="terminal-step-heading">{step === 0 ? 'Conecta tu cuenta' : step === 1 ? 'Elige tu terminal' : settings.enabled ? 'Todo listo para cobrar' : 'Activa tu terminal'}</h2>
-          <p>{step === 0 ? 'Autoriza a tu negocio para enviar cobros a Mercado Pago.' : step === 1 ? sandbox ? 'Selecciona una terminal para los cobros de prueba.' : 'Estas terminales pertenecen a tu cuenta de Mercado Pago.' : settings.enabled ? sandbox ? 'Prueba el cobro completo sin mover dinero.' : 'El importe se enviará desde la pantalla de cobro.' : sandbox ? 'Los pagos de este modo son de prueba.' : 'Confirma esta terminal para recibir cobros.'}</p>
+          <h2 ref={stepHeading} tabIndex={-1} id="terminal-step-heading">{step === 0 ? 'Conecta tu cuenta' : step === 1 ? 'Elige tu terminal' : needsPaymentMethod ? 'Habilita Mercado Pago' : settings.enabled ? 'Todo listo para cobrar' : 'Activa tu terminal'}</h2>
+          <p>{step === 0 ? 'Autoriza a tu negocio para enviar cobros a Mercado Pago.' : step === 1 ? sandbox ? 'Selecciona una terminal para los cobros de prueba.' : 'Estas terminales pertenecen a tu cuenta de Mercado Pago.' : needsPaymentMethod ? 'Actívalo en Configuración → Formas de pago y guarda los cambios.' : settings.enabled ? sandbox ? 'Prueba el cobro completo sin mover dinero.' : 'El importe se enviará desde la pantalla de cobro.' : sandbox ? 'Los pagos de este modo son de prueba.' : 'Confirma esta terminal para recibir cobros.'}</p>
         </header>
         {step === 0 ? <>
           {!connected && <div className="terminal-mode" role="group" aria-label="Modo de vinculación">{(['sandbox', 'live'] as const).map(mode => <button type="button" key={mode} aria-pressed={environment === mode} disabled={disabled || mode === 'live' && (settings.sandbox?.testBusiness === true || settings.availableEnvironment !== undefined && settings.availableEnvironment !== 'live')} onClick={() => setEnvironment(mode)}>{mode === 'sandbox' ? 'Pruebas' : 'Cobros reales'}</button>)}</div>}
@@ -169,8 +171,8 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
         </> : <>
           {readyTerminal && <div className="terminal-ready"><Smartphone size={28} aria-hidden="true" /><div><strong>{sandbox ? 'Terminal de prueba' : readyTerminal.serial}</strong><span>{readyTerminal.branchName} / {readyTerminal.registerName}</span><small>{sandbox ? readyTerminal.serial : 'Configuración verificada'}</small></div><Check size={19} aria-hidden="true" /></div>}
           <div className="terminal-checkout-preview" aria-label="Cómo funciona el cobro"><span>Selecciona Mercado Pago</span><ChevronDown size={16} aria-hidden="true" /><span>Envía el importe a la terminal</span><ChevronDown size={16} aria-hidden="true" /><span>El pago aprobado se registra solo</span></div>
-          {settings.enabled && !readyToCharge && <p className="terminal-context">Abre un turno en Caja para hacer el primer cobro.</p>}
-          {settings.enabled ? onStartSale && <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={!readyToCharge && onOpenCash ? onOpenCash : onStartSale}>{!readyToCharge && onOpenCash ? 'Ir a Caja' : sandbox ? 'Probar un cobro' : 'Ir a Venta'}</button> : <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'activate', enabled: true })}>{busyIcon}{sandbox ? 'Activar modo prueba' : 'Activar cobros'}</button>}
+          {settings.enabled && paymentMethodEnabled && !readyToCharge && <p className="terminal-context">Abre un turno en Caja para hacer el primer cobro.</p>}
+          {needsPaymentMethod ? <button className="pos-button pos-primary terminal-primary" disabled={disabled || !onOpenPaymentMethods} onClick={onOpenPaymentMethods}>Configurar formas de pago</button> : settings.enabled ? onStartSale && <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={!readyToCharge && onOpenCash ? onOpenCash : onStartSale}>{!readyToCharge && onOpenCash ? 'Ir a Caja' : sandbox ? 'Probar un cobro' : 'Ir a Venta'}</button> : <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'activate', enabled: true })}>{busyIcon}{sandbox ? 'Activar modo prueba' : 'Activar cobros'}</button>}
           {!settings.sandbox?.testBusiness && <button className="terminal-text-button" disabled={disabled} onClick={() => setChangingTerminal(true)}>Vincular otra terminal</button>}
         </>}
       </section>

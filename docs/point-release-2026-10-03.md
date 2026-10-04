@@ -13,10 +13,18 @@ Source: Codex task worktree `point-integration-review`, integrating PR #21 and t
 
 ## Checks
 
-- Current source: 154 unit tests and 254 component tests passed (including 19 sandbox UI cases).
+- Current source: 154 unit tests and 261 component tests passed (including sandbox activation and payment-method readiness cases).
 - Focused sandbox/validation/SQL: 38 tests passed. Provider adapter regression: 23 passed.
 - Build, TypeScript, production artifact guard, lint and diff checks passed.
 - No visual browser review or physical terminal test performed. Remote CI and public asset verification must still be checked for the final merged commit.
+
+## Follow-up verification — 4 October 2026
+
+The browser suites were updated to use the current owner dashboard, automatic personal PIN entry and real operational accounts/checkout reservations in the local SQL fixture. The 302 distinct browser cases were covered in passing focused runs; the final sale/Point batch passed 68/68 without retries or skips. No financial assertions or CI gates were removed. CI uses two browser workers for the independent fixtures.
+
+The double-submit case exposed a UI race: a second synchronous tap could clear the payment progress state while the first submission was pending. A generation-scoped synchronous guard now preserves that state; the durable mutation and database protections already prevented a duplicate sale. Terminal onboarding also checks the saved payment methods before declaring readiness and directs the owner to enable Mercado Pago explicitly.
+
+The first remote run passed Basic checks and Edge validation, but exposed obsolete UI selectors and an order-sensitive permission-array assertion. Those checks were corrected; the final branch and merged-commit CI results remain the release authority.
 
 ## Configuration pending
 

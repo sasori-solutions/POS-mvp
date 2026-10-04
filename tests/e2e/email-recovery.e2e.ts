@@ -1,5 +1,5 @@
 import { submitPinIfPresent } from './workspace-flow'
-import { openOperationalMore } from './workspace-flow'
+import { ownerAccountMenu } from './workspace-flow'
 import { expect, test } from '@playwright/test'
 import { fixturePin } from './account-fixture'
 import { fixtureCashier, fixtureDeviceToken, mockOnboarding } from './onboarding-fixture'
@@ -17,7 +17,7 @@ test('forgotten PIN offers one email action, no code or Google, and gives resend
   await expect(page.getByRole('button', { name: /Google|código/i })).toHaveCount(0)
   await expect(page.locator('input')).toHaveCount(0)
   await page.screenshot({ path: `/tmp/pos-pin-email-${info.project.name}-request.png`, fullPage: true })
-  await page.getByRole('button', { name: 'Enviar enlace al correo' }).click()
+  await page.getByRole('button', { name: 'Enviar enlace' }).click()
   await expect(page.getByRole('heading', { name: 'Revisa tu correo' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Reenviar en/ })).toBeDisabled()
   expect(calls.filter(c => c.action === 'request_pin_email')).toHaveLength(1)
@@ -34,10 +34,10 @@ test('sending failure stays recoverable and does not claim a sent email', async 
     else await route.fallback()
   })
   await page.goto('/'); await page.getByRole('button', { name: 'Olvidé mi PIN' }).click()
-  await page.getByRole('button', { name: 'Enviar enlace al correo' }).click()
+  await page.getByRole('button', { name: 'Enviar enlace' }).click()
   await expect(page.getByRole('alert')).toContainText('No pudimos enviar')
   await expect(page.getByRole('heading', { name: 'Revisa tu correo' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Enviar enlace al correo' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Enviar enlace' })).toBeEnabled()
 })
 
 test('email link confirms the new PIN without authentication and keeps its token out of storage', async ({ page }, info) => {
@@ -60,14 +60,14 @@ test('email link confirms the new PIN without authentication and keeps its token
   await page.screenshot({ path: `/tmp/pos-pin-email-${info.project.name}-done.png`, fullPage: true })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Necesitas un nuevo enlace' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Enlace no disponible' })).toBeVisible()
 })
 
 test('expired or reused links cannot reach a new PIN form', async ({ page }) => {
   await mockOnboarding(page, { authenticated: false })
   await page.route('**/functions/v1/account', route => route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: { code: 'RECOVERY_INVALID' } }) }))
   await page.goto(`/recover-pin#recovery=${token}`)
-  await expect(page.getByRole('heading', { name: 'Necesitas un nuevo enlace' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Enlace no disponible' })).toBeVisible()
   await expect(page.locator('input')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Google|código/ })).toHaveCount(0)
 })
@@ -94,7 +94,7 @@ test('a lost confirmation response retries the same operation without exposing a
 test('linked employees can request email recovery from their personal account', async ({ page }) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true, role: 'cashier' })
   await page.goto('/'); await page.getByRole('button', { name: 'Olvidé mi PIN' }).click()
-  await page.getByRole('button', { name: 'Enviar enlace al correo' }).click()
+  await page.getByRole('button', { name: 'Enviar enlace' }).click()
   await expect(page.getByRole('heading', { name: 'Revisa tu correo' })).toBeVisible()
   expect(calls.some(c => c.action==='request_pin_email')).toBe(true)
 })
@@ -102,20 +102,20 @@ test('linked employees can request email recovery from their personal account', 
 test('paired registers request email for the selected employee without personal identity', async ({ page }) => {
   const { calls, authorizations } = await mockOnboarding(page, { authenticated: false })
   await page.goto('/register')
-  await page.getByLabel('Código para vincular dispositivo').fill('b2'.repeat(32)); await page.getByLabel('Nombre del dispositivo').fill('Caja sintética')
+  await page.getByLabel('Código de vinculación').fill('b2'.repeat(32)); await page.getByLabel('Nombre del dispositivo').fill('Caja sintética')
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   await page.getByRole('button', { name: new RegExp(fixtureCashier.name) }).click()
   await page.getByRole('button', { name: 'Olvidé mi PIN' }).click()
-  await page.getByRole('button', { name: 'Enviar enlace al correo' }).click()
+  await page.getByRole('button', { name: 'Enviar enlace' }).click()
   await expect(page.getByRole('heading', { name: 'Revisa tu correo' })).toBeVisible()
   expect(calls.find(c => c.action==='device_request_pin_email')).toMatchObject({ deviceToken: fixtureDeviceToken, employeeId: fixtureCashier.id })
   expect(authorizations.find(c => c.action==='device_request_pin_email')?.authorization).toBeUndefined()
 })
 
-test('Más has no recovery-code setup and a known PIN still changes with the current PIN', async ({ page }) => {
+test('the owner account menu has no recovery-code setup and a known PIN still changes with the current PIN', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true })
   await page.goto('/'); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page);
-  await openOperationalMore(page);
+  await ownerAccountMenu(page);
   await expect(page.getByRole('button', { name: 'Código de recuperación' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Cambiar mi PIN', exact:true }).click()
   await expect(page.getByLabel('PIN actual', { exact: true })).toBeVisible()

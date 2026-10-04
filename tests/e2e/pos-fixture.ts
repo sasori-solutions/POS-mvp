@@ -36,7 +36,9 @@ export async function createPosDatabase() {
   await db.query(`insert into app_private.employees(id,business_id,user_id,name,role) values($1,$2,$3,'Dueño sintético','owner')`, [employeeId, fixtureBusiness.id, session.user.id])
   await db.query(`insert into app_private.operator_sessions(business_id,user_id,auth_session_id,token_hash) values($1,$2,$3,extensions.digest($4,'sha256'))`, [fixtureBusiness.id, session.user.id, claims.session_id, fixtureOperatorToken])
   async function execute<T>(command: PosCommand): Promise<T> {
-    return (await db.query<{ result: { data: T } }>("select public.account_secure($1,$2,'pos',$3::jsonb) as result", [session.user.id, claims.session_id, JSON.stringify({ action: 'pos', businessId: fixtureBusiness.id, operatorToken: fixtureOperatorToken, ...command })])).rows[0].result.data
+    const result = (await db.query<{ result: { data: T; error?: { code: string } } }>("select public.account_secure($1,$2,'pos',$3::jsonb) as result", [session.user.id, claims.session_id, JSON.stringify({ action: 'pos', businessId: fixtureBusiness.id, operatorToken: fixtureOperatorToken, ...command })])).rows[0].result
+    if (result.error) throw new Error(result.error.code)
+    return result.data
   }
   async function seed() {
     for (const product of seedProducts) await execute({ command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, ...product })
@@ -44,9 +46,13 @@ export async function createPosDatabase() {
   return { db, session, execute, seed }
 }
 
-export async function mockPos(page: Page, options: { empty?: boolean; saleResponseLosses?: number; productResponseLosses?: number; deletionResponseLosses?: number; delayDeletionMs?: number; delaySaleMs?: number; catalogFailures?: number } = {}) {
+export async function mockPos(page: Page, options: { empty?: boolean; legacy?: boolean; saleResponseLosses?: number; productResponseLosses?: number; deletionResponseLosses?: number; delayDeletionMs?: number; delaySaleMs?: number; catalogFailures?: number } = {}) {
   const backend = await createPosDatabase()
   if (!options.empty) await backend.seed()
+  if (!options.legacy) {
+    await backend.execute({ command: 'activate_operations', operationId: randomUUID() })
+    await backend.execute({ command: 'open_shift', operationId: randomUUID(), openingCents: 0 })
+  }
   const calls: PosCommand[] = []
   let saleLosses = options.saleResponseLosses ?? 0
   let productLosses = options.productResponseLosses ?? 0
@@ -54,7 +60,7 @@ export async function mockPos(page: Page, options: { empty?: boolean; saleRespon
   let catalogFailures = options.catalogFailures ?? 0
   async function attach(page: Page) {
     await page.route('**/*', route => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort('blockedbyclient'))
-    await mockAccount(page, { existingBusiness: true })
+    await mockAccount(page, { existingBusiness: true, sessionOverrides: backend.session })
     await page.route('http://127.0.0.1:54321/functions/v1/account', async route => {
       const body = route.request().postDataJSON()
       if (body?.action !== 'pos') return route.fallback()
@@ -64,10 +70,10 @@ export async function mockPos(page: Page, options: { empty?: boolean; saleRespon
         if (parsed.action !== 'pos') return reject(400, 'VALIDATION_ERROR')
         calls.push(parsed)
         if (parsed.command === 'catalog' && catalogFailures-- > 0) return reject(500, 'SERVER_ERROR')
-        if (parsed.command === 'complete_sale' && options.delaySaleMs) await new Promise(resolve => setTimeout(resolve, options.delaySaleMs))
+        if (['complete_sale', 'record_checkout'].includes(parsed.command) && options.delaySaleMs) await new Promise(resolve => setTimeout(resolve, options.delaySaleMs))
         if (parsed.command === 'delete_product' && options.delayDeletionMs) await new Promise(resolve => setTimeout(resolve, options.delayDeletionMs))
         const data = await backend.execute(parsed)
-        if (parsed.command === 'complete_sale' && saleLosses-- > 0) return route.abort('failed')
+        if (['complete_sale', 'record_checkout'].includes(parsed.command) && saleLosses-- > 0) return route.abort('failed')
         if (parsed.command === 'save_product' && productLosses-- > 0) return route.abort('failed')
         if (parsed.command === 'delete_product' && deletionLosses-- > 0) return route.abort('failed')
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) })
