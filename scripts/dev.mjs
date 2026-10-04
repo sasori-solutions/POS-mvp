@@ -48,7 +48,7 @@ async function run(command, arguments_) {
     child.on('close', code => {
       children.delete(child)
       if (code === 0) resolve(stdout)
-      else reject(new Error(`${command.endsWith('docker') ? 'Docker' : 'Local Supabase'} failed. ${redact(stderr).slice(-1600)}`))
+      else reject(new Error(`${command.endsWith('docker') ? 'Docker' : 'Local Supabase'} failed. ${redact(stderr || stdout).slice(-1600)}`))
     })
   })
 }
@@ -81,7 +81,10 @@ async function main() {
     server.once('error', () => reject(new Error(`Port ${port} is occupied. Stop that frontend or choose npm run dev -- --port 5177.`)))
     server.listen(port, '127.0.0.1', () => server.close(resolve))
   })
-  try { await run('docker', ['info', '--format', '{{.ServerVersion}}']) }
+  try {
+    const engine = await run('docker', ['info', '--format', '{{.OSType}}/{{.ServerVersion}}'])
+    if (!/^linux\/\d/.test(engine.trim())) throw new Error('The Linux Docker engine is not ready.')
+  }
   catch { throw new Error('Start Docker Desktop, then retry npm run dev. A real local backend is required.') }
   await mkdir(join(directory, 'supabase'), { recursive: true })
   await writeFile(join(directory, 'supabase/config.toml'), settings.config)
