@@ -39,7 +39,7 @@ function profile(value: unknown): BusinessProfile {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid()
   const input = value as Record<string, unknown>
   exactKeys(input, ['branchName', 'registerName', 'address', 'city', 'state', 'contactPhone', 'paymentMethods'])
-  if (!Array.isArray(input.paymentMethods) || input.paymentMethods.length < 1 || input.paymentMethods.length > 3 || new Set(input.paymentMethods).size !== input.paymentMethods.length || input.paymentMethods.some((value) => !['cash', 'card_external', 'transfer'].includes(value))) invalid()
+  if (!Array.isArray(input.paymentMethods) || input.paymentMethods.length < 1 || input.paymentMethods.length > 4 || new Set(input.paymentMethods).size !== input.paymentMethods.length || input.paymentMethods.some((value) => !['cash', 'card_external', 'transfer', 'card_integrated'].includes(value))) invalid()
   const contactPhone = name(input.contactPhone, 0, 30)
   if (contactPhone && !/^[+0-9() -]{5,30}$/.test(contactPhone)) invalid()
   return { branchName: name(input.branchName, 1), registerName: name(input.registerName, 1), address: name(input.address, 0, 300), city: name(input.city, 0), state: name(input.state, 0), contactPhone, paymentMethods: input.paymentMethods as PaymentMethod[] }

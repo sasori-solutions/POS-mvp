@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { emptyDetails } from '../../src/lib/product-details'
 import type { CheckoutAttempt, OperationalOrder } from '../../src/lib/operations-contracts'
 import type { Product } from '../../src/lib/pos-contracts'
+import type { BusinessContext } from '../../src/lib/contracts'
 import type { CommissionStatement, PointCheckout, PointReport, PointSettings } from '../../src/lib/point-contracts'
 
 let db: PGlite
@@ -27,6 +28,32 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     }
   }, 60_000)
   afterAll(async () => { await db?.close() })
+
+  it('saves and returns Mercado Pago alongside all existing profile methods without activating Point', async () => {
+    const actor = await newActor()
+    const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external', 'transfer', 'card_integrated'] }
+    const payload = { action: 'update_business', businessId: actor.businessId, operatorToken: actor.token, name: 'Comercio ficticio', businessType: 'cafe', timezone: 'America/Mexico_City', profile }
+    const result = (await db.query<{ result: { data: BusinessContext } }>("select public.account_secure($1,$2,'update_business',$3::jsonb) result", [actor.userId, actor.sessionId, JSON.stringify(payload)])).rows[0].result.data
+    expect(result.profile).toEqual(profile)
+    expect((await db.query<{ profile: unknown }>('select profile from app_private.businesses where id=$1', [actor.businessId])).rows[0].profile).toEqual(profile)
+    expect((await pos<{ paymentMethods: string[] }>(actor, { command: 'catalog' })).paymentMethods).toEqual(profile.paymentMethods)
+    const settings = await point<PointSettings>(actor, { command: 'settings' })
+    expect(settings.enabled).toBe(false)
+    expect(settings.connection).toBeNull()
+    expect((await db.query<{ count: number }>('select count(*)::integer count from app_private.sales where business_id=$1', [actor.businessId])).rows[0].count).toBe(0)
+    await db.query('delete from auth.sessions where id=$1', [actor.sessionId])
+    await expect(db.query("select public.account_secure($1,$2,'update_business',$3::jsonb)", [actor.userId, actor.sessionId, JSON.stringify({ ...payload, profile: { ...profile, paymentMethods: ['cash'] } })])).rejects.toThrow()
+    expect((await db.query<{ profile: unknown }>('select profile from app_private.businesses where id=$1', [actor.businessId])).rows[0].profile).toEqual(profile)
+  })
+
+  it('validates integrated-only profiles and rejects malformed method lists in SQL', async () => {
+    const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['card_integrated'] }
+    expect((await db.query<{ profile: unknown }>('select app_private.validate_profile($1::jsonb) profile', [JSON.stringify(profile)])).rows[0].profile).toEqual(profile)
+    for (const paymentMethods of [[], ['card_integrated', 'card_integrated'], ['unknown'], ['cash', 'card_external', 'transfer', 'card_integrated', 'crypto'], [null], [42], 'cash', null]) {
+      await expect(db.query('select app_private.validate_profile($1::jsonb)', [JSON.stringify({ ...profile, paymentMethods })])).rejects.toThrow('VALIDATION_ERROR')
+    }
+    for (const role of ['anon', 'authenticated']) expect((await db.query<{ allowed: boolean }>("select has_schema_privilege($1,'app_private','USAGE') allowed", [role])).rows[0].allowed).toBe(false)
+  })
 
   it('preserves an already linked official sandbox when migrating receiver ownership', async () => {
     expect((await db.query('select official_sandbox,status,tokens_ciphertext,token_version from app_private.point_connections where id=$1', [legacySandboxConnection])).rows[0])

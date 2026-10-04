@@ -9,6 +9,7 @@ import { pointRequest } from '../../src/lib/point-client'
 import { accountRequest } from '../../src/lib/account'
 import type { BusinessContext } from '../../src/lib/contracts'
 import type { PointSettings } from '../../src/lib/point-contracts'
+import { parseAccountRequest } from '../../supabase/functions/account/validation'
 import { pointAccess, pointSettings } from '../fixtures/point'
 
 vi.mock('../../src/lib/point-client', async original => ({ ...await original<object>(), pointRequest: vi.fn() }))
@@ -104,4 +105,19 @@ test('entering settings from the dashboard shortcut focuses the payment method',
   render(<BusinessSettings business={business} operatorToken={pointAccess.operatorToken} focusPaymentMethods onSaved={vi.fn()} onBack={vi.fn()} />)
   expect(document.activeElement).toBe(screen.getByRole('checkbox', { name: 'Mercado Pago' }))
   expect(accountRequest).not.toHaveBeenCalled()
+})
+
+test('saving all four methods sends a valid HTTP profile and returns the persisted configuration', async () => {
+  const saved = vi.fn()
+  vi.mocked(accountRequest).mockImplementation(async request => {
+    const parsed = parseAccountRequest(request)
+    if (parsed.action !== 'update_business') throw new Error('Unexpected request')
+    return { ...business, profile: parsed.profile } as never
+  })
+  render(<BusinessSettings business={business} operatorToken={'a'.repeat(64)} onSaved={saved} onBack={vi.fn()} />)
+  for (const label of ['Tarjeta externa', 'Transferencia', 'Mercado Pago']) fireEvent.click(screen.getByRole('checkbox', { name: label }))
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+  await waitFor(() => expect(saved).toHaveBeenCalledOnce())
+  expect(saved.mock.calls[0][0].profile.paymentMethods).toEqual(['cash', 'card_external', 'transfer', 'card_integrated'])
+  expect(vi.mocked(accountRequest).mock.calls[0][0]).toMatchObject({ action: 'update_business', profile: { paymentMethods: ['cash', 'card_external', 'transfer', 'card_integrated'] } })
 })
