@@ -9,15 +9,32 @@ import type { Product } from '../../src/lib/pos-contracts'
 import type { CommissionStatement, PointCheckout, PointReport, PointSettings } from '../../src/lib/point-contracts'
 
 let db: PGlite
+let legacySandboxConnection: string
 type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string }
 describe('Point private ledger and server reservations (single PostgreSQL session)', () => {
   beforeAll(async () => {
     db = new PGlite({ extensions: { pgcrypto } })
     await db.exec(`create schema auth; create schema extensions; create role anon; create role authenticated; create role service_role;
       create table auth.users(id uuid primary key); create table auth.sessions(id uuid primary key,user_id uuid references auth.users(id) on delete cascade,created_at timestamptz default now(),not_after timestamptz);`)
-    for (const file of readdirSync('supabase/migrations').filter(f => f.endsWith('.sql')).sort()) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    for (const file of readdirSync('supabase/migrations').filter(f => f.endsWith('.sql')).sort()) {
+      if (file.endsWith('_point_shared_official_sandbox.sql')) {
+        const actor = await newActor()
+        await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token,
+          operationId: randomUUID(), receiverId: randomUUID(), tokensCiphertext: 'synthetic-legacy-vault', expiresAt: '2099-01-01T00:00:00Z' })
+        legacySandboxConnection = (await point<PointSettings>(actor, { command: 'settings' })).connection!.id
+      }
+      await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    }
   }, 60_000)
   afterAll(async () => { await db?.close() })
+
+  it('preserves an already linked official sandbox when migrating receiver ownership', async () => {
+    expect((await db.query('select official_sandbox,status,tokens_ciphertext,token_version from app_private.point_connections where id=$1', [legacySandboxConnection])).rows[0])
+      .toEqual({ official_sandbox: true, status: 'connected', tokens_ciphertext: 'synthetic-legacy-vault', token_version: 1 })
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'public.point_service_before_shared_sandbox(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+    }
+  })
 
   it('enrolls only an empty dedicated sandbox business and permanently blocks live reconnection', async () => {
     const actor = await newActor()
@@ -41,6 +58,54 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     await db.query("update app_private.business_memberships set role='cashier' where business_id=$1 and user_id=$2", [employee.businessId, employee.userId])
     await expect(point(employee, { command: 'connect_sandbox', operationId: randomUUID() })).rejects.toThrow('DEVICE_LINK_REQUIRED')
     await expect(db.query("select app_private.point_command($1,$2,$3::jsonb)", [employee.businessId, employee.employeeId, JSON.stringify({ command: 'connect_sandbox', operationId: randomUUID() })])).rejects.toThrow('PERMISSION_DENIED')
+  })
+
+  it('shares only the official virtual receiver while keeping each test business isolated', async () => {
+    const first = await newActor(), second = await newActor()
+    const receiverId = randomUUID()
+    const payload = (actor: Actor) => ({ businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token,
+      operationId: randomUUID(), receiverId, tokensCiphertext: `synthetic-encrypted-${actor.businessId}`, expiresAt: '2099-01-01T00:00:00Z' })
+    await service('official_sandbox_connect', payload(first))
+    await service('official_sandbox_connect', payload(second))
+    const one = await point<PointSettings>(first, { command: 'settings' }), two = await point<PointSettings>(second, { command: 'settings' })
+    expect(one.connection!.id).not.toBe(two.connection!.id)
+    for (const result of [one, two]) expect(result).toMatchObject({ sandbox: { testBusiness: true }, connection: { environment: 'sandbox', receiverId }, terminals: [{ id: 'NEWLAND_N950__SBX0000001', verified: true, active: true }] })
+    const before = await service('connection_get', { connectionId: two.connection!.id })
+    await service('official_sandbox_connect', payload(first))
+    expect(await service('connection_get', { connectionId: two.connection!.id })).toEqual(before)
+    await point(first, { command: 'disconnect' })
+    expect((await point<PointSettings>(second, { command: 'settings' })).connection!.status).toBe('connected')
+    await expect(service('connection_save', { ...payload(first), environment: 'sandbox' })).rejects.toThrow('POINT_FACT_MISMATCH')
+    const third = await newActor()
+    await expect(service('connection_save', { ...payload(third), environment: 'sandbox' })).rejects.toThrow('POINT_FACT_MISMATCH')
+    // Ordinary OAuth sandbox credentials retain the original one-business boundary.
+    const ordinary = { ...payload(first), receiverId: randomUUID(), environment: 'sandbox' }
+    await service('connection_save', { ...ordinary, businessId: third.businessId })
+    await expect(service('connection_save', { ...ordinary, businessId: second.businessId })).rejects.toThrow('POINT_FACT_MISMATCH')
+    const fourth = await newActor()
+    await expect(service('official_sandbox_connect', { ...payload(fourth), receiverId: ordinary.receiverId })).rejects.toThrow('POINT_FACT_MISMATCH')
+    expect((await point<PointSettings>(fourth, { command: 'settings' })).sandbox!.testBusiness).toBe(false)
+    await expect(db.query('update app_private.point_connections set official_sandbox=false where id=$1', [two.connection!.id])).rejects.toThrow('POINT_STATE_INVALID')
+    const live = { ...payload(fourth), receiverId: randomUUID(), environment: 'live' }
+    await service('connection_save', live)
+    await expect(service('connection_save', { ...live, businessId: third.businessId })).rejects.toThrow('POINT_FACT_MISMATCH')
+  })
+
+  it('never mixes payments or simulation permissions between businesses sharing the virtual receiver', async () => {
+    const receiverId = randomUUID()
+    const first = await setup(500, 'sandbox', true, receiverId), second = await setup(76068, 'sandbox', true, receiverId)
+    const one = await point<PointCheckout>(first.actor, { command: 'start', operationId: randomUUID(), checkoutId: first.checkout.id })
+    // The shared terminal still accepts only one unresolved checkout at a time.
+    await expect(point(second.actor, { command: 'start', operationId: randomUUID(), checkoutId: second.checkout.id })).rejects.toThrow('POINT_TERMINAL_BUSY')
+    await expect(point(first.actor, { command: 'status', checkoutId: second.checkout.id })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
+    await expect(point(first.actor, { command: 'simulate', checkoutId: second.checkout.id, status: 'processed' })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
+    await service('apply_order', { ...await facts(one.attemptId!), state: 'approved_verified' })
+    expect(await point<PointCheckout>(first.actor, { command: 'status', checkoutId: one.id })).toMatchObject({ saleState: 'materialized', sale: { totalCents: 500 } })
+    expect(await point<PointCheckout>(second.actor, { command: 'status', checkoutId: second.checkout.id })).toMatchObject({ saleState: 'pending', sale: null })
+    const two = await point<PointCheckout>(second.actor, { command: 'start', operationId: randomUUID(), checkoutId: second.checkout.id })
+    await service('apply_order', { ...await facts(two.attemptId!), state: 'approved_verified' })
+    expect(await point<PointCheckout>(second.actor, { command: 'status', checkoutId: two.id })).toMatchObject({ saleState: 'materialized', sale: { totalCents: 76068 } })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id in ($1,$2)", [one.attemptId, two.attemptId])
   })
 
   it('authorizes simulation only for own official sandbox checkout, never writes a payment result', async () => {
@@ -405,9 +470,9 @@ async function point<T = unknown>(actor: Actor, command: Record<string, unknown>
 async function service<T = unknown>(action: string, payload: Record<string, unknown>): Promise<T> {
   return (await db.query<{ result: T }>('select public.point_service($1,$2::jsonb) result', [action, JSON.stringify(payload)])).rows[0].result
 }
-async function setup(price = 1001, environment = 'live', official = false) {
+async function setup(price = 1001, environment = 'live', official = false, receiverId = randomUUID()) {
   const actor = await newActor(); await pos(actor, { command: 'activate_operations', operationId: randomUUID() }); await pos(actor, { command: 'open_shift', operationId: randomUUID(), openingCents: 0 })
-  if (official) await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId: randomUUID(), tokensCiphertext: 'synthetic-test-token', expiresAt: '2099-01-01T00:00:00Z' })
+  if (official) await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId, tokensCiphertext: 'synthetic-test-token', expiresAt: '2099-01-01T00:00:00Z' })
   const connection = official ? (await point<PointSettings>(actor, { command: 'settings' })).connection! : await service<{ id: string }>('connection_save', { businessId: actor.businessId, environment, receiverId: randomUUID(), tokensCiphertext: 'encrypted-synthetic-tokens', expiresAt: new Date(Date.now() + 60_000).toISOString() })
   const terminalId = official ? 'NEWLAND_N950__SBX0000001' : `SYNTHETIC-${randomUUID()}`
   await service('terminal_save', { connectionId: connection.id, terminalId, serial: terminalId, storeId: 'STORE-1', posId: 'POS-1', mode: 'PDV', verified: true, physicallyConfirmed: true })
