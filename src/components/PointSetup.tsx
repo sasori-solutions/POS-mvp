@@ -35,6 +35,7 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
   const [location, setLocation] = useState({ street_name: '', street_number: '', city_name: '', state_name: '', latitude: '', longitude: '', reference: '' })
   const locationValid = Boolean(location.street_name.trim() && location.street_number.trim() && location.city_name.trim() && location.state_name.trim() && location.latitude.trim() && location.longitude.trim() && Number.isFinite(Number(location.latitude)) && Number.isFinite(Number(location.longitude)) && Math.abs(Number(location.latitude)) <= 90 && Math.abs(Number(location.longitude)) <= 180)
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
+  const [needsTestBusiness, setNeedsTestBusiness] = useState(false)
   const [online, setOnline] = useState(navigator.onLine), [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const alive = useRef(true), running = useRef(false), resourceRequest = useRef(0), verification = useRef('')
   const stepHeading = useRef<HTMLHeadingElement>(null)
@@ -67,9 +68,11 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
     void update({ command: 'verify_connection' })
   }, [connectionKey, online])
 
-  function failure(caught: unknown) {
+  function failure(caught: unknown, command?: PointCommand['command']) {
     if (!alive.current) return
-    setError(caught instanceof Error ? caught.message : 'No pudimos completar este paso. Inténtalo de nuevo.')
+    const testBusinessRequired = command === 'connect_sandbox' && caught instanceof AccountClientError && caught.code === 'POINT_STATE_INVALID'
+    setNeedsTestBusiness(testBusinessRequired)
+    setError(testBusinessRequired ? 'Usa un negocio nuevo, sin ventas previas, para vincular la terminal virtual.' : caught instanceof Error ? caught.message : 'No pudimos completar este paso. Inténtalo de nuevo.')
     if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) onSessionError?.(caught)
   }
   function selectTerminal(terminal: PointAvailableTerminal) {
@@ -99,7 +102,7 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
   }
   async function update(command: PointCommand, success = ''): Promise<PointSettings | null> {
     if (running.current || !navigator.onLine) return null
-    running.current = true; setBusy(true); setError(''); setNotice('')
+    running.current = true; setBusy(true); setError(''); setNotice(''); setNeedsTestBusiness(false)
     try {
       const result = await pointRequest(access, command)
       if (!alive.current) return null
@@ -115,12 +118,12 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
       await loadResources()
       if (alive.current) setNotice(success)
       return null
-    } catch (caught) { failure(caught); return null }
+    } catch (caught) { failure(caught, command.command); return null }
     finally { running.current = false; if (alive.current) setBusy(false) }
   }
   async function connect() {
     if (running.current || !navigator.onLine) return
-    running.current = true; setBusy(true); setError('')
+    running.current = true; setBusy(true); setError(''); setNeedsTestBusiness(false)
     try {
       const result = await pointRequest(access, { command: 'oauth_start', operationId: crypto.randomUUID(), environment })
       if (!alive.current) return
@@ -148,10 +151,10 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
           <p>{step === 0 ? 'Autoriza a tu negocio para enviar cobros a Mercado Pago.' : step === 1 ? sandbox ? 'Selecciona una terminal para los cobros de prueba.' : 'Estas terminales pertenecen a tu cuenta de Mercado Pago.' : needsPaymentMethod ? 'Actívalo en Configuración → Formas de pago y guarda los cambios.' : settings.enabled ? sandbox ? 'Prueba el cobro completo sin mover dinero.' : 'El importe se enviará desde la pantalla de cobro.' : sandbox ? 'Los pagos de este modo son de prueba.' : 'Confirma esta terminal para recibir cobros.'}</p>
         </header>
         {step === 0 ? <>
-          {!connected && <div className="terminal-mode" role="group" aria-label="Modo de vinculación">{(['sandbox', 'live'] as const).map(mode => <button type="button" key={mode} aria-pressed={environment === mode} disabled={disabled || mode === 'live' && (settings.sandbox?.testBusiness === true || settings.availableEnvironment !== undefined && settings.availableEnvironment !== 'live')} onClick={() => setEnvironment(mode)}>{mode === 'sandbox' ? 'Pruebas' : 'Cobros reales'}</button>)}</div>}
+          {!connected && <div className="terminal-mode" role="group" aria-label="Modo de vinculación">{(['sandbox', 'live'] as const).map(mode => <button type="button" key={mode} aria-pressed={environment === mode} disabled={disabled || mode === 'live' && (settings.sandbox?.testBusiness === true || settings.availableEnvironment !== undefined && settings.availableEnvironment !== 'live')} onClick={() => { setEnvironment(mode); setError(''); setNeedsTestBusiness(false) }}>{mode === 'sandbox' ? 'Pruebas' : 'Cobros reales'}</button>)}</div>}
           {sandbox && <p className="terminal-context">{officialSandbox ? settings?.sandbox?.available ? 'Se vinculará una terminal virtual. Usa un negocio nuevo dedicado a pruebas.' : 'El simulador oficial necesita las credenciales de prueba de tu aplicación de Mercado Pago.' : 'Usa la cuenta y la terminal de prueba disponibles en este entorno.'}</p>}
           {connected ? <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'verify_connection' })}>{busyIcon}Verificar cuenta</button>
-            : officialSandbox ? <><button className="pos-button pos-primary terminal-primary" disabled={disabled || !settings.sandbox?.available} onClick={() => void update({ command: 'connect_sandbox', operationId: sandboxOperation.current })}>{busyIcon}Vincular terminal virtual</button>{!settings.sandbox?.available && <a className="terminal-text-button" href="https://www.mercadopago.com.mx/developers/es/docs/mp-point/create-application" target="_blank" rel="noopener noreferrer">Crear aplicación de Mercado Pago</a>}</>
+            : officialSandbox ? <><button className="pos-button pos-primary terminal-primary" disabled={disabled || !settings.sandbox?.available} onClick={() => void update({ command: 'connect_sandbox', operationId: sandboxOperation.current })}>{busyIcon}Vincular terminal virtual</button>{needsTestBusiness && <a className="terminal-text-button" href="/business/new">Crear negocio de pruebas</a>}{!settings.sandbox?.available && <a className="terminal-text-button" href="https://www.mercadopago.com.mx/developers/es/docs/mp-point/create-application" target="_blank" rel="noopener noreferrer">Crear aplicación de Mercado Pago</a>}</>
             : <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void connect()}>{busyIcon}{connection ? 'Reconectar Mercado Pago' : 'Conectar Mercado Pago'}</button>}
         </> : step === 1 ? <>
           <div className="terminal-connected"><Check size={17} aria-hidden="true" /><span>Cuenta conectada</span></div>

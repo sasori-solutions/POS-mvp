@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import PointPayment from '../../src/components/PointPayment'
 import PointSetup from '../../src/components/PointSetup'
+import { AccountClientError } from '../../src/lib/account'
 import type { PointController } from '../../src/components/usePoint'
 import { pointRequest } from '../../src/lib/point-client'
 import type { PointCheckout, PointSettings, PointSimulationStatus } from '../../src/lib/point-contracts'
@@ -134,6 +135,46 @@ test('a failed virtual connection preserves its operation ID when retried', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Vincular terminal virtual' }))
   await waitFor(() => expect(pointRequest).toHaveBeenCalledTimes(2))
   expect(vi.mocked(pointRequest).mock.calls[1]).toEqual(vi.mocked(pointRequest).mock.calls[0])
+})
+
+test('virtual linking explains the test-business requirement and offers the existing business creation flow', async () => {
+  vi.mocked(pointRequest).mockRejectedValue(new AccountClientError('POINT_STATE_INVALID', 'Revisa el estado actual antes de continuar.'))
+  const value = settings({ connection: null, terminals: [], enabled: false, sandbox: { official: true, available: true, testBusiness: false } })
+  const current = controller(value), onSessionError = vi.fn()
+  render(<PointSetup access={pointAccess} controller={current} onSessionError={onSessionError} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Vincular terminal virtual' }))
+  expect((await screen.findByRole('alert')).textContent).toBe('Usa un negocio nuevo, sin ventas previas, para vincular la terminal virtual.')
+  expect(screen.getByRole('link', { name: 'Crear negocio de pruebas' }).getAttribute('href')).toBe('/business/new')
+  expect(screen.queryByText('Revisa el estado actual antes de continuar.')).toBeNull()
+  expect(current.setSettings).not.toHaveBeenCalled()
+  expect(onSessionError).not.toHaveBeenCalled()
+
+  vi.mocked(pointRequest).mockRejectedValue(new Error('Conexión interrumpida'))
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Vincular terminal virtual' }) as HTMLButtonElement).disabled).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: 'Vincular terminal virtual' }))
+  await screen.findByText('Conexión interrumpida')
+  expect(screen.queryByRole('link', { name: 'Crear negocio de pruebas' })).toBeNull()
+})
+
+test('virtual linking still reports expired access to the session controller', async () => {
+  const denied = new AccountClientError('SESSION_EXPIRED', 'Tu sesión venció.'), onSessionError = vi.fn()
+  vi.mocked(pointRequest).mockRejectedValue(denied)
+  render(<PointSetup access={pointAccess} controller={controller(settings({ connection: null, terminals: [], enabled: false }))} onSessionError={onSessionError} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Vincular terminal virtual' }))
+  await screen.findByRole('alert')
+  expect(onSessionError).toHaveBeenCalledExactlyOnceWith(denied)
+  expect(screen.queryByRole('link', { name: 'Crear negocio de pruebas' })).toBeNull()
+})
+
+test('other terminal state errors do not suggest creating a test business', async () => {
+  vi.mocked(pointRequest).mockImplementation(async (_access, command) => {
+    if (command.command === 'resources') return { terminals: [], branches: [], registers: [] }
+    throw new AccountClientError('POINT_STATE_INVALID', 'Revisa el estado actual antes de continuar.')
+  })
+  render(<PointSetup access={pointAccess} controller={controller(settings({ enabled: false }))} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Activar modo prueba' }))
+  expect((await screen.findByRole('alert')).textContent).toBe('Revisa el estado actual antes de continuar.')
+  expect(screen.queryByRole('link', { name: 'Crear negocio de pruebas' })).toBeNull()
 })
 
 test('employees cannot start virtual terminal linking', () => {
