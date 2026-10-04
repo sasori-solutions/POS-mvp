@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MercadoPagoPoint } from '../../supabase/functions/point/provider'
-import type { TokenSet } from '../../supabase/functions/point/provider'
-import { configuration, processPointResult } from '../../supabase/functions/point/service'
+import { MercadoPagoPoint, verifyOrder } from '../../supabase/functions/point/provider'
+import type { ExpectedOrder, TokenSet } from '../../supabase/functions/point/provider'
+import { configuration, processPointResult, runWorker } from '../../supabase/functions/point/service'
 import type { Configuration, RpcClient } from '../../supabase/functions/point/service'
 import { randomSecret, TokenVault } from '../../supabase/functions/point/crypto'
 const token: TokenSet = { accessToken: 'synthetic-test-only', refreshToken: '', expiresAt: '2099-01-01T00:00:00Z', receiverId: '900001', environment: 'sandbox', scope: 'read write', source: 'server_test' }
@@ -70,4 +70,69 @@ describe('official Point sandbox boundary', () => {
     await expect(processPointResult(f.admin, { command: 'connect_sandbox', operationId: 'op' }, { backendDirective: { kind: 'connect_sandbox', businessId: 'business' } }, identity, f.config)).rejects.toThrow('INVALID_RESPONSE')
     expect(f.writes).toHaveLength(0)
   })
+})
+
+// Shape observed from the official Orders sandbox on 4 October 2026. Synthetic
+// IDs and recipient only; no credentials or real account response is a fixture.
+const virtualExpected: ExpectedOrder = { amountCents: 500, currency: 'MXN', receiverId: token.receiverId, environment: 'sandbox', externalReference: 'synthetic-reference', terminalId: virtual }
+function virtualOrder(status = 'processed') {
+  return { id: 'ORDTST01SYNTHETIC', type: 'point', country_code: 'MEX', currency: 'MXN', user_id: token.receiverId,
+    external_reference: virtualExpected.externalReference, status, status_detail: status === 'processed' ? 'accredited' : status,
+    last_updated_date: '2026-10-04T20:40:00Z', config: { point: { terminal_id: virtual } },
+    transactions: { payments: [{ id: 'PAYSYNTHETIC', amount: '5.00', paid_amount: status === 'processed' ? '5.00' : undefined,
+      reference_id: '1234567890', status, status_detail: status === 'processed' ? 'accredited' : status }] } }
+}
+describe('official virtual Orders payment evidence', () => {
+  it('verifies a test approval without inventing a Payments record or live_mode field', () => {
+    expect(verifyOrder(virtualOrder(), virtualExpected, token)).toMatchObject({ state: 'approved', amountCents: 500, verified: true, environment: 'sandbox' })
+    expect(verifyOrder(virtualOrder('at_terminal'), virtualExpected, token)).toMatchObject({ state: 'sent', verified: false })
+  })
+  it('rejects mismatched money, reference, receiver, terminal, country and non-test identities', () => {
+    for (const changed of [
+      { ...virtualOrder(), external_reference: 'another-reference' }, { ...virtualOrder(), user_id: 'another-receiver' },
+      { ...virtualOrder(), currency: 'USD' }, { ...virtualOrder(), country_code: 'ARG' },
+      { ...virtualOrder(), id: 'ORDLIVE' }, { ...virtualOrder(), live_mode: true },
+      { ...virtualOrder(), config: { point: { terminal_id: 'NEWLAND_N950__PHYSICAL' } } },
+      { ...virtualOrder(), transactions: { payments: [{ ...virtualOrder().transactions.payments[0], amount: '4.99' }] } },
+      { ...virtualOrder(), transactions: { payments: [{ ...virtualOrder().transactions.payments[0], paid_amount: '4.99' }] } },
+    ]) expect(() => verifyOrder(changed, virtualExpected, token)).toThrow('INVALID_RESPONSE')
+    expect(() => verifyOrder(virtualOrder(), virtualExpected, { ...token, source: undefined })).toThrow('INVALID_RESPONSE')
+    expect(() => verifyOrder(virtualOrder(), { ...virtualExpected, environment: 'live' }, { ...token, environment: 'live' })).toThrow('INVALID_RESPONSE')
+  })
+  for (const scenario of ['approved', 'pending', 'oauth', 'real-account'] as const) {
+    it(`reconciles ${scenario} through the existing worker with current account verification`, async () => {
+      const requests: string[] = [], writes: Record<string, unknown>[] = []
+      const currentToken = scenario === 'oauth' ? { ...token, source: undefined } : token
+      const vault = new TokenVault({ test: randomSecret() }, 'test')
+      const connection = { tokenVersion: 1, businessId: 'business', environment: 'sandbox', receiverId: token.receiverId,
+        tokensCiphertext: await vault.seal(currentToken, 'mercadopago:business:sandbox') }
+      const provider = adapter(path => {
+        requests.push(path)
+        if (path === '/users/me') return Response.json({ id: token.receiverId, site_id: 'MLM', tags: scenario === 'real-account' ? [] : ['test_user'] })
+        if (path.startsWith('/v1/payments/')) return Response.json({ error: 'not_found' }, { status: 404 })
+        return Response.json(virtualOrder(scenario === 'pending' ? 'at_terminal' : 'processed'))
+      })
+      const config: Configuration = { adapter: provider, vault, clientId: '', redirectUri: 'https://example.test/point/callback', environment: 'sandbox',
+        chargesEnabled: true, testAccessToken: token.accessToken, localSimulator: false }
+      let claimed = false
+      const admin: RpcClient = { rpc(_name, args) {
+        const payload = args.p_payload as Record<string, unknown>
+        if (args.p_action === 'connection_get') return Promise.resolve({ data: connection, error: null })
+        if (args.p_action === 'claim_jobs') {
+          const jobs = claimed ? [] : [{ id: 'job', kind: 'reconcile', attemptId: 'attempt', connectionId: 'connection', leaseToken: 'lease',
+            payload: { ...virtualExpected, remoteOrderId: 'ORDTST01SYNTHETIC' } }]
+          claimed = true; return Promise.resolve({ data: { jobs }, error: null })
+        }
+        if (args.p_action === 'apply_order') writes.push(payload)
+        return Promise.resolve({ data: {}, error: null })
+      } }
+      expect(await runWorker(admin, config)).toEqual(['approved', 'pending'].includes(scenario) ? { processed: 1, failed: 0 } : { processed: 0, failed: 1 })
+      if (scenario === 'approved' || scenario === 'pending') {
+        expect(requests).toEqual(['/users/me', '/v1/orders/ORDTST01SYNTHETIC'])
+        expect(writes).toMatchObject([{ state: scenario === 'approved' ? 'approved_verified' : 'sent_to_terminal', verified: scenario === 'approved', amountCents: 500 }])
+      } else expect(writes).toHaveLength(0)
+      if (scenario === 'oauth') expect(requests).toContain('/v1/payments/1234567890')
+      if (scenario === 'real-account') expect(requests).toEqual(['/users/me'])
+    })
+  }
 })
