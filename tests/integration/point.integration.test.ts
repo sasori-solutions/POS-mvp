@@ -137,9 +137,11 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     const replies=await Promise.all([point<PointCheckout>(owner,request),point<PointCheckout>(owner,request)])
     expect(data(replies[0]).attemptId).toBe(data(replies[1]).attemptId)
     expect(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:second.id})).toMatchObject({status:409,error:{code:'POINT_TERMINAL_BUSY'}})
+    await Promise.all([worker(),worker()])
     const complete=await runUntil(first.id,c=>c.saleState==='materialized')
     expect(complete.state).toBe('approved_verified');expect(complete.sale?.paymentMethod).toBe('card_integrated')
-    const replay=data(await point<PointCheckout>(owner,request));expect(replay.sale?.id).toBe(complete.sale?.id)
+    const replay=data(await point<PointCheckout>(owner,request));expect(replay.attemptId).toBe(complete.attemptId)
+    expect(data(await point<PointCheckout>(owner,{command:'status',checkoutId:first.id})).sale?.id).toBe(complete.sale?.id)
     expect(Number(sql(`select count(*) from app_private.sales where id=${literal(complete.sale!.id)}::uuid;`))).toBe(1)
     expect(Number(sql(`select count(*) from app_private.point_fee_ledger where attempt_id=${literal(complete.attemptId!)}::uuid;`))).toBe(0)
     // The second prepared checkout remains recoverable and can begin only now.
@@ -172,7 +174,8 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(data(await point<{checkouts:PointCheckout[]}>(owner,{command:'recover'})).checkouts.some(c=>c.id===checkout.id)).toBe(true)
     expect(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})).toMatchObject({status:200,data:{attemptId:review.attemptId}})
     // Authoritative remote evidence resolves the old attempt even when charging is off.
-    await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited'}],refunds:[]}}})
+    await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',last_updated_date:new Date().toISOString(),transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited',reference_id:'700099'}],refunds:[]}}})
+    sql(`update app_private.point_attempts set observed_at=clock_timestamp()-interval '10 minutes',updated_at=clock_timestamp()-interval '10 minutes' where id=${literal(review.attemptId!)}::uuid;`)
     await runUntil(checkout.id,c=>c.saleState==='materialized')
     data(await point(owner,{command:'activate',enabled:true}))
   },60000)

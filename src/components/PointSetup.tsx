@@ -56,7 +56,7 @@ export default function PointSetup({ access, controller, onBack, onSessionError 
     } catch (caught) { failure(caught); running.current = false; if (alive.current) setBusy(false) }
   }
   const steps = [['Conectar Mercado Pago', verifiedConnection], ['Sucursal y caja', Boolean(settings?.terminals.length)], ['Vincular y probar terminal', ready], ['Activar cobros', settings?.enabled]] as const
-  return <div className="point-setup ops-form max-w-160">
+  return <div className="point-setup ops-form max-w-160 [&_input]:min-h-12 [&_select]:min-h-12">
     <button className="back-button" onClick={onBack} disabled={busy}><ArrowLeft size={18} aria-hidden="true" />Volver</button>
     <h2 ref={heading} tabIndex={-1} className="text-2xl font-medium">Mercado Pago Point</h2>
     <p>Conecta tu cuenta y una terminal por caja. El dueño completa la vinculación física en Mercado Pago.</p>

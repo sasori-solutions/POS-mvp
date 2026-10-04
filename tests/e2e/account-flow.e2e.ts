@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { ownerAccountMenu } from './workspace-flow'
 import { expect, test } from '@playwright/test';
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin, mockAccount, type FixtureAuthLogoutState } from './account-fixture';
 
@@ -59,7 +61,7 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   await assertNoPersistedOperatorSecrets(page);
   await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Ir al inicio', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await expect(page).toHaveURL('http://127.0.0.1:5174/');
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
   await expect(page.getByText(fixtureBusiness.name, { exact: true }).first()).toBeVisible();
@@ -69,11 +71,11 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await expect.poll(() => calls.some((call) => call.action === 'lock')).toBe(true);
   await page.getByTestId('pin-input').fill('111111');
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await submitPinIfPresent(page);
   await expect(page.getByRole('alert')).toContainText(/PIN/i);
   await page.getByTestId('pin-input').fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(page);
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
   await logoutFromHome(page);
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
@@ -86,8 +88,8 @@ test('refresh requires the PIN again while the Google account stays signed in', 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await page.getByTestId('pin-input').fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(page);
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).not.toBeVisible();
@@ -104,7 +106,7 @@ test('a lost business-creation response can be retried with the same operation i
   await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
   await expect(page.getByRole('alert')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
   await page.getByTestId('pin-input').fill(fixturePin);
   await page.getByTestId('pin-confirm-input').fill(fixturePin);
@@ -114,7 +116,7 @@ test('a lost business-creation response can be retried with the same operation i
   expect(attempts).toHaveLength(2);
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
   await page.getByRole('button', { name: 'Ir al inicio', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(2);
 });
 
@@ -139,16 +141,16 @@ test('business creation exposes the home transition only after the API succeeds'
     await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
     await seen;
     await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
     await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
     release?.();
   await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
     const home = page.getByRole('button', { name: 'Ir al inicio', exact: true });
     await home.focus();
     await expect(home).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
     await expect(page.getByText(fixtureBusiness.name, { exact: true }).first()).toBeVisible();
     expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(1);
     expect(calls.filter((call) => call.action === 'unlock')).toHaveLength(0);
@@ -170,19 +172,19 @@ test('PIN lockout reports the wait and prevents further immediate attempts', asy
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await page.getByTestId('pin-input').fill('111111');
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(page.getByRole('alert')).toBeVisible();
+    await submitPinIfPresent(page);
+    await expect(page.getByRole(attempt < 4 ? 'alert' : 'timer')).toBeVisible();
     await expect.poll(() => calls.filter((call) => call.action === 'unlock').length).toBe(attempt + 1);
   }
-  await expect(page.getByRole('alert')).toContainText(/15|minut|intentos/i);
-  await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeDisabled();
+  await expect(page.getByRole('timer')).toContainText('15:00');
+  await expect(page.getByTestId('pin-input')).toBeDisabled();
 });
 
 test('private entry URLs keep signed-out users on the keyboard-accessible login screen', async ({ page }) => {
   for (const path of ['/', '/business/ready']) {
     await page.goto(path);
     await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
     await expect(page.getByRole('heading', { name: 'Cuenta creada' })).not.toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Navegación principal' })).not.toBeVisible();
   }
@@ -199,15 +201,17 @@ test('home navigation is keyboard-accessible and preserves the unlocked business
   const { calls } = await mockAccount(page, { existingBusiness: true });
   await page.goto('/');
   await page.getByTestId('pin-input').fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(page);
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ir al inicio', exact: true })).not.toBeVisible();
-  const navigation = page.getByRole('navigation', { name: 'Navegación principal' });
+  const menu = page.getByRole('button', {name:'Abrir menú'}); if (await menu.isVisible()) await menu.click();
+  const navigation = page.getByRole('navigation', { name: 'Navegación del dueño' }).filter({visible:true}).first();
   await expect(navigation).toBeVisible();
-  await expect(navigation.getByRole('button', { name: 'Venta', exact: true })).toHaveAttribute('aria-current', 'page');
-  await page.getByRole('button', { name: 'Ver productos', exact: true }).click();
+  await expect(navigation.getByRole('button', { name: 'Inicio', exact: true })).toHaveAttribute('aria-current', 'page');
+  await navigation.getByRole('button', { name: 'Productos', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Productos', exact: true })).toBeVisible();
-  for (const label of ['Comandas', 'Ventas', 'Productos', 'Más']) {
+  for (const label of ['Ventas', 'Productos', 'Caja', 'Reportes']) {
+    if (await menu.isVisible()) await menu.click();
     const target = navigation.getByRole('button', { name: label, exact: true });
     await target.focus();
     await expect(target).toBeFocused();
@@ -221,7 +225,8 @@ test('home navigation is keyboard-accessible and preserves the unlocked business
   expect(calls.filter((call) => call.action === 'unlock')).toHaveLength(1);
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
   await assertNoPersistedOperatorSecrets(page);
-  await page.getByRole('button', { name: 'Bloquear app', exact: true }).click();
+  if (await menu.isVisible()) await page.getByRole('button',{name:'Cerrar menú'}).click();
+  await page.getByRole('button', { name: 'Bloquear', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await expect(navigation).not.toBeVisible();
   await expect.poll(() => calls.find((call) => call.action === 'lock')).toMatchObject({
@@ -239,14 +244,14 @@ test('locking and signing out also closes unlocked views in another tab', async 
   for (const tab of [page, otherTab]) {
     await expect(tab.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
     await tab.getByTestId('pin-input').fill(fixturePin);
-    await tab.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(tab.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+    await submitPinIfPresent(tab);
+    await expect(tab.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   }
   await page.getByRole('button', { name: 'Bloquear', exact: true }).click();
   await expect(otherTab.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible();
   await otherTab.getByTestId('pin-input').fill(fixturePin);
-  await otherTab.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(otherTab.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(otherTab);
+  await expect(otherTab.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
   await expect(otherTab.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
@@ -258,8 +263,8 @@ test('lock and logout close the local screen before delayed server revocation co
   await mockAccount(page, { existingBusiness: true });
   await page.goto('/');
   await page.getByTestId('pin-input').fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(page);
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   let heldAction = 'lock';
   let release: (() => void) | undefined;
   let markSeen: (() => void) | undefined;
@@ -276,10 +281,10 @@ test('lock and logout close the local screen before delayed server revocation co
     await seen;
     await expect(page.getByRole('heading', { name: 'Ingresa tu PIN' })).toBeVisible({ timeout: 1_000 });
     release?.();
-    await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeEnabled();
+    await expect(page.getByTestId('pin-input')).toBeEnabled();
     await page.getByTestId('pin-input').fill(fixturePin);
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+    await submitPinIfPresent(page);
+    await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
     heldAction = 'revoke_sessions';
     seen = new Promise<void>((resolve) => { markSeen = resolve; });
     await logoutFromHome(page);
@@ -350,8 +355,8 @@ test('a completed authentication logout is successful when operator revocation r
   const { authCalls } = await mockAccount(page, { existingBusiness: true, revokeSessionAuthRequired: true });
   await page.goto('/');
   await page.getByTestId('pin-input').fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(page);
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await logoutFromHome(page);
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
   await expect.poll(() => authCalls.some((request) => request.url.includes('/logout'))).toBe(true);
@@ -364,15 +369,15 @@ test('a rejected authentication logout clears locally and reports unconfirmed se
   const { authCalls } = await mockAccount(page, { existingBusiness: true, authLogoutFailureStatus: 403 });
   await page.goto('/');
   await page.getByTestId('pin-input').fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
+  await submitPinIfPresent(page);
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   await logoutFromHome(page);
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeVisible();
   expect(await page.evaluate((key) => localStorage.getItem(key), fixtureAuthKey)).toBeNull();
   await expect.poll(() => authCalls.some((request) => request.url.includes('/logout'))).toBe(true);
   await expect(page.getByRole('button', { name: 'Continuar con Google' })).toBeEnabled();
   await expect(page.getByRole('alert')).toContainText('No pudimos confirmar el cierre en el servidor');
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).not.toBeVisible();
   await assertNoPersistedOperatorSecrets(page);
 });
 
@@ -607,8 +612,7 @@ async function startGoogleCallback(page: import('@playwright/test').Page) {
 }
 
 async function logoutFromHome(page: import('@playwright/test').Page) {
-  await page.getByRole('navigation', { name: 'Navegación principal' })
-    .getByRole('button', { name: 'Más', exact: true }).click();
+  await ownerAccountMenu(page);
   await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click();
 }
 

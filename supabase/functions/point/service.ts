@@ -2,7 +2,7 @@ import { challenge, digest, randomSecret, TokenVault } from './crypto.ts'
 import { identifier, MercadoPagoPoint, ProviderError, record, verifyOrder } from './provider.ts'
 import type { Environment, ExpectedOrder, PointAdapter, TokenSet } from './provider.ts'
 export interface RpcClient { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> }
-export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean }
+export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string }
 export class PointServiceError extends Error { constructor(readonly code: string) { super(code) } }
 export async function serviceRpc(admin: RpcClient, action: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   const response = await admin.rpc('point_service', { p_action: action, p_payload: payload })
@@ -27,9 +27,15 @@ export function configuration(env = (name: string) => Deno.env.get(name)): Confi
   // A simulator override needs both flags and a loopback Supabase. This can never redirect a production credential.
   const supabaseHost = new URL(env('SUPABASE_URL') ?? 'https://invalid').hostname
   const simulator = env('MP_ALLOW_LOCAL_SIMULATOR') === 'true' && ['127.0.0.1', 'localhost', '[::1]', 'kong', 'host.docker.internal'].includes(supabaseHost)
+  const authorizationUrl = env('MP_OAUTH_AUTHORIZATION_URL')
+  if (authorizationUrl) {
+    const authorization = new URL(authorizationUrl)
+    if (!simulator || environment !== 'sandbox' || authorization.protocol !== 'http:' || !['127.0.0.1','localhost','[::1]'].includes(authorization.hostname)
+      || authorization.username || authorization.password || authorization.search || authorization.hash || authorization.pathname !== '/authorization') throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
+  }
   return { adapter: new MercadoPagoPoint({ clientId, clientSecret, redirectUri, baseUrl, allowLocalSimulator: simulator }),
     vault: new TokenVault(keys, env('MP_TOKEN_ACTIVE_KEY') ?? ''), clientId, redirectUri, environment: environment as Environment,
-    chargesEnabled: env('POINT_CHARGES_ENABLED') === 'true' }
+    chargesEnabled: env('POINT_CHARGES_ENABLED') === 'true', authorizationUrl }
 }
 function binding(connection: Record<string, unknown>): string { return `mercadopago:${connection.businessId}:${connection.environment}` }
 export async function connectionToken(admin: RpcClient, config: Configuration, connectionId: string): Promise<TokenSet> {
@@ -85,7 +91,7 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
       const expiresAt = new Date(Date.now() + 600000).toISOString()
       const verifierCiphertext = await config.vault.seal({ verifier }, `oauth:${businessId}:${identity.userId}:${stateHash}`)
       await serviceRpc(admin, 'oauth_state_create', { businessId, ...identity, stateHash, verifierCiphertext, environment: config.environment, redirectUri: config.redirectUri, expiresAt })
-      const url = new URL('https://auth.mercadopago.com/authorization')
+      const url = new URL(config.authorizationUrl ?? 'https://auth.mercadopago.com/authorization')
       for (const [key, value] of Object.entries({ client_id: config.clientId, response_type: 'code', platform_id: 'mp', redirect_uri: config.redirectUri, state,
         code_challenge: await challenge(verifier), code_challenge_method: 'S256' })) url.searchParams.set(key, value)
       return { authorizationUrl: url.toString(), expiresAt }

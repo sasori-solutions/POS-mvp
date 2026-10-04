@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test } from 'vitest'
 import EmployeeRoleFields from '../../src/components/EmployeeRoleFields'
-import type { BusinessPermission } from '../../src/lib/contracts'
+import { businessPermissions, type BusinessPermission } from '../../src/lib/contracts'
 
 afterEach(cleanup)
 function Permissions({disabled=false}:{disabled?:boolean}) {
@@ -14,7 +14,7 @@ function Permissions({disabled=false}:{disabled?:boolean}) {
 test('offers grouped action checkboxes and keeps required reading permissions in sync', () => {
   render(<Permissions />)
   expect(screen.queryAllByRole('radio')).toHaveLength(0)
-  expect(screen.getAllByRole('checkbox')).toHaveLength(18)
+  expect(screen.getAllByRole('checkbox')).toHaveLength(businessPermissions.length)
   const manage = screen.getByRole('checkbox',{name:'Crear y editar productos'}) as HTMLInputElement
   const read = screen.getByRole('checkbox',{name:'Consultar productos'}) as HTMLInputElement
   fireEvent.click(manage)
@@ -28,5 +28,7 @@ test('offers grouped action checkboxes and keeps required reading permissions in
   expect(read.checked).toBe(true)
   fireEvent.click(read)
   expect((screen.getByRole('checkbox',{name:'Aplicar descuentos'}) as HTMLInputElement).checked).toBe(false)
+  fireEvent.click(screen.getByRole('checkbox',{name:'Administrar mesas'}))
+  expect((screen.getByRole('checkbox',{name:'Consultar cuentas'}) as HTMLInputElement).checked).toBe(true)
   expect((screen.getByRole('checkbox',{name:'Cobrar ventas'}) as HTMLInputElement).checked).toBe(false)
 })

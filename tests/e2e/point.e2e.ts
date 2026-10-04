@@ -1,14 +1,16 @@
 import { test, expect, type Page } from '@playwright/test'
 import { fixturePin } from './account-fixture'
 import { mockPoint } from './point-fixture'
+import { enterOperations } from './workspace-flow'
 
 async function unlock(page: Page) { await page.goto('/'); await page.getByTestId('pin-input').fill(fixturePin); await expect(page.getByRole('heading',{name:'Inicio',exact:true})).toBeVisible() }
 async function sell(page: Page) {
-  await page.getByRole('button',{name:'Punto de Venta',exact:true}).first().click()
+  await enterOperations(page)
   await page.getByRole('button',{name:/^Agregar Latte,/}).click()
   const view = page.getByRole('button',{name:/^Ver cuenta/}); if (await view.isVisible()) await view.click()
   await page.getByRole('button',{name:'Cobrar',exact:true}).click()
-  await page.getByRole('radio',{name:'Tarjeta integrada',exact:true}).check()
+  await page.locator('label').filter({has:page.getByRole('radio',{name:'Tarjeta integrada',exact:true})}).click()
+  await expect(page.getByRole('radio',{name:'Tarjeta integrada',exact:true})).toBeChecked()
   await expect(page.getByRole('button',{name:'Iniciar cobro en terminal'})).toBeEnabled()
 }
 
@@ -23,7 +25,8 @@ test('Point linked SQL payment creates one sale and reports verified volume; own
     expect((await backend.execute({command:'merchant_report',from:'2026-01-01',to:'2026-12-31'})).paymentCount).toBe(1)
     expect((await backend.db.query<{count:string}>(`select count(*)::text count from app_private.sales`)).rows[0].count).toBe('1')
     await page.getByRole('button',{name:'Ver cuenta registrada'}).click()
-    await page.getByRole('button',{name:'Dashboard',exact:true}).first().click()
+    await page.getByRole('button',{name:'Dashboard',exact:true}).filter({visible:true}).first().click()
+    const menu=page.getByRole('button',{name:'Abrir menú',exact:true});if(await menu.isVisible())await menu.click()
     await page.getByRole('button',{name:'Reportes',exact:true}).first().click()
     await page.getByRole('button',{name:'Pagos integrados',exact:true}).click()
     await expect(page.getByRole('heading',{name:'Pagos integrados y comisión'})).toBeVisible()

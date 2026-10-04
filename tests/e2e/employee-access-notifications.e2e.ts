@@ -1,3 +1,4 @@
+import { submitPinIfPresent } from './workspace-flow'
 import { expect, test } from '@playwright/test'
 import { fixtureBusiness, fixturePin } from './account-fixture'
 import { fixtureInvitation, mockOnboarding } from './onboarding-fixture'
@@ -44,7 +45,7 @@ test('blocked employee stays outside the business and can retry after owner appr
   await page.goto('/')
   await page.getByLabel('Nombre de este dispositivo').fill('Teléfono nuevo')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await submitPinIfPresent(page);
   await expect(page.getByRole('alert')).toContainText('Este dispositivo no está autorizado')
   await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toHaveCount(0)
   await expect(page.getByTestId('pin-input')).toHaveValue('')
@@ -52,7 +53,7 @@ test('blocked employee stays outside the business and can retry after owner appr
   expect(requests[0]).toHaveProperty('deviceName', 'Teléfono nuevo')
   approved = true
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Notificaciones/ })).toHaveCount(0)
 })
@@ -74,7 +75,7 @@ for (const decision of ['approve', 'reject'] as const) {
     })
     await page.goto('/')
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Solicitud de otro dispositivo' })).toBeVisible()
     await expect(page.getByText('Sin leer', { exact: true })).toBeVisible()
@@ -124,7 +125,7 @@ test('a delayed inbox refresh cannot restore a pending device request after appr
   try {
     await page.goto('/')
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
     await page.getByRole('button', { name: 'Autorizar cambio', exact: true }).click()
     await page.getByRole('button', { name: 'Reemplazar dispositivo', exact: true }).click()
@@ -160,7 +161,7 @@ test('device decision controls wait for an inbox refresh and work when it comple
   try {
     await page.goto('/')
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toBeEnabled()
     holdRefresh = true

@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOperationalMore } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import { fixtureAuthSession, fixtureBusiness, fixturePin } from './account-fixture'
 import { fixtureCashier, fixtureInvitation, fixturePinSetup, mockOnboarding } from './onboarding-fixture'
@@ -49,8 +51,8 @@ test('changing an unlocked personal PIN asks for the current PIN and does not re
 async function owner(page: Page) {
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOperationalMore(page);
 }
 
 test('Más keeps every action aligned and separated, including PIN settings', async ({ page }, testInfo) => {

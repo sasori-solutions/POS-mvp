@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOperationalMore } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test';
 import { businessPermissions } from '../../src/lib/contracts';
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture';
@@ -49,7 +51,7 @@ test('creation saves branch, register and progressive profile for later editing'
   await expect(page.getByLabel('Sucursal', { exact: true })).toHaveValue('Centro');
   await expect(page.getByLabel(/^Ciudad/)).toHaveValue('Guadalajara');
   await page.getByLabel(/^Dirección/).fill('Calle de prueba 100');
-  await page.getByLabel('Caja', { exact: true }).fill('Barra');
+  await page.getByRole('textbox',{name:'Caja',exact:true}).fill('Barra');
   await page.getByRole('button', { name: 'Guardar cambios', exact: true }).click();
   await expect(page.getByRole('status')).toHaveText('Cambios guardados.');
   await expect(page.getByRole('heading', { name: 'Datos del negocio', exact: true })).toBeVisible();
@@ -57,7 +59,7 @@ test('creation saves branch, register and progressive profile for later editing'
   await unlockOwner(page);
   await openMore(page);
   await page.getByRole('button', { name: 'Datos del negocio', exact: true }).click();
-  await expect(page.getByLabel('Caja', { exact: true })).toHaveValue('Barra');
+  await expect(page.getByRole('textbox',{name:'Caja',exact:true})).toHaveValue('Barra');
   await expect(page.getByLabel(/^Dirección/)).toHaveValue('Calle de prueba 100');
   await capture(page, testInfo.project.name, 'business-settings');
   expect(calls.filter((call) => call.action === 'update_business')).toHaveLength(1);
@@ -109,7 +111,7 @@ test('joining retries invalid invitations and applies assigned permissions witho
   await page.getByLabel('Confirma tu PIN', { exact: true }).fill(fixturePin);
   await page.getByRole('button', { name: 'Unirme', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible();
-  const navigation = page.getByRole('navigation', { name: 'Navegación principal' });
+  const navigation = page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first();
   await expect(navigation.getByRole('button')).toHaveCount(2);
   await expect(navigation.getByRole('button', { name: 'Comandas', exact: true })).toBeVisible();
   await expect(navigation.getByRole('button', { name: 'Más', exact: true })).toBeVisible();
@@ -166,7 +168,7 @@ test('an owner with one business can create another or join from the unlock scre
 test('a cashier cannot open business settings or employee administration', async ({ page }) => {
   const { calls } = await mockOnboarding(page, { existingBusiness: true, role: 'cashier' });
   await page.goto('/');
-  await unlockOwner(page);
+  await unlockOwner(page, fixturePin, 'Venta');
   await openMore(page);
   await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Empleados', exact: true })).not.toBeVisible();
@@ -183,14 +185,14 @@ test('a cashier cannot open business settings or employee administration', async
 test('a refreshed employee context removes the previously active money destination', async ({ page }) => {
   const fixture = await mockOnboarding(page, { existingBusiness: true, role: 'cashier' });
   await page.goto('/');
-  await unlockOwner(page);
-  await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Ventas', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Ventas', exact: true })).toBeVisible();
+  await unlockOwner(page, fixturePin, 'Venta');
+  await page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first().getByRole('button', { name: 'Historial', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Historial', exact: true })).toBeVisible();
   fixture.setEmployee(fixtureKitchen.id);
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-  await expect(page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button')).toHaveCount(2);
+  await expect(page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first().getByRole('button')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Ventas', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Historial', exact: true })).not.toBeVisible();
 });
 
 test('logout during PIN change discards and revokes a late operator response', async ({ page }) => {
@@ -230,7 +232,7 @@ test('employee management gives each person one action and separates devices', a
   await openMore(page);
   await page.getByRole('button', { name: 'Empleados', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Empleados', exact: true })).toBeVisible();
-  await expect(page.getByText('Persona de prueba', { exact: true })).not.toBeVisible();
+  await expect(page.getByRole('list', { name: 'Empleados' }).getByText('Persona de prueba', { exact: true })).not.toBeVisible();
   const people = page.getByRole('list', { name: 'Empleados' });
   await expect(people.getByRole('listitem')).toHaveCount(2);
   await expect(people.getByRole('button')).toHaveCount(2);
@@ -238,7 +240,7 @@ test('employee management gives each person one action and separates devices', a
   await expect(page.getByRole('heading', { name: 'Invitaciones', exact: true })).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Vincular dispositivo', exact: true })).not.toBeVisible();
   await capture(page, testInfo.project.name, 'focused-employees');
-  await page.getByRole('button', { name: 'Volver a Más', exact: true }).click();
+  await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click();
   await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click();
   await expect(people).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Vincular dispositivo', exact: true })).toBeVisible();
@@ -415,7 +417,7 @@ test('Más entries work by keyboard and return focus to the previous task', asyn
     await entry.focus();
     await entry.press('Enter');
     await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Volver a Más', exact: true }).click();
+    await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Más', exact: true })).toBeVisible();
     await expect(entry).toBeFocused();
   }
@@ -464,7 +466,7 @@ test('Google employee creation saves one pending person without requesting their
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click();
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Cocina invitada');
   await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
-  await expect(page.getByRole('checkbox', { name: 'Consultar cocina', exact: true })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Consultar comandas', exact: true })).toBeChecked();
   await page.getByRole('button', { name: 'Crear invitación', exact: true }).click();
   await expect(page.getByLabel('Enlace de invitación', { exact: true })).toHaveValue(`http://127.0.0.1:5174/#invite=${fixtureInvitation}`);
   await expect(page.getByText('Pendiente de aceptar', { exact: true })).toBeVisible();
@@ -544,7 +546,7 @@ test('permission choices keep the same invitation method and employee-owned PIN'
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Empleado sin PIN oculto');
   await page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).check();
   await page.getByRole('checkbox', { name: 'Crear y editar productos', exact: true }).check();
-  await page.getByRole('checkbox', { name: 'Consultar cocina', exact: true }).uncheck();
+  await page.getByRole('checkbox', { name: 'Consultar comandas', exact: true }).uncheck();
   await expect(page.getByRole('checkbox', { name: 'Actualizar preparación', exact: true })).not.toBeChecked();
   await expect(page.getByRole('checkbox', { name: 'Consultar productos', exact: true })).toBeChecked();
   await capture(page, testInfo.project.name, 'unified-google-form');
@@ -598,7 +600,7 @@ test('the owner creates employee access and invitations with explicit permission
   expect(calls.filter((call) => call.action === 'create_employee')[1]).toMatchObject({ name: 'Nueva cocina', role: 'cashier', permissions: ['kitchen.read', 'kitchen.operate'], pin: null, inviteWithGoogle: true });
   expect(calls.filter((call) => call.action === 'create_invitation')).toHaveLength(0);
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
-  await page.getByRole('button', { name: 'Volver a Más', exact: true }).click();
+  await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click();
   await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click();
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
   await expect(page.getByLabel('Código para vincular dispositivo', { exact: true })).toHaveValue(fixturePairingCode);
@@ -623,12 +625,12 @@ test('employee pairing, PIN switch and reload keep only the restricted device cr
   await expect(page.getByLabel('PIN del empleado', { exact: true })).toBeVisible();
   await capture(page, testInfo.project.name, 'employee-pin');
   await page.getByLabel('PIN del empleado', { exact: true }).fill('999999');
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await submitPinIfPresent(page);
   await expect(page.getByRole('alert')).toContainText(/PIN/i);
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible();
-  await expect(page.getByText(fixtureBusiness.name, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(fixtureBusiness.name, { exact: true }).filter({visible:true}).first()).toBeVisible();
   const priorOperator = fixture.deviceOperator();
   await openMore(page);
   await page.getByRole('button', { name: 'Cambiar empleado', exact: true }).click();
@@ -636,13 +638,13 @@ test('employee pairing, PIN switch and reload keep only the restricted device cr
   expect(fixture.calls.find((call) => call.action === 'device_lock')).toMatchObject({ operatorToken: priorOperator });
   await page.getByRole('button', { name: fixtureKitchen.name, exact: true }).click();
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixturePin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible();
   expect(fixture.deviceOperator()).not.toBe(priorOperator);
   const nextOperator = fixture.deviceOperator();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Elige tu nombre' })).toBeVisible();
-  await expect(page.getByRole('navigation', { name: 'Navegación principal' })).not.toBeVisible();
+  await expect(page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first()).not.toBeVisible();
   const stored = await page.evaluate(() => JSON.stringify(Object.entries(localStorage)));
   expect(stored).toContain(fixtureDeviceToken);
   expect(stored).not.toContain(fixtureCashierPin);
@@ -662,10 +664,10 @@ test('a revoked shared device loses access and cannot resume an employee session
   fixture.revokeDevice();
   await page.getByRole('button', { name: fixtureCashier.name, exact: true }).click();
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText(/revocado|vincular/i);
-  await expect(page.getByRole('navigation', { name: 'Navegación principal' })).not.toBeVisible();
+  await expect(page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first()).not.toBeVisible();
   expect(await page.evaluate(() => JSON.stringify(Object.entries(localStorage)))).not.toContain(fixtureDeviceToken);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
@@ -676,14 +678,14 @@ async function fillAccountPin(page: Page, pin = fixturePin) {
   await page.getByTestId('pin-confirm-input').fill(pin);
 }
 
-async function unlockOwner(page: Page, pin = fixturePin, destination = 'Venta') {
+async function unlockOwner(page: Page, pin = fixturePin, destination = 'Inicio') {
   await page.getByTestId('pin-input').fill(pin);
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: destination, exact: true })).toBeVisible();
 }
 
 async function openMore(page: Page) {
-  await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: 'Más', exact: true }).click();
+  await openOperationalMore(page);
 }
 
 async function assertNoOperatorSecrets(page: Page) {

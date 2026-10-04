@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOperationalMore } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import jsQR from 'jsqr'
 import { fixturePin } from './account-fixture'
@@ -6,8 +8,8 @@ import { fixtureInvitation, fixturePairingCode, mockOnboarding } from './onboard
 async function openCreation(page: Page) {
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOperationalMore(page);
   await page.getByRole('button', { name: 'Empleados', exact: true }).click()
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
 }
@@ -157,8 +159,8 @@ test('shared-register QR opens pairing and stops being shown when it expires', a
   })
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOperationalMore(page);
   await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click()
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()

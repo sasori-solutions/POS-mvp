@@ -9,7 +9,7 @@ export function localConfiguration(source, checkout, port) {
     .replace(/^(port|shadow_port) = (543\d\d)$/gm, (_, key, value) => `${key} = ${base + Number(value) - 54320}`)
     .replace(/^inspector_port = \d+$/m, `inspector_port = ${base + 13}`)
     .replace(/^site_url = .+$/m, `site_url = "http://127.0.0.1:${port}"`)
-  return { projectId, config, apiUrl: `http://127.0.0.1:${base + 1}` }
+  return { projectId, config, apiUrl: `http://127.0.0.1:${base + 1}`, pointSimulatorPort: base + 17 }
 }
 
 export function requireLoopback(url) {

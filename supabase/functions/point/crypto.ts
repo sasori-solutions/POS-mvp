@@ -1,6 +1,11 @@
 const encoder = new TextEncoder()
 function base64(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
-function bytes(value: string): Uint8Array<ArrayBuffer> { return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)) }
+function bytes(value: string): Uint8Array<ArrayBuffer> {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('Invalid base64url')
+  const decoded = Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))
+  if (base64(decoded) !== value) throw new Error('Noncanonical base64url')
+  return decoded
+}
 export function randomSecret(): string { return base64(crypto.getRandomValues(new Uint8Array(32))) }
 export async function digest(value: string): Promise<string> { return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value))), n => n.toString(16).padStart(2, '0')).join('') }
 export async function challenge(verifier: string): Promise<string> { return base64(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(verifier)))) }

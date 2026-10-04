@@ -1,3 +1,4 @@
+import { submitPinIfPresent } from './workspace-flow'
 import { expect, test } from '@playwright/test'
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture'
 import { fixtureInvitation, fixtureKitchen, mockOnboarding } from './onboarding-fixture'
@@ -149,7 +150,7 @@ for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable'
       expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBeNull()
       if (statusUnavailable) {
         await expect.poll(() => failedStatusRequests).toBe(1)
-        await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeEnabled()
+        await expect(page.getByTestId('pin-input')).toBeEnabled()
         statusUnavailable = false
       }
       await page.reload()
@@ -157,7 +158,7 @@ for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable'
       await expect(page.getByRole('heading', { name: 'Unirme a un negocio', exact: true })).toHaveCount(0)
       approved = true
       await page.getByLabel('Tu PIN', { exact: true }).fill(newPin)
-      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await submitPinIfPresent(page);
     }
     await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
     expect(acceptanceCount).toBe(needsApproval ? 2 : 1)
@@ -166,10 +167,10 @@ for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable'
     if (!needsApproval) {
       await page.reload()
       await page.getByLabel('Tu PIN', { exact: true }).fill(fixturePin)
-      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await submitPinIfPresent(page);
       await expect(page.getByRole('alert')).toContainText('PIN incorrecto.')
       await page.getByLabel('Tu PIN', { exact: true }).fill(newPin)
-      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await submitPinIfPresent(page);
       await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
     }
   })

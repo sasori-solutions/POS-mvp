@@ -75,6 +75,7 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
   if (!observedAt) throw new ProviderError('INVALID_RESPONSE')
   const status = String(order.status ?? ''), detail = String(order.status_detail ?? '')
   const state = mapState(status, detail, String(payment.status ?? ''), String(payment.status_detail ?? ''))
+  if (['approved', 'partially_refunded', 'refunded'].includes(state) && !proof && order.live_mode === undefined) throw new ProviderError('INVALID_RESPONSE')
   const refunds: OrderEvidence['refunds'] = []
   if (transactions.refunds !== undefined && !Array.isArray(transactions.refunds)) throw new ProviderError('INVALID_RESPONSE')
   for (const item of transactions.refunds as unknown[] ?? []) {

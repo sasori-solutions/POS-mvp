@@ -2,15 +2,23 @@ import { createServer } from 'node:http'
 import { createHmac } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
+import { readFile, writeFile, rename } from 'node:fs/promises'
 
 /** Synthetic local HTTP server; no upstream network access or live credentials. */
-export async function startSimulator({ host = '127.0.0.1', port = 0 } = {}) {
+export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, realtime = false } = {}) {
   if (!['127.0.0.1', 'localhost', '0.0.0.0'].includes(host)) throw new Error('Simulator bind must be local')
   const state = { scenario: 'approved', sequence: [], creates: 0, refunds: 0, refreshes: 0, version: 1, deliveries: 0, calls: /** @type {Array<{method:string,path:string,key:string|null}>} */ ([]), terminalMode: 'PDV', orders: new Map(), keys: new Map(), refundKeys: new Map() }
-  const branches = [{ id: 'STORE-1', name: 'Sucursal de prueba', user_id: '900001' }]
-  const registers = [{ id: 'POS-1', store_id: 'STORE-1', name: 'Caja de prueba', user_id: '900001' }]
+  if (stateFile) {
+    try {
+      const saved=JSON.parse(await readFile(stateFile,'utf8'))
+      Object.assign(state,saved,{orders:new Map(saved.orders),keys:new Map(saved.keys),refundKeys:new Map(saved.refundKeys)})
+    } catch(error) { if(error.code!=='ENOENT') throw new Error('Could not read synthetic Point state') }
+  }
+  const branches = state.branches ?? [{ id: 'STORE-1', name: 'Sucursal de prueba', user_id: '900001' }]
+  const registers = state.registers ?? [{ id: 'POS-1', store_id: 'STORE-1', name: 'Caja de prueba', user_id: '900001' }]
+  Object.assign(state,{branches,registers})
   const terminal = () => ({ id: 'NEWLAND_N950__SERIAL-1', store_id: 'STORE-1', pos_id: 'POS-1', operating_mode: state.terminalMode })
-  const now = () => new Date(Date.UTC(2026, 9, 3, 12, 0, state.deliveries++)).toISOString()
+  const now = () => realtime ? new Date().toISOString() : new Date(Date.UTC(2026, 9, 3, 12, 0, state.deliveries++)).toISOString()
   const snapshot = () => ({ ...state, orders: [...state.orders.values()], keys: [...state.keys.keys()], refundKeys: [...state.refundKeys.keys()] })
   function send(response, data, status = 200) { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(data)) }
   function loseResponse(response) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.write('{'); setTimeout(() => response.destroy(), 5) }
@@ -22,8 +30,16 @@ export async function startSimulator({ host = '127.0.0.1', port = 0 } = {}) {
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url, 'http://127.0.0.1'), input = await body(request)
+      if (url.pathname === '/authorization' && request.method === 'GET') {
+        const redirect=new URL(url.searchParams.get('redirect_uri'))
+        if(redirect.protocol!=='http:' || !['127.0.0.1','localhost','[::1]'].includes(redirect.hostname) || redirect.username || redirect.password || redirect.pathname!=='/point/callback'
+          || url.searchParams.get('client_id')!=='sim-client' || url.searchParams.get('code_challenge_method')!=='S256' || !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('state')??'') || !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('code_challenge')??'')) return send(response,{error:'invalid_authorization'},400)
+        redirect.searchParams.set('state',url.searchParams.get('state'));redirect.searchParams.set('code','sim-code')
+        response.writeHead(302,{Location:redirect.toString(),'Cache-Control':'no-store'});response.end();return
+      }
       if (url.pathname === '/__control') {
         if (request.method === 'POST') {
+          if (input.reset && stateFile) return send(response,{error:'persistent_development_orders_cannot_be_reset'},400)
           if (input.reset) { state.orders.clear(); state.keys.clear(); state.refundKeys.clear(); state.creates = 0; state.refunds = 0; state.refreshes = 0; state.version = 1; state.calls = [] }
           if (typeof input.scenario === 'string') state.scenario = input.scenario
           if (Array.isArray(input.sequence)) state.sequence = [...input.sequence]
@@ -122,7 +138,17 @@ export async function startSimulator({ host = '127.0.0.1', port = 0 } = {}) {
       }
       return send(response, { error: 'not_found' }, 404)
     } catch { send(response, { error: 'invalid_request' }, 400) }
+    finally { if(stateFile) await persist() }
   })
+  let persistence=Promise.resolve()
+  function persist() {
+    const serialized=JSON.stringify({...state,orders:[...state.orders.entries()],keys:[...state.keys.entries()],refundKeys:[...state.refundKeys.entries()]})
+    persistence=persistence.then(async()=>{
+      await writeFile(`${stateFile}.tmp`,serialized,{mode:0o600})
+      await rename(`${stateFile}.tmp`,stateFile)
+    })
+    return persistence
+  }
   function applyRefund(order, amountCents) {
     state.refunds++
     order.transactions.refunds.push({ id: `REF${String(state.refunds).padStart(26, '0')}`, transaction_id: order.transactions.payments[0].id,
@@ -133,7 +159,7 @@ export async function startSimulator({ host = '127.0.0.1', port = 0 } = {}) {
   }
   await new Promise(resolve => server.listen(port, host, resolve))
   const address = server.address()
-  return { url: `http://127.0.0.1:${address.port}`, state, close: () => new Promise(resolve => { server.closeAllConnections(); server.close(resolve) }),
+  return { url: `http://127.0.0.1:${address.port}`, state, close: async () => { await new Promise(resolve => { server.closeAllConnections(); server.close(resolve) }); if(stateFile) await persist() },
     webhook(orderId, secret = 'simulator-webhook-secret', ts = '1742505638683', requestId = 'sim-request-1') {
       const manifest = `id:${orderId.toLowerCase()};request-id:${requestId};ts:${ts};`
       return { headers: { 'Content-Type': 'application/json', 'x-request-id': requestId, 'x-signature': `ts=${ts},v1=${createHmac('sha256', secret).update(manifest).digest('hex')}` },

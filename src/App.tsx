@@ -1918,7 +1918,7 @@ function AccountApp() {
                 setError("");
                 navigate("recover-email");
               }}
-              onChangeBusiness={businesses.length > 1 ? changeBusiness : undefined}
+              onChangeBusiness={changeBusiness}
               onLogout={() => void logout()}
             />
           ) : createPin ? (
@@ -2145,7 +2145,7 @@ function AccountApp() {
               onTeam={() => openMoreScreen("team", "employees")}
               onDevices={() => openMoreScreen("devices", "devices")}
               onSwitchBusiness={changeBusiness}
-              onChangePin={() => changePin(operator.business.role === "owner" ? "account" : "pin")}
+              onChangePin={(returnFocus = "pin") => changePin(returnFocus)}
               onNotifications={() =>
                 openMoreScreen("notifications", "notifications")
               }

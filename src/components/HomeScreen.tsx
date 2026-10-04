@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronRight,
+  CreditCard,
   KeyRound,
   LockKeyhole,
   LogOut,
@@ -61,7 +62,7 @@ interface HomeScreenProps {
   onTeam?: () => void;
   onDevices?: () => void;
   onSwitchBusiness?: () => void;
-  onChangePin?: () => void;
+  onChangePin?: (returnFocus?: string) => void;
   onSwitchEmployee?: () => void;
   logoutLabel?: string;
   managementContent?: ReactNode;
@@ -328,7 +329,7 @@ export default function HomeScreen({
   const title = pointPage === 'setup' ? 'Mercado Pago Point' : pointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
   return (
     <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent && !pointPage} title={title} busy={busy}
-      onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin}
+      onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin ? () => onChangePin('account') : undefined}
       onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={pointPage ?? managementKey}
       onPointSetup={isOwner && !deviceToken ? () => setPointPage('setup') : undefined} onPointAdmin={point.settings?.permissions.admin ? () => setPointPage('admin') : undefined}>
       {pointPage && <div className="workspace-management">
@@ -411,8 +412,15 @@ export default function HomeScreen({
           />
         ) : active === "Comandas" ? (
           snapshot ? <OrdersScreen business={business} access={access} snapshot={snapshot} mutation={mutation} onOrder={setSelectedOrder} onNew={() => setEditingOrder({})} refresh={operation.refresh} onSessionError={onSessionError} /> : <p role="status">Cargando comandas…</p>
-        ) : active === "Más" && !isOwner ? (
+        ) : active === "Más" ? (
           <div className="pos-more mt-6 w-full max-w-160 tablet:max-w-280" ref={more}>
+            {isOwner && <section className="pos-menu-group [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted"><h2>Negocio</h2>
+              {onSettings && row('settings','Datos del negocio',Wallet,onSettings)}
+              {onTeam && row('employees','Empleados',Users,onTeam)}
+              {onDevices && row('devices','Dispositivos de caja',CreditCard,onDevices)}
+              {row('point','Mercado Pago Point',CreditCard,()=>setPointPage('setup'),'Alta y recuperación de cobros integrados')}
+              {point.settings?.permissions.admin && row('point-admin','Panel privado SASORI',ChartNoAxesCombined,()=>setPointPage('admin'))}
+            </section>}
             {!isOwner && hasPermission(business, 'catalog.read') && <section className="pos-menu-group"><h2>Productos</h2>{row('products','Productos',Package,()=>setActive('Productos'),'Catálogo y disponibilidad autorizada')}</section>}
             {!isOwner && allowed.length === 1 && <p>Tu cuenta no tiene permisos de operación. Pide al dueño que revise tu acceso.</p>}
             {(hasPermission(business, 'cash.read') || hasPermission(business, 'reports.read')) && <section className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"><h2>Operación</h2>{hasPermission(business, 'cash.read') && row('cash', 'Caja', Wallet, () => setActive('Caja'), 'Turnos, efectivo y cierre')}{hasPermission(business, 'reports.read') && row('reports', 'Reportes', ChartNoAxesCombined, () => setActive('Reportes'), 'Ventas del día y diferencias de caja')}</section>}
@@ -423,7 +431,7 @@ export default function HomeScreen({
               >
                 <h2 id="more-access-title">Mi acceso</h2>
                 {onChangePin &&
-                  row("pin", "Cambiar mi PIN", KeyRound, onChangePin)}
+                  row("pin", "Cambiar mi PIN", KeyRound, () => onChangePin('pin'))}
               </section>
             )}
             <section
@@ -431,6 +439,7 @@ export default function HomeScreen({
               aria-labelledby="more-session-title"
             >
               <h2 id="more-session-title">Sesión</h2>
+              {onSwitchBusiness && row('business','Cambiar negocio',Users,onSwitchBusiness)}
               {onSwitchEmployee &&
                 row(
                   "employee",

@@ -4,7 +4,7 @@ import { businessPermissions, permissionPrerequisites, type BusinessPermission }
 const permissionGroups: { name: string; choices: [BusinessPermission, string][] }[] = [
   { name: "Catálogo", choices: [["catalog.read", "Consultar productos"], ["catalog.manage", "Crear y editar productos"], ["catalog.availability", "Cambiar disponibilidad"]] },
   { name: "Ventas", choices: [["sales.create", "Cobrar ventas"], ["sales.read_own", "Consultar sus ventas"], ["sales.read_all", "Consultar todas las ventas"], ["sales.discount", "Aplicar descuentos"], ["sales.reverse", "Anular ventas"]] },
-  { name: "Órdenes", choices: [["orders.read", "Consultar cuentas"], ["orders.manage", "Crear y editar cuentas"], ["orders.cancel", "Cancelar cuentas"]] },
+  { name: "Órdenes", choices: [["orders.read", "Consultar cuentas"], ["orders.manage", "Crear y editar cuentas"], ["orders.cancel", "Cancelar cuentas"], ["tables.manage", "Administrar mesas"]] },
   { name: "Comandas", choices: [["kitchen.read", "Consultar comandas"], ["kitchen.operate", "Actualizar preparación"]] },
   { name: "Caja", choices: [["cash.read", "Consultar caja"], ["cash.open", "Abrir caja"], ["cash.move", "Registrar entradas y salidas"], ["cash.close", "Cerrar caja"]] },
   { name: "Reportes", choices: [["reports.read", "Consultar reportes"]] },

@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOperationalMore } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import { fixturePin } from './account-fixture'
 import { fixtureCashier, fixtureDeviceId, fixturePairingCode, mockOnboarding } from './onboarding-fixture'
@@ -9,8 +11,8 @@ test.beforeEach(async ({ page }) => {
 async function openMore(page: Page) {
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOperationalMore(page);
 }
 
 async function noOverflow(page: Page) {
@@ -48,7 +50,7 @@ test('More and its subpages have readable task groups and fit the viewport', asy
       await page.screenshot({ path: `/tmp/pos-mas-${info.project.name}-employee-detail.png`, fullPage: true })
       await page.getByRole('button', { name: 'Volver a empleados' }).click()
     }
-    await page.getByRole('button', { name: 'Volver a Más', exact: true }).click()
+    await page.getByRole('button', { name: /^Volver(?: a Más)?$/, exact: true }).click()
     await expect(page.getByRole('button', { name: task, exact: true })).toBeFocused()
   }
   if (info.project.name === 'mobile') {

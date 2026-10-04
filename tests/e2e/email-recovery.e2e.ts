@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOperationalMore } from './workspace-flow'
 import { expect, test } from '@playwright/test'
 import { fixturePin } from './account-fixture'
 import { fixtureCashier, fixtureDeviceToken, mockOnboarding } from './onboarding-fixture'
@@ -112,8 +114,8 @@ test('paired registers request email for the selected employee without personal 
 
 test('Más has no recovery-code setup and a known PIN still changes with the current PIN', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true })
-  await page.goto('/'); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button', { name: 'Entrar', exact:true }).click()
-  await page.getByRole('button', { name: 'Más', exact:true }).click()
+  await page.goto('/'); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page);
+  await openOperationalMore(page);
   await expect(page.getByRole('button', { name: 'Código de recuperación' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Cambiar mi PIN', exact:true }).click()
   await expect(page.getByLabel('PIN actual', { exact: true })).toBeVisible()

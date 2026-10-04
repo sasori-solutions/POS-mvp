@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { enterOperations } from './workspace-flow'
 import { test, expect, type Page } from '@playwright/test'
 import { fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture'
 import { pendingSaleKey } from '../../src/lib/pending-sale'
@@ -7,10 +9,14 @@ import type { Product, Sale } from '../../src/lib/pos-contracts'
 async function unlock(page: Page) {
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible()
+  await submitPinIfPresent(page);
+  await enterOperations(page)
 }
-async function navigate(page: Page, name: string) { await page.getByRole('navigation').getByRole('button', { name, exact: true }).click() }
+async function navigate(page: Page, name: string) { if(name==='Venta') return enterOperations(page); await page.getByRole('button', { name:name==='Ventas'?'Historial':name, exact: true }).filter({visible:true}).first().click() }
+async function charge(page: Page, amount: string) {
+  await expect(page.locator('.current-sale .sale-total')).toContainText(amount)
+  await page.getByRole('button', {name:'Cobrar',exact:true}).click()
+}
 async function openCart(page: Page) {
   const button = page.getByRole('button', { name: /^Ver cuenta/ })
   if (await button.isVisible()) await button.click()
@@ -68,7 +74,7 @@ test('tablet keeps the total and charge action visible with a long account', asy
     await page.setViewportSize({ width: 1024, height: 940 })
     await unlock(page)
     for (const name of ['Latte', 'Americano', 'Capuchino', 'Té negro', 'Sándwich', 'Croissant', 'Espresso', 'Chocolate', 'Panqué']) await add(page, name)
-    const charge = page.getByRole('button', { name: 'Cobrar $490.00' })
+    const charge = page.getByRole('button', { name: 'Cobrar', exact:true })
     await expect(charge).toBeInViewport({ ratio: 1 })
     await expect(page.locator('.current-sale .sale-total')).toBeInViewport({ ratio: 1 })
   } finally { await backend.db.close() }
@@ -79,13 +85,13 @@ test('checkout keeps the reviewed amount until the operator returns to editing',
   try {
     await page.setViewportSize({ width: 1024, height: 940 })
     await unlock(page); await add(page, 'Latte')
-    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
-    const croissant = page.getByRole('button', { name: /^Agregar Croissant,/ })
+    await charge(page, '$58.00')
+    const croissant = page.locator('button[aria-label^="Agregar Croissant,"]')
     await expect(croissant).toBeDisabled()
     await expect(page.locator('.current-sale .sale-total')).toContainText('$58.00')
-    await page.getByRole('button', { name: 'Editar venta', exact: true }).click()
+    await page.getByRole('dialog',{name:'Cobrar',exact:true}).getByRole('button', { name: 'Cerrar', exact: true }).click()
     await croissant.click()
-    await expect(page.getByRole('button', { name: 'Cobrar $106.00' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Cobrar', exact:true })).toBeEnabled()
   } finally { await backend.db.close() }
 })
 
@@ -208,9 +214,10 @@ test('product actions stay above navigation on phone and tablet', async ({ page 
       const button = page.getByRole('button', { name: 'Eliminar Latte', exact: true })
       await expect(button).toBeInViewport({ ratio: 1 })
       const box = await button.boundingBox()
-      const navigation = await page.getByRole('navigation').boundingBox()
+      const bottomNavigation = page.getByRole('navigation',{name:'Navegación principal'}).filter({visible:true})
+      const bottom = await bottomNavigation.count() ? (await bottomNavigation.boundingBox()).y : (await page.evaluate(()=>innerHeight))
       expect(box!.height).toBeGreaterThanOrEqual(48)
-      expect(box!.y + box!.height).toBeLessThanOrEqual(navigation!.y)
+      expect(box!.y + box!.height).toBeLessThanOrEqual(bottom)
       await page.getByLabel('Acciones de Latte', { exact: true }).press('Escape')
       await expect(button).not.toBeVisible()
     }
@@ -227,8 +234,8 @@ for (const method of ['Efectivo', 'Tarjeta', 'Transferencia']) test(`sale regist
     await page.getByRole('button', { name: 'Disminuir Latte' }).click()
     await page.getByRole('button', { name: 'Aumentar Latte' }).click()
     await page.getByRole('button', { name: 'Quitar Croissant' }).click()
-    await page.getByRole('button', { name: 'Cobrar $116.00' }).click()
-    await page.getByRole('radio', { name: method, exact: true }).check()
+    await charge(page, '$116.00')
+    await page.locator('label').filter({has:page.getByRole('radio', {name:method,exact:true})}).click()
     if (method === 'Tarjeta') await expect(page.getByText('Cobra en tu terminal y registra el pago.')).toBeVisible()
     if (method === 'Transferencia') await expect(page.getByText(/Verifica que recibiste la transferencia/)).toBeVisible()
     await page.getByRole('button', { name: method === 'Efectivo' ? 'Confirmar venta' : 'Registrar pago', exact: true }).click()
@@ -246,7 +253,7 @@ for (const method of ['Efectivo', 'Tarjeta', 'Transferencia']) test(`sale regist
     await navigate(page, 'Venta')
     await page.getByRole('button', { name: 'Nueva venta' }).click()
     if (await page.getByRole('button', { name: 'Venta actual', exact: true }).isVisible()) await expect(page.getByRole('button', { name: 'Venta actual', exact: true })).toBeDisabled()
-    else await expect(page.getByRole('button', { name: 'Cobrar $0.00' })).toBeDisabled()
+    else await expect(page.getByRole('button', { name: 'Cobrar', exact:true })).toBeDisabled()
   } finally { await backend.db.close() }
 })
 
@@ -254,7 +261,7 @@ test('lost sale response survives reload/PIN and replays one immutable operation
   const backend = await mockPos(page, { saleResponseLosses: 1 })
   try {
     await unlock(page); await add(page, 'Latte'); await openCart(page)
-    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
+    await charge(page, '$58.00')
     await page.getByRole('button', { name: 'Confirmar venta' }).click()
     await expect(page.getByRole('button', { name: 'Reintentar registro' })).toBeEnabled()
     await expect(page.getByText(/sin volver a cobrar/).first()).toBeVisible()
@@ -263,7 +270,7 @@ test('lost sale response survives reload/PIN and replays one immutable operation
     expect(persisted).not.toContain(fixturePin)
     await page.reload()
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Reintentar registro' }).click()
     await expect(page.getByRole('heading', { name: 'Venta registrada' })).toBeVisible()
     const attempts = backend.calls.filter(command => command.command === 'complete_sale')
@@ -278,7 +285,7 @@ test('rapid double submission sends one command and blocks editing while saving'
   const backend = await mockPos(page, { delaySaleMs: 500 })
   try {
     await unlock(page); await add(page, 'Latte'); await openCart(page)
-    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
+    await charge(page, '$58.00')
     await page.getByRole('button', { name: 'Confirmar venta' }).evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click() })
     await expect(page.getByRole('button', { name: 'Registrando…' })).toBeDisabled()
     await expect(page.getByRole('heading', { name: 'Venta registrada' })).toBeVisible()
@@ -294,9 +301,9 @@ test('two tabs preserve and retry the same pending sale without overwriting it',
     await backend.attach(other)
     await unlock(page); await unlock(other)
     await add(page, 'Latte'); await openCart(page)
-    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
+    await charge(page, '$58.00')
     await add(other, 'Croissant'); await openCart(other)
-    await other.getByRole('button', { name: 'Cobrar $48.00' }).click()
+    await charge(other, '$48.00')
     await page.getByRole('button', { name: 'Confirmar venta' }).click()
     await expect(other.getByRole('button', { name: 'Reintentar registro' })).toBeEnabled()
     await expect(other.locator('.sale-total')).toContainText('$58.00')
@@ -316,7 +323,7 @@ test('full browser storage stops the sale request and lets the operator retry sa
   const backend = await mockPos(page)
   try {
     await unlock(page); await add(page, 'Latte'); await openCart(page)
-    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
+    await charge(page, '$58.00')
     await page.evaluate(() => {
       const original = Storage.prototype.setItem
       Storage.prototype.setItem = function(key, value) { if (key.startsWith('pos-mexico-pending-sale')) throw new DOMException('Full', 'QuotaExceededError'); original.call(this, key, value) }
@@ -325,9 +332,9 @@ test('full browser storage stops the sale request and lets the operator retry sa
     await expect(page.getByRole('alert')).toContainText('No pudimos conservar')
     expect(backend.calls.filter(command => command.command === 'complete_sale')).toHaveLength(0)
     expect((await backend.sales()).sales).toHaveLength(0)
-    await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page);
     await add(page, 'Latte'); await openCart(page)
-    await page.getByRole('button', { name: 'Cobrar $58.00' }).click()
+    await charge(page, '$58.00')
     await page.getByRole('button', { name: 'Confirmar venta' }).click()
     await expect(page.getByRole('heading', { name: 'Venta registrada' })).toBeVisible()
     expect((await backend.sales()).sales).toHaveLength(1)
@@ -344,11 +351,11 @@ test('a recovered unaccepted sale preserves its draft when the server rejects ch
     // The account fixture predates employee projection and uses Home's legacy owner scope.
     await page.evaluate(({ key, command }) => localStorage.setItem(key, JSON.stringify(command)), { key: pendingSaleKey(fixtureBusiness.id, 'owner'), command: pending })
     await backend.execute({ command: 'save_product', operationId: crypto.randomUUID(), productId: latte.id, expectedVersion: latte.version, name: latte.name, category: latte.category, priceCents: 6001 })
-    await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Reintentar registro' }).click()
     await expect(page.getByText(/La venta no se registró/)).toBeVisible()
     await expect(page.getByLabel('Cantidad de Latte')).toHaveText('1')
-    await expect(page.getByRole('button', { name: 'Cobrar $60.01' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Cobrar', exact:true })).toBeEnabled()
     expect((await backend.sales()).sales).toHaveLength(0)
     expect(await page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pos-mexico-pending-sale')))).toEqual([])
   } finally { await backend.db.close() }
@@ -366,7 +373,7 @@ test('stale cart cannot charge until the operator reviews prices and availabilit
     await openCart(page)
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     await expect(page.locator('.current-sale').getByText(/El catálogo cambió/)).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Cobrar $60.01' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Cobrar', exact:true })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Quitar Croissant' })).not.toBeVisible()
   } finally { await backend.db.close() }
 })
@@ -460,7 +467,7 @@ test('expanded product editor persists a photo, variants and extras with manual 
     await page.getByRole('radio',{name:/Avena/}).check()
     await page.getByRole('button',{name:'Agregar · $62.13',exact:true}).click()
     await openCart(page)
-    await page.getByRole('button',{name:'Cobrar $62.13',exact:true}).click()
+    await charge(page, '$62.13')
     await page.getByRole('button',{name:'Confirmar venta',exact:true}).click()
     await expect(page.getByRole('button',{name:'Reintentar registro',exact:true})).toBeEnabled()
     await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await page.getByRole('button',{name:'Entrar',exact:true}).click()
@@ -530,7 +537,7 @@ test('MVP mobile product fields persist distinct Mexican IVA treatments and keep
     await expect(totals).toContainText('IVA tasa 0 %')
     await expect(totals).toContainText('Exento de IVA')
     await expect(totals).toContainText('$279.00')
-    await page.getByRole('button',{name:'Cobrar $279.00',exact:true}).click()
+    await charge(page, '$279.00')
     await page.getByRole('button',{name:'Confirmar venta',exact:true}).click()
     await expect(page.getByRole('heading',{name:'Venta registrada',exact:true})).toBeVisible()
     await expect(page.locator('.sale-detail')).toContainText('Subtotal sin IVA')

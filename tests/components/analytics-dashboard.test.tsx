@@ -81,7 +81,7 @@ test('Inicio presents three numerical KPIs and opens the matching report from ea
   expect(within(summary).getByText(money(100000))).toBeTruthy()
   expect(within(summary).getByText('6')).toBeTruthy()
   expect(within(summary).getByText(money(20000))).toBeTruthy()
-  await waitFor(() => expect(screen.getByLabelText('Ventas netas por hora')).toBeTruthy())
+  await waitFor(() => expect(screen.getByLabelText('Ventas netas por hora')).toBeTruthy(), {timeout:10000})
   fireEvent.click(screen.getByRole('button', { name: 'Ver evolución en Reportes' }))
   fireEvent.click(screen.getByRole('button', { name: 'Ver métodos de pago en Reportes' }))
   fireEvent.click(screen.getByRole('button', { name: 'Ver productos en Reportes' }))

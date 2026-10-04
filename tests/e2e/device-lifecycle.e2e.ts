@@ -1,3 +1,4 @@
+import { submitPinIfPresent } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import { fixtureAuthKey, fixtureBusiness, fixturePin } from './account-fixture'
 import { fixtureCashier, fixtureCashierPin, fixtureDeviceToken, fixturePairingCode, mockOnboarding } from './onboarding-fixture'
@@ -52,7 +53,7 @@ test('a cross-tab lock cancels a pending PIN response and revokes its late opera
   try {
     await selectCashier(page)
     await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await expect.poll(() => typeof release).toBe('function')
     await broadcast(page, 'lock')
     await expect(page.getByRole('heading', { name: 'Elige tu nombre' })).toBeVisible()
@@ -70,7 +71,7 @@ test('a received lock cannot release another pending lock and enable entry early
   await pair(page)
   await selectCashier(page)
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible()
   let release: (() => void) | undefined
   await page.route(accountUrl, async (route) => {
@@ -105,7 +106,7 @@ test('a cross-tab forget cancels PIN entry and prevents a late response restorin
   try {
     await selectCashier(page)
     await page.getByLabel('PIN del empleado', { exact: true }).fill(fixtureCashierPin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await expect.poll(() => typeof release).toBe('function')
     await broadcast(page, 'forget')
     await expect(page.getByRole('heading', { name: 'Vincular caja compartida', exact: true })).toBeVisible()
@@ -170,11 +171,11 @@ test('returning to the same employee preserves a server PIN cooldown', async ({ 
   })
   await selectCashier(page)
   await page.getByLabel('PIN del empleado', { exact: true }).fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeDisabled()
+  await submitPinIfPresent(page);
+  await expect(page.getByTestId('pin-input')).toBeDisabled()
   await page.getByRole('button', { name: 'Cambiar empleado', exact: true }).click()
   await selectCashier(page)
-  await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeDisabled()
+  await expect(page.getByTestId('pin-input')).toBeDisabled()
   expect(attempts).toBe(1)
   await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeEnabled({ timeout: 5000 })
 })
