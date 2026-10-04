@@ -1,6 +1,7 @@
 import { accountRequest, deviceRequest } from './account'
 import type { PointCommand, PointPaymentState, PointResponses } from './point-contracts'
 import type { PosAccess } from './pos'
+import { assertPointResponse } from './point-response'
 
 type PointOAuthReturn = { code: string; state: string } | { error: 'access_denied'; state: string } | { rejected: true }
 let oauthReturn: PointOAuthReturn | null = null
@@ -18,6 +19,7 @@ export async function pointRequest<C extends PointCommand['command']>(access: Po
   const result = access.deviceToken
     ? await deviceRequest({ action: 'device_point', deviceToken: access.deviceToken, operatorToken: access.operatorToken, ...command })
     : await accountRequest({ action: 'point', businessId: access.businessId, operatorToken: access.operatorToken, ...command })
+  assertPointResponse(command, result)
   return result as PointResponses[C]
 }
 

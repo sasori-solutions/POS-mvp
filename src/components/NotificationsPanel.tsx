@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, Bell, Check, RefreshCw } from "lucide-react";
+import { Bell, Check } from "lucide-react";
+import LoadingPlaceholder from "./LoadingPlaceholder";
+import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
 import type { AccountResponses } from "../lib/contracts";
 
@@ -26,7 +28,6 @@ function dateLabel(value: string) {
 export default function NotificationsPanel({
   businessId,
   operatorToken,
-  onBack,
   onSessionError,
   onUnreadCount,
 }: Props) {
@@ -160,7 +161,7 @@ export default function NotificationsPanel({
       setConfirm(null);
       setMessage(
         decision === "approve"
-          ? "Cambio autorizado. El dispositivo anterior perdió el acceso; el empleado ya puede entrar desde el nuevo."
+          ? "Cambio autorizado. El dispositivo anterior perdió el acceso."
           : decision === "reject"
             ? "Solicitud rechazada. El dispositivo anterior conserva el acceso."
             : "Notificación marcada como leída.",
@@ -183,36 +184,13 @@ export default function NotificationsPanel({
   }
   const actionsDisabled = loading || refreshing || Boolean(busy);
   return (
-    <section className="screen flex flex-col max-compact:flex-1 notifications-screen max-w-160">
-      <button
-        className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-        onClick={onBack}
-      >
-        <ArrowLeft size={20} aria-hidden="true" />
-        Volver a Más
-      </button>
-      <div className="notifications-title flex items-center justify-between gap-4">
-        <h1>Notificaciones</h1>
-        <button
-          className="pos-icon-button"
-          aria-label="Actualizar notificaciones"
-          onClick={() => void refresh()}
-          disabled={actionsDisabled}
-        >
-          <RefreshCw size={20} aria-hidden="true" />
-        </button>
-      </div>
-      <p>
-        Revisa los accesos de tu equipo. Un dispositivo nuevo permanece
-        bloqueado hasta que autorices el cambio.
-      </p>
+    <section className="screen management-polish notifications-screen">
+      <h1 className="sr-only">Notificaciones</h1>
       {error && (
-        <p
-          role="alert"
-          className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
-        >
-          {error}
-        </p>
+        <div className="access-error-retry">
+          <p role="alert" className="error-message">{error}</p>
+          <button className="button secondary" disabled={actionsDisabled} onClick={() => void refresh()}>Reintentar</button>
+        </div>
       )}
       {message && (
         <p
@@ -224,32 +202,29 @@ export default function NotificationsPanel({
         </p>
       )}
       {loading ? (
-        <p role="status">Cargando notificaciones…</p>
+        <LoadingPlaceholder variant="list" rows={3} label="Cargando notificaciones" />
       ) : notices.length === 0 && !error ? (
         <div className="notifications-empty mt-6 rounded-xl bg-surface px-4 py-12 text-center [&_h2]:text-xl">
           <Bell size={28} aria-hidden="true" />
           <h2>Estás al día</h2>
-          <p>
-            Aquí aparecerán las solicitudes y los dispositivos vinculados de tus
-            empleados.
-          </p>
+          <p>No hay solicitudes pendientes.</p>
         </div>
       ) : (
         <ul className="notification-list mt-6 grid list-none gap-4 p-0">
           {notices.map((notice) => (
             <li
               key={notice.id}
-              className={`notification-card rounded-xl border border-line p-5 [overflow-wrap:anywhere] [&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-xl ${notice.readAt ? "" : "unread border-l-3 border-l-brand"}`}
+              className={`notification-card ${notice.readAt ? "" : "unread"}`}
             >
               <div className="notification-meta flex flex-wrap justify-between gap-2 text-[13px] text-muted">
-                <span>{statuses[notice.status]}</span>
+                <span className={`notification-status notification-status-${notice.status}`}>{statuses[notice.status]}</span>
                 <time dateTime={notice.createdAt}>
                   {dateLabel(notice.createdAt)}
                 </time>
               </div>
               <h2>
                 {notice.type === "employee_device_requested"
-                  ? "Solicitud de otro dispositivo"
+                  ? "Cambiar dispositivo"
                   : "Dispositivo vinculado"}
               </h2>
               <p>
@@ -258,9 +233,7 @@ export default function NotificationsPanel({
               {notice.type === "employee_device_requested" &&
                 notice.status === "pending" && (
                   <p>
-                    La cuenta y el PIN se verificaron, pero el acceso está
-                    bloqueado. Confirma con el empleado que reconoce este
-                    dispositivo.
+                    Acceso bloqueado. Confirma que el empleado reconoce este dispositivo.
                   </p>
                 )}
               {!notice.readAt && (
@@ -278,9 +251,10 @@ export default function NotificationsPanel({
                     <button
                       className="button primary"
                       disabled={actionsDisabled}
+                      aria-busy={busy === notice.id}
                       onClick={() => void act(notice, "approve")}
                     >
-                      Reemplazar dispositivo
+                      <AccessButtonContent busy={busy === notice.id}>Reemplazar dispositivo</AccessButtonContent>
                     </button>
                     <button
                       className="button secondary"
@@ -302,9 +276,10 @@ export default function NotificationsPanel({
                     <button
                       className="button secondary"
                       disabled={actionsDisabled}
+                      aria-busy={busy === notice.id}
                       onClick={() => void act(notice, "reject")}
                     >
-                      Rechazar
+                      <AccessButtonContent busy={busy === notice.id}>Rechazar</AccessButtonContent>
                     </button>
                   </div>
                 )
@@ -313,9 +288,10 @@ export default function NotificationsPanel({
                 <button
                   className="text-button min-h-12 cursor-pointer border-0 bg-transparent text-ink underline underline-offset-4 hover:text-brand"
                   disabled={actionsDisabled}
+                  aria-busy={busy === notice.id}
                   onClick={() => void act(notice)}
                 >
-                  Marcar como leída
+                  <AccessButtonContent busy={busy === notice.id}>Marcar como leída</AccessButtonContent>
                 </button>
               )}
             </li>

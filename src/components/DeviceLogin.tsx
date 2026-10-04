@@ -10,6 +10,8 @@ import type {
 import HomeScreen from "./HomeScreen";
 import EmployeePinSetup from "./EmployeePinSetup";
 import RequestPinRecovery from "./RequestPinRecovery";
+import LoadingPlaceholder from "./LoadingPlaceholder";
+import { AccessButtonContent } from "./AccessBusy";
 
 interface DeviceLoginProps {
   onExit?: () => void;
@@ -622,7 +624,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
 
   return (
     <div className="employee-shell mx-auto mt-8 flex min-h-[calc(100dvh-120px)] w-full max-w-117 flex-col px-6 pt-6 pb-12 max-compact:mt-4">
-      {onExit && (
+      {onExit && (!loading || status) && !selected && (
         <button
           type="button"
           className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
@@ -633,28 +635,18 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
           Cambiar acceso
         </button>
       )}
-      {loading ? (
-        <div
-          className="employee-loading flex items-center justify-center gap-4 py-20"
-          role="status"
-        >
-          <span
-            className="loader size-6 animate-spin rounded-full border-2 border-line border-t-brand motion-reduce:animate-none"
-            aria-hidden="true"
-          />
-          <p>Cargando caja…</p>
-        </div>
+      {loading && !status ? (
+        <LoadingPlaceholder variant="form" rows={2} label="Cargando caja" />
       ) : !deviceToken ? (
-        <section className="employee-screen flex flex-1 flex-col [&_.screen-actions]:mt-8 [&>.error-message]:mt-5">
+        <section className="access-flow screen employee-screen">
           <h1>Vincular caja compartida</h1>
           <p>
-            Abre el enlace o escanea el QR del dueño para vincular esta caja.
-            También puedes ingresar su código.
+            Usa el enlace, QR o código del dueño.
           </p>
           <form onSubmit={pair}>
             <div className="field">
               <label htmlFor="device-pairing">
-                Código para vincular dispositivo
+                Código de vinculación
               </label>
               <input
                 id="device-pairing"
@@ -695,13 +687,13 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
                 disabled={busy || !identityClosed.current}
                 aria-busy={busy}
               >
-                {busy ? "Vinculando…" : "Vincular dispositivo"}
+                <AccessButtonContent busy={busy}>Vincular dispositivo</AccessButtonContent>
               </button>
             </div>
           </form>
         </section>
       ) : selected ? (
-        <section className="employee-screen flex flex-1 flex-col [&_.screen-actions]:mt-8 [&>.error-message]:mt-5">
+        <section className="access-flow screen employee-screen employee-pin-screen">
           <button
             type="button"
             className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
@@ -761,7 +753,7 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
                 disabled={busy || remaining > 0}
                 aria-busy={busy}
               >
-                {busy ? "Entrando…" : "Entrar"}
+                <AccessButtonContent busy={busy}>Entrar</AccessButtonContent>
               </button>
             </div>
             <button
@@ -778,14 +770,13 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
           </form>
         </section>
       ) : (
-        <section className="employee-screen flex flex-1 flex-col [&_.screen-actions]:mt-8 [&>.error-message]:mt-5 employee-roster [&_.business-choice>span:first-child]:flex [&_.business-choice>span:first-child]:flex-col [&_.business-choice>span:first-child]:gap-1 [&_small]:text-sm [&_small]:font-normal [&_small]:text-muted [&_.management-actions]:mt-auto [&_.management-actions]:pt-6">
+        <section className="access-flow screen employee-screen employee-roster">
           {status && (
             <p className="employee-summary mb-3 text-sm">
               {status.business.name} / {status.registerName}
             </p>
           )}
           <h1>Elige tu nombre</h1>
-          <p>Cada empleado entra con su propio PIN.</p>
           <button
             type="button"
             className="button secondary"
@@ -828,7 +819,8 @@ export default function DeviceLogin({ onExit }: DeviceLoginProps) {
                         setNow(Date.now());
                       }}
                     >
-                      <span>
+                      <span className="access-person-avatar" aria-hidden="true">{employee.name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase()}</span>
+                      <span className="access-person-info">
                         <span>{employee.name}</span>
                         <small>{roles[employee.role]}</small>
                       </span>

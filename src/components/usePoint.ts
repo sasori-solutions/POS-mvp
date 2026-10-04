@@ -5,35 +5,42 @@ import { pointRequest } from '../lib/point-client'
 import type { PosAccess } from '../lib/pos'
 import { accessErrorCodes } from './useCatalog'
 
-/** Recovery keeps working when new collections have been disabled. Only the backend decides capabilities. */
+/** Private results and pending work are scoped to the exact unlocked session. */
 export function usePoint(access: PosAccess, enabled: boolean, onSessionError?: (error: AccountClientError) => void) {
-  const [settings, setSettings] = useState<PointSettings | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(enabled)
+  const scope = `${access.businessId}:${access.operatorToken}:${access.deviceToken ?? ''}:${enabled}`
+  const currentScope = useRef(scope), alive = useRef(true), sequence = useRef(0)
+  if (currentScope.current !== scope) { currentScope.current = scope; sequence.current += 1 }
+  const [state, setState] = useState<{ scope: string; settings: PointSettings | null; error: string; loading: boolean }>({ scope, settings: null, error: '', loading: enabled && navigator.onLine })
   const errorHandler = useRef(onSessionError); errorHandler.current = onSessionError
-  const alive = useRef(true), sequence = useRef(0)
   useEffect(() => { alive.current = true; return () => { alive.current = false; sequence.current += 1 } }, [])
+  const setSettings = useCallback((settings: PointSettings | null) => {
+    if (!alive.current || currentScope.current !== scope || !enabled) return
+    sequence.current += 1
+    setState({ scope, settings, error: '', loading: false })
+  }, [scope, enabled])
   const refresh = useCallback(async () => {
-    if (!enabled || !navigator.onLine) return
+    if (!enabled || !navigator.onLine || currentScope.current !== scope) return
     const request = ++sequence.current
-    setLoading(true)
+    const current = () => alive.current && currentScope.current === scope && request === sequence.current
+    setState(previous => ({ scope, settings: previous.scope === scope ? previous.settings : null, error: '', loading: true }))
     try {
-      const result = await pointRequest(access, { command: 'settings' })
-      if (!alive.current || request !== sequence.current) return
-      setSettings(result); setError('')
+      const settings = await pointRequest(access, { command: 'settings' })
+      if (current()) setState({ scope, settings, error: '', loading: false })
     } catch (caught) {
-      if (!alive.current || request !== sequence.current) return
-      setError(caught instanceof Error ? caught.message : 'No pudimos consultar los cobros integrados.')
+      if (!current()) return
+      setState(previous => ({ ...previous, error: caught instanceof Error ? caught.message : 'No pudimos consultar los cobros integrados.', loading: false }))
       if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) errorHandler.current?.(caught)
-    } finally { if (alive.current && request === sequence.current) setLoading(false) }
-  }, [access.businessId, access.operatorToken, access.deviceToken, enabled])
+    }
+  }, [access.businessId, access.operatorToken, access.deviceToken, enabled, scope])
   useEffect(() => {
-    setSettings(null); void refresh()
+    setState({ scope, settings: null, error: '', loading: enabled && navigator.onLine })
+    void refresh()
     const update = () => { void refresh() }
     window.addEventListener('focus', update); window.addEventListener('online', update)
     const interval = window.setInterval(() => { if (!document.hidden) void refresh() }, 30_000)
-    return () => { window.removeEventListener('focus', update); window.removeEventListener('online', update); window.clearInterval(interval) }
+    return () => { sequence.current += 1; window.removeEventListener('focus', update); window.removeEventListener('online', update); window.clearInterval(interval) }
   }, [refresh])
-  return { settings, setSettings, error, loading, refresh }
+  const visible = enabled && state.scope === scope
+  return { settings: visible ? state.settings : null, setSettings, error: visible ? state.error : '', loading: enabled && (visible ? state.loading : navigator.onLine), refresh }
 }
 export type PointController = ReturnType<typeof usePoint>

@@ -1,3 +1,13 @@
+## Point integration review
+
+The Point PR makes Full checks a required CI dependency in addition to Basic checks. This supersedes the historical Basic-only description below for this candidate. Local review did not run browser suites; their CI result remains a release requirement.
+
+Use `npm run dev -- --point-simulator --point-manual-worker`, then `npm run test:point:local` to exercise real Auth/Edge/PostgreSQL and the HTTP provider simulator. The runner reads only this checkout's loopback configuration, never prints credentials, preserves simulator identity, and cleans only its own synthetic tenants. Restart without the manual-worker flag for interactive development. This does not establish compatibility with a physical terminal or Mercado Pago's live API. See [review evidence](../docs/point-review-2026-10-03.md).
+
+## Financial integrity
+
+`npm run test:integrity` runs the exact money kernel, payload/retry tests, checkout components and financial PostgreSQL invariants without a browser. `npm run test:integrity:integration` exercises real loopback Auth/Edge/Postgres, including separate-session races; start this checkout with `npm run dev` first. A skipped integration suite is not evidence of a working backend. No database reset is required. See [contract, findings and current evidence](../docs/financial-integrity-2026-10-03.md).
+
 ## Lean POS MVP — current candidate, 2 October 2026
 
 Codex for the current human implementation request. The complete candidate through migration 0023 passed **44/44 unit**, **53/53 PostgreSQL migration/transaction**, **24/24 component** and **23/23 Deno** cases, lint, the production build and both Edge source/standalone typechecks. These totals belong to this source candidate, not the older dated releases below.

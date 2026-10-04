@@ -23,7 +23,11 @@
     "test:domain": "vitest run tests/unit",
     "test:smoke": "vitest run tests/unit",
     "test:provider": "npx --yes deno test --allow-net=127.0.0.1,localhost tests/provider/adapter.deno.ts",
-    "test:point:integration": "vitest run tests/integration/point.integration.test.ts --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --hookTimeout=60000"
+    "test:point:integration": "vitest run tests/integration/point.integration.test.ts --no-file-parallelism --maxWorkers=1 --testTimeout=30000 --hookTimeout=60000",
+    "test:point:local": "node scripts/test-point-local-integration.mjs",
+    "test:integrity": "vitest run tests/unit tests/sql/financial-integrity.test.ts tests/sql/financial-adjustments.test.ts tests/components/financial-state-integrity.test.tsx tests/components/financial-legacy-state-integrity.test.tsx tests/components/checkout-adjustments.test.tsx tests/components/checkout-reservation.test.tsx tests/components/counter-checkout.test.tsx tests/components/checkout-item-selection.test.tsx tests/components/order-discount-editor.test.tsx tests/components/live-operational-attempts.test.tsx tests/components/operational-recovery.test.tsx --maxWorkers=2",
+    "test:integrity:integration": "node scripts/test-financial-integration.mjs",
+    "check:ledger": "node scripts/check-financial-ledger.mjs"
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "^5.3.0",

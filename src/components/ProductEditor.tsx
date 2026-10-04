@@ -6,6 +6,7 @@ import { emptyDetails, productDetails } from "../lib/product-details";
 import { parsePrice, posRequest, priceInput, type PosAccess } from "../lib/pos";
 import { PosDialog } from "./PosShared";
 import MoneyInput from "./MoneyInput";
+import { PendingIndicator } from "./LoadingPlaceholder";
 import ProductVatFields from "./ProductVatFields";
 import { productVat, vatRates } from "../lib/vat";
 import { accessErrorCodes } from "./useCatalog";
@@ -740,7 +741,7 @@ export default function ProductEditor({
         <footer className="editor-footer sticky bottom-0 z-30 col-span-full border-t border-line bg-white px-6 py-4 [&_.pos-error]:mt-0 [&_.pos-error]:mb-3 max-tablet:px-4 max-tablet:pt-3 max-tablet:pb-[calc(12px+env(safe-area-inset-bottom))]">
           {error && (
             <p
-              className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+              className="pos-error mt-6 bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
               role="alert"
             >
               {error}
@@ -774,11 +775,8 @@ export default function ProductEditor({
                 disabled={busy}
                 aria-busy={busy}
               >
-                {busy
-                  ? "Guardando…"
-                  : uncertain
-                    ? "Reintentar guardado"
-                    : "Guardar producto"}
+                {busy && <PendingIndicator label="Guardando producto" />}
+                {uncertain ? "Reintentar guardado" : "Guardar producto"}
               </button>
             )}
           </div>

@@ -1,5 +1,5 @@
 import { challenge, digest, randomSecret, TokenVault } from './crypto.ts'
-import { identifier, MercadoPagoPoint, ProviderError, record, verifyOrder } from './provider.ts'
+import { cents, identifier, MercadoPagoPoint, ProviderError, record, verifyOrder } from './provider.ts'
 import type { Environment, ExpectedOrder, PointAdapter, TokenSet } from './provider.ts'
 export interface RpcClient { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> }
 export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string }
@@ -27,6 +27,7 @@ export function configuration(env = (name: string) => Deno.env.get(name)): Confi
   // A simulator override needs both flags and a loopback Supabase. This can never redirect a production credential.
   const supabaseHost = new URL(env('SUPABASE_URL') ?? 'https://invalid').hostname
   const simulator = env('MP_ALLOW_LOCAL_SIMULATOR') === 'true' && ['127.0.0.1', 'localhost', '[::1]', 'kong', 'host.docker.internal'].includes(supabaseHost)
+  if (baseUrl && baseUrl !== 'https://api.mercadopago.com' && (!simulator || environment !== 'sandbox')) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
   const authorizationUrl = env('MP_OAUTH_AUTHORIZATION_URL')
   if (authorizationUrl) {
     const authorization = new URL(authorizationUrl)
@@ -38,11 +39,16 @@ export function configuration(env = (name: string) => Deno.env.get(name)): Confi
     chargesEnabled: env('POINT_CHARGES_ENABLED') === 'true', authorizationUrl }
 }
 function binding(connection: Record<string, unknown>): string { return `mercadopago:${connection.businessId}:${connection.environment}` }
-export async function connectionToken(admin: RpcClient, config: Configuration, connectionId: string): Promise<TokenSet> {
+type ConnectionToken = TokenSet & { connectionVersion: number }
+function versionedToken(token: TokenSet, connection: Record<string, unknown>): ConnectionToken {
+  if (!Number.isSafeInteger(connection.tokenVersion) || Number(connection.tokenVersion) < 1) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+  return { ...token, connectionVersion: Number(connection.tokenVersion) }
+}
+export async function connectionToken(admin: RpcClient, config: Configuration, connectionId: string): Promise<ConnectionToken> {
   let connection = await serviceRpc(admin, 'connection_get', { connectionId })
   let token = await config.vault.open<TokenSet>(String(connection.tokensCiphertext), binding(connection))
   if (token.receiverId !== connection.receiverId || token.environment !== connection.environment) throw new PointServiceError('POINT_FACT_MISMATCH')
-  if (Date.parse(token.expiresAt) > Date.now() + 60000) return token
+  if (Date.parse(token.expiresAt) > Date.now() + 60000) return versionedToken(token, connection)
   const leaseToken = crypto.randomUUID()
   const claim = await serviceRpc(admin, 'refresh_claim', { connectionId, leaseToken })
   if (!claim.claimed) throw new PointServiceError('POINT_REFRESH_BUSY')
@@ -50,13 +56,13 @@ export async function connectionToken(admin: RpcClient, config: Configuration, c
   token = await config.vault.open<TokenSet>(String(connection.tokensCiphertext), binding(connection))
   if (Date.parse(token.expiresAt) > Date.now() + 60000) {
     await serviceRpc(admin, 'refresh_release', { connectionId, leaseToken, uncertain: false })
-    return token
+    return versionedToken(token, connection)
   }
   try {
     const renewed = await config.adapter.refresh(token)
     const tokensCiphertext = await config.vault.seal(renewed, binding(connection))
-    await serviceRpc(admin, 'refresh_save', { connectionId, leaseToken, tokensCiphertext, expiresAt: renewed.expiresAt })
-    return renewed
+    const saved = await serviceRpc(admin, 'refresh_save', { connectionId, leaseToken, tokensCiphertext, expiresAt: renewed.expiresAt })
+    return versionedToken(renewed, saved)
   } catch (error) {
     // A lost refresh response may have rotated the refresh credential. Never race/replay the old one.
     await serviceRpc(admin, 'refresh_release', { connectionId, leaseToken, uncertain: !(error instanceof ProviderError && error.code === 'DEFINITIVE_FAILURE') })
@@ -110,8 +116,10 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
     return { connected: true, environment: token.environment, receiverId: token.receiverId, terminalReady: false }
   }
   const connectionId = identifier(directive.connectionId)
+  let connectionVersion: number | undefined
   try {
     const token = await connectionToken(admin, config, connectionId)
+    connectionVersion = token.connectionVersion
     await config.adapter.verifyAccount(token)
     if (command === 'verify_connection') {
       await serviceRpc(admin, 'connection_verified', { connectionId })
@@ -155,11 +163,26 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
     }
     throw new PointServiceError('VALIDATION_ERROR')
   } catch (error) {
-    if (error instanceof ProviderError && error.code === 'REVOKED') await serviceRpc(admin, 'connection_revoke', { connectionId })
+    if (error instanceof ProviderError && error.code === 'REVOKED' && connectionVersion !== undefined) await serviceRpc(admin, 'connection_revoke', { connectionId, expectedTokenVersion: connectionVersion })
     throw error
   }
 }
 interface Job { id: string; kind: string; attemptId: string; connectionId: string; leaseToken: string; payload: Record<string, unknown> }
+async function readOrder(config: Configuration, token: TokenSet, remoteOrderId: string, expected: ExpectedOrder) {
+  const order = await config.adapter.order(token, remoteOrderId)
+  if (identifier(order.id) !== remoteOrderId) throw new ProviderError('INVALID_RESPONSE')
+  const payments = record(order.transactions).payments
+  const payment = Array.isArray(payments) && payments.length === 1 ? record(payments[0]) : null
+  const reference = payment?.reference_id ?? (payment?.reference ? record(payment.reference).id : undefined)
+  // Orders can omit currency/live_mode. A completed payment supplies the monetary evidence.
+  if (!['processed', 'refunded'].includes(String(order.status)) && !order.currency && !order.currency_id) order.currency = order.country_code === 'MEX' ? 'MXN' : undefined
+  const proof = reference !== undefined ? await config.adapter.request(token, `/v1/payments/${identifier(reference)}`) : undefined
+  return { order, evidence: verifyOrder(order, expected, token, proof) }
+}
+function withinReplayWindow(firstSentAt: unknown): boolean {
+  const firstSent = typeof firstSentAt === 'string' ? Date.parse(firstSentAt) : NaN
+  return Number.isFinite(firstSent) && firstSent <= Date.now() && Date.now() - firstSent < 23 * 3600000
+}
 export async function runWorker(admin: RpcClient, supplied?: Configuration): Promise<{ processed: number; failed: number }> {
   const config = supplied ?? configuration()
   await serviceRpc(admin, 'pending_sweep', { limit: 100 })
@@ -170,8 +193,10 @@ export async function runWorker(admin: RpcClient, supplied?: Configuration): Pro
     const jobs = Array.isArray(claimed.jobs) ? claimed.jobs as unknown as Job[] : []
     if (jobs.length === 0) break
     const job = jobs[0]
+    let connectionVersion: number | undefined
     try {
       const token = await connectionToken(admin, config, job.connectionId)
+      connectionVersion = token.connectionVersion
       const expected = job.payload as unknown as ExpectedOrder
       await config.adapter.verifyAccount(token)
       let remoteOrderId = typeof job.payload.remoteOrderId === 'string' ? job.payload.remoteOrderId : ''
@@ -185,21 +210,42 @@ export async function runWorker(admin: RpcClient, supplied?: Configuration): Pro
         await serviceRpc(admin, 'record_remote_order', { attemptId: job.attemptId, remoteOrderId, leaseToken: job.leaseToken, jobId: job.id })
       } else if (job.kind === 'refund') {
         if (!remoteOrderId) throw new PointServiceError('POINT_RESULT_UNCERTAIN')
-        await config.adapter.refund(token, remoteOrderId, identifier(job.payload.paymentId), Number(job.payload.refundAmountCents), identifier(job.payload.idempotencyKey), Number(job.payload.refundAmountCents) === expected.amountCents)
+        const refund = record(job.payload.refundRequest)
+        const before = await readOrder(config, token, remoteOrderId, expected)
+        // A known remote refund is reconciled through GET. Never POST it again after a
+        // worker restart or after a webhook already confirmed it.
+        if (refund.status !== 'confirmed' && !refund.remoteRefundId) {
+          if (!withinReplayWindow(refund.firstSentAt)) throw new PointServiceError('POINT_IDEMPOTENCY_WINDOW_EXPIRED')
+          const refundAmount = Number(refund.amountCents)
+          if (refundAmount !== Number(job.payload.refundAmountCents)) throw new PointServiceError('POINT_FACT_MISMATCH')
+          const response = await config.adapter.refund(token, remoteOrderId, identifier(job.payload.paymentId), refundAmount,
+            identifier(job.payload.idempotencyKey), refundAmount === expected.amountCents)
+          if (identifier(response.id) !== remoteOrderId) throw new ProviderError('INVALID_RESPONSE')
+          const prior = record(before.order.transactions).refunds
+          const priorIds = new Set((Array.isArray(prior) ? prior : []).map(item => identifier(record(item).id)))
+          const returned = record(response.transactions).refunds
+          if (!Array.isArray(returned)) throw new ProviderError('INVALID_RESPONSE')
+          const matches = returned.map(record).filter(item => !priorIds.has(identifier(item.id))
+            && item.transaction_id === job.payload.paymentId && cents(item.amount) === refundAmount)
+          // An idempotent replay may return the already visible refund. Only the exact
+          // mutation response may bind it; an unrelated GET amount is insufficient.
+          const candidates = matches.length ? matches : returned.map(record).filter(item => item.transaction_id === job.payload.paymentId && cents(item.amount) === refundAmount)
+          if (candidates.length !== 1) throw new PointServiceError('POINT_RESULT_UNCERTAIN')
+          await serviceRpc(admin, 'record_remote_refund', { jobId: job.id, leaseToken: job.leaseToken,
+            refundId: identifier(refund.id), remoteRefundId: identifier(candidates[0].id) })
+        }
       } else if (job.kind === 'cancel') {
         if (!remoteOrderId) throw new PointServiceError('POINT_RESULT_UNCERTAIN')
-        await config.adapter.cancel(token, remoteOrderId, identifier(job.payload.idempotencyKey))
+        try {
+          await config.adapter.cancel(token, remoteOrderId, identifier(job.payload.idempotencyKey))
+        } catch (error) {
+          // The terminal may have taken, canceled or completed the order since the UI
+          // requested cancellation. Reconcile it instead of retrying a stale capability.
+          if (!(error instanceof ProviderError && error.code === 'CANCEL_ON_TERMINAL')) throw error
+        }
       }
       if (!remoteOrderId) throw new PointServiceError('POINT_RESULT_UNCERTAIN')
-      const order = await config.adapter.order(token, remoteOrderId)
-      const payments = record(order.transactions).payments
-      const payment = Array.isArray(payments) && payments.length === 1 ? record(payments[0]) : null
-      const reference = payment?.reference_id ?? (payment?.reference ? record(payment.reference).id : undefined)
-      // Some documented Orders responses omit currency/live_mode. Obtain payment evidence from its documented numeric reference.
-      // Pending orders have no payment reference yet: they remain unverified; country/token context is enough to persist their locator.
-      if (!['processed', 'refunded'].includes(String(order.status)) && !order.currency && !order.currency_id) order.currency = order.country_code === 'MEX' ? 'MXN' : undefined
-      const proof = reference !== undefined ? await config.adapter.request(token, `/v1/payments/${identifier(reference)}`) : undefined
-      const evidence = verifyOrder(order, expected, token, proof)
+      const { evidence } = await readOrder(config, token, remoteOrderId, expected)
       const states: Record<string, string> = { approved: 'approved_verified', sent: 'sent_to_terminal', canceled: 'cancelled', review: 'unknown_review' }
       await serviceRpc(admin, 'apply_order', { attemptId: job.attemptId, ...evidence, state: states[evidence.state] ?? evidence.state,
         cancelCapability: evidence.state === 'pending' ? 'backend' : ['sent', 'processing', 'review'].includes(evidence.state) ? 'terminal' : 'unavailable', jobId: job.id, leaseToken: job.leaseToken })
@@ -207,7 +253,7 @@ export async function runWorker(admin: RpcClient, supplied?: Configuration): Pro
       processed++
     } catch (error) {
       const code = error instanceof ProviderError || error instanceof PointServiceError ? error.code : 'POINT_SERVICE_UNAVAILABLE'
-      if (code === 'REVOKED') await serviceRpc(admin, 'connection_revoke', { connectionId: job.connectionId })
+      if (code === 'REVOKED' && connectionVersion !== undefined) await serviceRpc(admin, 'connection_revoke', { connectionId: job.connectionId, expectedTokenVersion: connectionVersion })
       await serviceRpc(admin, 'fail_job', { id: job.id, leaseToken: job.leaseToken, code,
         uncertain: ['UNCERTAIN', 'INVALID_RESPONSE', 'POINT_RESULT_UNCERTAIN', 'POINT_IDEMPOTENCY_WINDOW_EXPIRED'].includes(code), delaySeconds: 15 + crypto.getRandomValues(new Uint8Array(1))[0] % 16 })
       failed++

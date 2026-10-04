@@ -7,7 +7,11 @@ import type { PosAccess } from '../lib/pos'
 import type { PointController } from './usePoint'
 import { accessErrorCodes } from './useCatalog'
 
-export default function PointSetup({ access, controller, onBack, onSessionError }: {
+export default function PointSetup(props: Parameters<typeof PointSetupSession>[0]) {
+  return <PointSetupSession key={`${props.access.businessId}:${props.access.operatorToken}:${props.access.deviceToken ?? ''}`} {...props} />
+}
+
+function PointSetupSession({ access, controller, onBack, onSessionError }: {
   access: PosAccess; controller: PointController; onBack: () => void; onSessionError?: (error: AccountClientError) => void
 }) {
   const [resources, setResources] = useState<PointResponses['resources'] | null>(null)
@@ -30,6 +34,7 @@ export default function PointSetup({ access, controller, onBack, onSessionError 
     if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) onSessionError?.(caught)
   }
   async function loadResources() {
+    if (!alive.current) return
     try { const result = await pointRequest(access, { command: 'resources' }); if (alive.current) setResources(result) } catch (caught) { failure(caught) }
   }
   async function update(command: PointCommand, success: string) {
@@ -40,6 +45,7 @@ export default function PointSetup({ access, controller, onBack, onSessionError 
       if (!alive.current) return
       if (result && typeof result === 'object' && 'permissions' in result) controller.setSettings(result as PointSettings)
       else await controller.refresh()
+      if (!alive.current) return
       setNotice(success); await loadResources()
     } catch (caught) { failure(caught) }
     finally { running.current = false; if (alive.current) setBusy(false) }

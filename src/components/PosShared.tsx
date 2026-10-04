@@ -1,6 +1,7 @@
 import VatSummary from "./VatSummary";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { ArrowLeft, Package, Search, X } from "lucide-react";
+import { gsap } from "gsap";
 import type { Product, Sale } from "../lib/pos-contracts";
 import { money, saleDate } from "../lib/pos";
 
@@ -19,6 +20,7 @@ export function CatalogFilters({
   onCategory,
   action,
   trailingFilter,
+  appearance = "library",
 }: {
   products: Product[];
   query: string;
@@ -27,14 +29,16 @@ export function CatalogFilters({
   onCategory: (value: string) => void;
   action?: React.ReactNode;
   trailingFilter?: React.ReactNode;
+  appearance?: "library" | "sale";
 }) {
   const categories = [
     ...new Set(products.map((product) => product.category).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b, "es"));
+  const sale = appearance === "sale";
   return (
-    <div className="catalog-filters my-5 flex flex-col gap-4">
+    <div className={sale ? "catalog-filters sale-filters" : "catalog-filters my-5 flex flex-col gap-4"}>
       <div className="flex items-center gap-3 max-tablet:flex-wrap">
-        <div className="catalog-search flex min-h-13.5 min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-surface px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:min-h-13 [&_input]:min-w-0 [&_input]:w-full [&_input]:border-0 [&_input]:bg-transparent [&_input]:text-ink [&_input:focus-visible]:outline-none [&_button]:-mr-3 [&_button]:size-12 [&_button]:min-h-12 [&_svg]:shrink-0 max-tablet:basis-full">
+        <div className={sale ? "catalog-search" : "catalog-search flex min-h-13.5 min-w-0 flex-1 items-center gap-3 rounded-lg border border-transparent bg-surface px-4 focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:min-h-13 [&_input]:min-w-0 [&_input]:w-full [&_input]:border-0 [&_input]:bg-transparent [&_input]:text-ink [&_input:focus-visible]:outline-none [&_button]:-mr-3 [&_button]:size-12 [&_button]:min-h-12 [&_svg]:shrink-0 max-tablet:basis-full"}>
           <Search size={20} aria-hidden="true" />
           <input
             aria-label="Buscar producto"
@@ -45,6 +49,7 @@ export function CatalogFilters({
           />
           {query && (
             <button
+              type="button"
               className="pos-icon-button"
               aria-label="Limpiar búsqueda"
               onClick={() => onQuery("")}
@@ -63,8 +68,9 @@ export function CatalogFilters({
         >
           {["", ...categories].map((value) => (
             <button
+              type="button"
               key={value}
-              className="catalog-category min-h-12 max-w-55 shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 [overflow-wrap:anywhere] hover:border-brand aria-pressed:border-brand-soft aria-pressed:bg-brand-soft aria-pressed:text-brand-hover"
+              className={sale ? "catalog-category" : "catalog-category min-h-12 max-w-55 shrink-0 rounded-lg border border-line bg-white px-4 py-2.5 [overflow-wrap:anywhere] hover:border-brand aria-pressed:border-brand-soft aria-pressed:bg-brand-soft aria-pressed:text-brand-hover"}
               aria-pressed={category === value}
               onClick={() => onCategory(value)}
             >
@@ -116,22 +122,27 @@ export function PosDialog({
   children: React.ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     const dialog = ref.current!;
     const previous = document.activeElement as HTMLElement | null;
     dialog.showModal();
     dialog.querySelector<HTMLElement>('[data-dialog-autofocus]')?.focus();
+    const animation = window.matchMedia?.('(prefers-reduced-motion: no-preference)').matches
+      ? gsap.fromTo(dialog, { y: 12, opacity: 0 }, { y: 0, opacity: 1, duration: .16, ease: 'power2.out', clearProps: 'transform,opacity' })
+      : null;
     return () => {
+      animation?.kill();
       dialog.close();
-      previous?.focus();
+      if (previous?.isConnected) previous.focus();
     };
   }, []);
   const editor = className === "product-editor-dialog";
   return (
     <dialog
       ref={ref}
-      className={`pos-dialog m-auto overflow-y-auto border border-line bg-white text-ink ${editor ? "product-editor-dialog w-[min(1056px,calc(100%-48px))] max-h-[calc(100dvh-48px)] rounded-xl p-0 max-tablet:h-dvh max-tablet:max-h-dvh max-tablet:w-full max-tablet:rounded-none max-tablet:border-0" : "w-[min(560px,calc(100%-32px))] max-h-[calc(100dvh-32px)] rounded-xl p-6 max-tablet:p-5"}`}
-      aria-labelledby="pos-dialog-title"
+      className={`pos-dialog ${className} m-auto overflow-y-auto border border-line bg-white text-ink ${editor ? "w-[min(1056px,calc(100%-48px))] max-h-[calc(100dvh-48px)] rounded-xl p-0 max-tablet:h-dvh max-tablet:max-h-dvh max-tablet:w-full max-tablet:rounded-none max-tablet:border-0" : "w-[min(560px,calc(100%-32px))] max-h-[calc(100dvh-32px)] rounded-xl p-6 max-tablet:p-5"}`}
+      aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault();
         if (!busy) onClose();
@@ -140,8 +151,9 @@ export function PosDialog({
       <div
         className={`pos-dialog-heading flex items-center justify-between gap-4 [&_h2]:font-medium [&_h2]:tracking-tight ${editor ? "sticky top-0 z-30 border-b border-line bg-white px-6 py-4 [&_h2]:text-[22px] max-tablet:px-4 max-tablet:py-3" : "mb-6 [&_h2]:text-2xl"}`}
       >
-        <h2 id="pos-dialog-title">{title}</h2>
+        <h2 id={titleId}>{title}</h2>
         <button
+          type="button"
           className="pos-icon-button"
           aria-label="Cerrar"
           onClick={onClose}

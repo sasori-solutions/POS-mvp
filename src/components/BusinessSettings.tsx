@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
 import PointSetup from './PointSetup';
 import { usePoint } from './usePoint';
@@ -46,7 +46,6 @@ export default function BusinessSettings({
   business,
   operatorToken,
   onSaved,
-  onBack,
   onSessionError,
 }: BusinessSettingsProps) {
   const [name, setName] = useState(business.name);
@@ -171,16 +170,7 @@ export default function BusinessSettings({
 
   if (pointSetup) return <PointSetup access={pointAccess} controller={point} onBack={() => setPointSetup(false)} onSessionError={onSessionError} />;
   return (
-    <div className="management-shell w-full max-w-160 pb-16 max-compact:pb-10">
-      <button
-        type="button"
-        className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-        disabled={busy}
-        onClick={onBack}
-      >
-        <ArrowLeft size={18} aria-hidden="true" />
-        Volver
-      </button>
+    <div className="management-shell management-polish settings-polish">
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1>Datos del negocio</h1>
       </div>
@@ -263,9 +253,7 @@ export default function BusinessSettings({
                 ))}
               </select>
             </div>
-            <p className="field-help text-sm text-muted">
-              Moneda: peso mexicano (MXN).
-            </p>
+            <span className="access-info-label">MXN · Peso mexicano</span>
           </fieldset>
           <fieldset className="settings-group">
             <legend>Sucursal y caja</legend>
@@ -390,8 +378,7 @@ export default function BusinessSettings({
               </label>
             ))}
             <p className="field-help text-sm text-muted">
-              La tarjeta externa se registra después de cobrar por tu cuenta.
-              La tarjeta integrada exige conexión y terminal verificadas, además de activación.
+              Tarjeta externa: registro manual. Mercado Pago Point: cobro desde el POS.
             </p>
             <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Configurar Mercado Pago Point</button>
           </fieldset>
@@ -401,7 +388,7 @@ export default function BusinessSettings({
               disabled={busy || !dirty}
               aria-busy={busy}
             >
-              {busy ? "Guardando…" : "Guardar cambios"}
+              <AccessButtonContent busy={busy}>Guardar cambios</AccessButtonContent>
             </button>
           </div>
         </form>

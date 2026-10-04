@@ -56,6 +56,17 @@ export function buildTemporalChartData(report: BusinessPeriodReport, metric: Tem
   })
 }
 
+/** Inicio follows today's observed activity; unobserved hours are never drawn as zero. */
+export function buildDailySalesChartData(report: BusinessPeriodReport): TemporalDatum[] {
+  return buildTemporalChartData(report, 'netCents').filter(point => point.currentPoint && point.current !== null)
+}
+
+export function temporalTicks(data: TemporalDatum[], width: number): string[] {
+  if (data.length < 2) return data.map(point => point.slot)
+  const count = Math.min(data.length, Math.max(2, Math.min(6, Math.floor(width / 110))))
+  return Array.from({ length: count }, (_, index) => data[Math.round(index * (data.length - 1) / (count - 1))].slot)
+}
+
 export interface WaterfallDatum {
   key: string
   label: string

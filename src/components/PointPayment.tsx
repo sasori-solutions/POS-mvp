@@ -7,10 +7,22 @@ import { money, type PosAccess } from '../lib/pos'
 import { SaleDetail } from './PosShared'
 import { accessErrorCodes } from './useCatalog'
 
-export default function PointPayment({ access, attempt, initialCheckout, settings, onSessionError, onBlocked, onResolved, onDone }: {
+function matchesQuote(expected: CheckoutAttempt | null | undefined, returned: CheckoutAttempt) {
+  if (!expected) return true
+  const signature = (value: CheckoutAttempt) => JSON.stringify([value.id, value.revision, value.orderId, value.paymentMethod, value.totalCents, value.discountCents, value.taxCents,
+    value.items.map(item => [item.lineId, item.productId, item.quantity, item.unitPriceCents, item.discountCents, item.totalCents, item.taxCents]).sort((first, second) => String(first[0]).localeCompare(String(second[0])))])
+  return expected.status === 'prepared' && signature(expected) === signature(returned)
+}
+
+export default function PointPayment(props: Parameters<typeof PointPaymentSession>[0]) {
+  const { access, attempt, initialCheckout } = props
+  return <PointPaymentSession key={`${access.businessId}:${access.operatorToken}:${access.deviceToken ?? ''}:${attempt?.id ?? initialCheckout?.id ?? ''}`} {...props} />
+}
+
+function PointPaymentSession({ access, attempt, initialCheckout, settings, onSessionError, onBlocked, onResolved, onDone, collectionAllowed = true, canStart = true }: {
   access: PosAccess; attempt?: CheckoutAttempt | null; initialCheckout?: PointCheckout; settings: PointSettings | null
   onSessionError?: (error: AccountClientError) => void; onBlocked?: (blocked: boolean) => void
-  onResolved?: (checkout: PointCheckout) => void; onDone?: () => void
+  onResolved?: (checkout: PointCheckout) => void; onDone?: (checkout: PointCheckout) => void; collectionAllowed?: boolean; canStart?: boolean
 }) {
   const [checkout, setCheckout] = useState<PointCheckout | null>(initialCheckout ?? null)
   const [terminalId, setTerminalId] = useState(initialCheckout?.terminal.id ?? '')
@@ -18,10 +30,13 @@ export default function PointPayment({ access, attempt, initialCheckout, setting
   const [uncertain, setUncertain] = useState(false), [online, setOnline] = useState(navigator.onLine)
   const alive = useRef(true), running = useRef(false), prepareId = useRef(crypto.randomUUID()), startId = useRef(crypto.randomUUID())
   const resolved = useRef('')
+  const latestAttempt = useRef(attempt); latestAttempt.current = attempt
+  const changedReservation = Boolean(checkout?.state === 'prepared' && !matchesQuote(attempt, checkout.checkout))
+  const startAllowed = useRef(false); startAllowed.current = collectionAllowed && canStart && Boolean(settings?.enabled && settings.permissions.charge)
   const heading = useRef<HTMLHeadingElement>(null)
   const available = settings?.terminals.filter(t => t.active && t.verified && t.mode === 'PDV' && !t.physicalStepsPending) ?? []
   const blocked = busy || uncertain || Boolean(checkout && (!pointResolved(checkout.state) || checkout.saleState !== 'materialized' && !pointFailed(checkout.state)))
-  const change = useCallback((value: PointCheckout) => { if (alive.current) { setCheckout(value); setUncertain(false); setError('') } }, [])
+  const change = useCallback((value: PointCheckout) => { if (alive.current) { setCheckout(previous => previous?.id === value.id && previous.updatedAt > value.updatedAt ? previous : value); setUncertain(false); setError('') } }, [])
   useEffect(() => { if (initialCheckout) setCheckout(previous => !previous || initialCheckout.id === previous.id && initialCheckout.updatedAt > previous.updatedAt ? initialCheckout : previous) }, [initialCheckout])
   useEffect(() => { alive.current = true; const connected = () => setOnline(navigator.onLine); window.addEventListener('online', connected); window.addEventListener('offline', connected); heading.current?.focus(); return () => { alive.current = false; window.removeEventListener('online', connected); window.removeEventListener('offline', connected); onBlocked?.(false) } }, [])
   useEffect(() => { onBlocked?.(blocked) }, [blocked, onBlocked])
@@ -50,17 +65,20 @@ export default function PointPayment({ access, attempt, initialCheckout, setting
     return () => window.clearInterval(interval)
   }, [checkout?.id, checkout?.state, checkout?.saleState, read])
   async function initiate() {
-    if (running.current || !online || !settings?.enabled || !settings.permissions.charge) return
+    if (running.current || !navigator.onLine || !startAllowed.current) return
     running.current = true; setBusy(true); setError('')
     try {
       let value = checkout
       if (!value) {
         if (!attempt || !terminalId) return
         value = await pointRequest(access, { command: 'prepare', operationId: prepareId.current, checkoutAttemptId: attempt.id, terminalId })
+        if (!alive.current) return
         change(value)
       }
-      if (value.state === 'prepared') change(await pointRequest(access, { command: 'start', operationId: startId.current, checkoutId: value.id }))
+      if (!matchesQuote(latestAttempt.current, value.checkout)) { setError('La reserva cambió. Revisa el importe actualizado o cancela este intento.'); return }
+      if (alive.current && startAllowed.current && value.state === 'prepared') change(await pointRequest(access, { command: 'start', operationId: startId.current, checkoutId: value.id }))
     } catch (caught) {
+      if (!alive.current) return
       failure(caught)
       if (!checkout && caught instanceof AccountClientError && ['POINT_DISABLED', 'POINT_CONNECTION_REQUIRED', 'POINT_TERMINAL_NOT_READY', 'POINT_TERMINAL_BUSY', 'PERMISSION_DENIED', 'VALIDATION_ERROR', 'POINT_STATE_INVALID'].includes(caught.code)) { setUncertain(false); return }
       setUncertain(true)
@@ -75,13 +93,13 @@ export default function PointPayment({ access, attempt, initialCheckout, setting
   async function cancel() {
     if (!checkout || running.current || !online) return
     running.current = true; setBusy(true); setError('')
-    try { change(await pointRequest(access, { command: 'cancel', checkoutId: checkout.id })) } catch (caught) { failure(caught); setUncertain(true) }
+    try { change(await pointRequest(access, { command: 'cancel', checkoutId: checkout.id })) } catch (caught) { if (alive.current) { failure(caught); setUncertain(true) } }
     finally { running.current = false; if (alive.current) setBusy(false) }
   }
   async function incident() {
     if (!checkout || running.current || !online || !reason.trim()) return
     running.current = true; setBusy(true)
-    try { change(await pointRequest(access, { command: 'incident', operationId: crypto.randomUUID(), checkoutId: checkout.id, reason: reason.trim() })); setReason('') } catch (caught) { failure(caught) }
+    try { change(await pointRequest(access, { command: 'incident', operationId: crypto.randomUUID(), checkoutId: checkout.id, reason: reason.trim() })); if (alive.current) setReason('') } catch (caught) { failure(caught) }
     finally { running.current = false; if (alive.current) setBusy(false) }
   }
   async function recover() {
@@ -92,7 +110,7 @@ export default function PointPayment({ access, attempt, initialCheckout, setting
       const result = await pointRequest(access, { command: 'recover' })
       const found = result.checkouts.find(item => item.checkout.id === attempt?.id)
       if (found) change(found)
-      else setError('Aún no hay un resultado confirmado para esta reserva. Solicita revisión antes de iniciar otro cobro.')
+      else if (alive.current) setError('Aún no hay un resultado confirmado para esta reserva. Solicita revisión antes de iniciar otro cobro.')
     } catch (caught) { failure(caught) }
     finally { running.current = false; if (alive.current) setBusy(false) }
   }
@@ -109,7 +127,8 @@ export default function PointPayment({ access, attempt, initialCheckout, setting
       <option value="">Selecciona una terminal</option>{available.map(terminal => <option key={terminal.id} value={terminal.id}>{terminal.serial} / {terminal.registerName}</option>)}
     </select></label>}
     {!checkout && !available.length && <p>No hay una terminal vinculada y verificada. Pide al dueño completar la configuración de Point.</p>}
-    {(!checkout || checkout.state === 'prepared') && !uncertain && <button className="pos-button pos-primary" disabled={busy || !online || !settings?.enabled || !settings.permissions.charge || !checkout && (!attempt || !terminalId)} onClick={() => void initiate()}>{busy ? 'Iniciando…' : 'Iniciar cobro en terminal'}</button>}
+    {changedReservation && <p role="status">La reserva cambió. Consulta la cuenta o cancela este intento antes de continuar.</p>}
+    {(!checkout || checkout.state === 'prepared') && !uncertain && <button className="pos-button pos-primary" disabled={busy || !online || changedReservation || !collectionAllowed || !canStart || !settings?.enabled || !settings.permissions.charge || !checkout && (!attempt || !terminalId)} onClick={() => void initiate()}>{busy ? 'Iniciando…' : 'Iniciar cobro en terminal'}</button>}
     {(uncertain || checkout && !pointResolved(checkout.state)) && <p className="text-sm">No vuelvas a cobrar ni cambies de medio mientras el resultado siga pendiente. Cerrar esta pantalla no cancela el cargo.</p>}
     {checkout?.state === 'unknown_review' && <p>Revisa la terminal y conserva la evidencia. Una declaración del operador no verifica un pago.</p>}
     {(checkout || uncertain) && <button className="pos-button pos-secondary" disabled={busy || !online} onClick={() => void recover()}>Consultar el mismo intento</button>}
@@ -117,6 +136,6 @@ export default function PointPayment({ access, attempt, initialCheckout, setting
     {checkout && !pointResolved(checkout.state) && checkout.cancelCapability === 'terminal' && <p>La cancelación requiere actuar en la terminal. Después consulta este mismo intento.</p>}
     {checkout?.state === 'unknown_review' && <details><summary>Registrar una incidencia</summary><div className="ops-form"><label>Evidencia y motivo<textarea value={reason} maxLength={200} onChange={event => setReason(event.target.value)} disabled={busy} /></label><button className="pos-button pos-secondary" disabled={busy || !online || !reason.trim()} onClick={() => void incident()}>Guardar incidencia para revisión</button></div></details>}
     {checkout?.sale && <SaleDetail sale={checkout.sale} />}
-    {checkout && pointResolved(checkout.state) && (pointFailed(checkout.state) || checkout.saleState === 'materialized') && onDone && <button className="pos-button pos-primary" onClick={onDone}>{pointFailed(checkout.state) ? 'Volver a la cuenta' : 'Ver cuenta registrada'}</button>}
+    {checkout && pointResolved(checkout.state) && (pointFailed(checkout.state) || checkout.saleState === 'materialized') && onDone && <button className="pos-button pos-primary" onClick={() => onDone(checkout)}>{pointFailed(checkout.state) ? 'Volver a la cuenta' : 'Ver cuenta registrada'}</button>}
   </section>
 }

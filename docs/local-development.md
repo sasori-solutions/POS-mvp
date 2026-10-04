@@ -77,3 +77,6 @@ Las claves locales y las órdenes/idempotencias sintéticas se conservan en `.lo
 Este modo no abre una cuenta administrativa SASORI ni establece credenciales productivas. El worker de un backend alojado se programa con [el runbook de Point](point-pilot-runbook.md), no con este proceso local.
 
 The design follows [Supabase's local workflow](https://supabase.com/docs/guides/local-development/cli-workflows) and [Vite's development/build environment distinction](https://vite.dev/guide/env-and-mode).
+
+
+Para comprobar recuperación de Point de forma determinista, arranca con `npm run dev -- --point-simulator --point-manual-worker` y ejecuta `npm run test:point:local` en otra terminal del mismo checkout. Las pruebas controlan el worker y conservan las identidades del simulador; crean y limpian sólo sus negocios sintéticos. Reinicia sin `--point-manual-worker` al terminar para recuperar el procesamiento automático del entorno interactivo.

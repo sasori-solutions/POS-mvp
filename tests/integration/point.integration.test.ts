@@ -12,7 +12,7 @@ const url = process.env.TEST_SUPABASE_URL, simulator = process.env.TEST_POINT_SI
 const enabled = Boolean(url && simulator)
 if (enabled && (process.env.TEST_DISPOSABLE_SUPABASE !== 'true' || ![url!, simulator!].every(value => new URL(value).protocol === 'http:' && ['127.0.0.1','localhost','[::1]'].includes(new URL(value).hostname)))) throw new Error('Point integration requires explicitly disposable loopback services')
 const anon = process.env.TEST_SUPABASE_ANON_KEY ?? '', service = process.env.TEST_SUPABASE_SERVICE_ROLE_KEY ?? ''
-const workerSecret = 'point-worker-local-synthetic-secret-2026'
+const workerSecret = process.env.TEST_POINT_WORKER_SECRET ?? 'point-worker-local-synthetic-secret-2026'
 type Actor = { userId: string; jwt: string; operator: OperatorSession }
 let owner: Actor, other: Actor, product: Product
 const users: string[] = [], businesses: string[] = []
@@ -23,7 +23,7 @@ function sql(statement: string) {
 }
 function literal(value: string) { return `'${value.replaceAll("'","''")}'` }
 async function raw(actor: Actor | undefined, payload: Record<string,unknown>) {
-  return fetch(`${url}/functions/v1/account`,{method:'POST',headers:{'content-type':'application/json',apikey:anon,origin:'http://127.0.0.1:5173',...(actor?{authorization:`Bearer ${actor.jwt}`}:{})},body:JSON.stringify(await signedRequest(actor?.userId,payload)),signal:AbortSignal.timeout(15000)})
+  return fetch(`${url}/functions/v1/account`,{method:'POST',headers:{'content-type':'application/json',apikey:anon,origin:process.env.TEST_APP_ORIGIN ?? 'http://127.0.0.1:5173',...(actor?{authorization:`Bearer ${actor.jwt}`}:{})},body:JSON.stringify(await signedRequest(actor?.userId,payload)),signal:AbortSignal.timeout(15000)})
 }
 async function call<T>(actor: Actor | undefined, payload: Record<string,unknown>): Promise<{status:number;data?:T;error?:{code:string}}> {
   const response = await raw(actor,payload), body = await response.json()
@@ -46,7 +46,9 @@ async function runUntil(checkoutId:string,predicate:(c:PointCheckout)=>boolean) 
     await worker();result=data(await point<PointCheckout>(owner,{command:'status',checkoutId}))
     if(predicate(result)) return result
   }
-  throw new Error(`Point reconciliation did not reach the required state (${result?.state})`)
+  const state=sql(`select jsonb_build_object('state',state,'old',observed_at<clock_timestamp()-interval '5 minutes','reconciled',last_reconciled_at,'now',clock_timestamp()) from app_private.point_attempts where id=${literal(result?.attemptId ?? '')}::uuid;`)
+  const errors=sql(`select coalesce(jsonb_agg(jsonb_build_object('kind',kind,'status',status,'error',last_error)),'[]') from app_private.point_jobs where attempt_id=${literal(result?.attemptId ?? '')}::uuid;`)
+  throw new Error(`Point reconciliation did not reach the required state (${result?.state}): ${errors} ${state}`)
 }
 async function actor():Promise<Actor> {
   const email=`point-${randomUUID()}@example.test`,password=`Local-${randomUUID()}-Aa9!`
@@ -66,7 +68,7 @@ async function reserve(actor=owner) {
 
 describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider simulator',()=>{
   beforeAll(async()=>{
-    await control({reset:true,scenario:'approved',terminalMode:'PDV'})
+    await control({reset:process.env.TEST_POINT_PERSISTENT !== 'true',scenario:'approved',terminalMode:'PDV'})
     owner=await actor();other=await actor()
     data(await pos(owner,{command:'activate_operations',operationId:randomUUID()}))
     data(await pos(owner,{command:'open_shift',operationId:randomUUID(),openingCents:0}))
@@ -115,7 +117,8 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
 
   it('renews expired credentials exclusively across concurrent authorized requests',async()=>{
     const {TokenVault}=await import('../../supabase/functions/point/crypto')
-    const vault=new TokenVault({ci:'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE'},'ci')
+    const keyId=process.env.TEST_POINT_TOKEN_KEY_ID ?? 'ci'
+    const vault=new TokenVault({[keyId]:process.env.TEST_POINT_TOKEN_KEY ?? 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE'},keyId)
     const businessId=owner.operator.business.id
     const row=JSON.parse(sql(`select jsonb_build_object('id',id,'tokens',tokens_ciphertext) from app_private.point_connections where business_id=${literal(businessId)}::uuid and status='connected';`))
     const token=await vault.open<Record<string,unknown>>(row.tokens,`mercadopago:${businessId}:sandbox`)
@@ -149,6 +152,38 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     await runUntil(second.id,c=>c.saleState==='materialized')
   },60000)
 
+  it('does not dispatch a newly queued charge after disabling the business',async()=>{
+    await control({scenario:'approved'})
+    const checkout=await reserve(),before=await stats()
+    const request={command:'start' as const,operationId:randomUUID(),checkoutId:checkout.id}
+    const accepted=data(await point<PointCheckout>(owner,request))
+    data(await point(owner,{command:'activate',enabled:false}))
+    await worker()
+    expect((await stats()).creates).toBe(before.creates)
+    expect(data(await point<PointCheckout>(owner,request)).attemptId).toBe(accepted.attemptId)
+    data(await point(owner,{command:'activate',enabled:true}))
+    const paid=await runUntil(checkout.id,c=>c.saleState==='materialized')
+    expect(paid.attemptId).toBe(accepted.attemptId)
+    expect((await stats()).creates-before.creates).toBe(1)
+  },60000)
+
+  it('recovers a lost partial-refund response by the same request without a second refund',async()=>{
+    await control({scenario:'approved'})
+    const checkout=await reserve()
+    data(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:checkout.id}))
+    const paid=await runUntil(checkout.id,c=>c.saleState==='materialized'),before=await stats()
+    const refund={command:'refund' as const,operationId:randomUUID(),checkoutId:checkout.id,amountCents:333,merchandiseCents:333,tipCents:0,reason:'Respuesta perdida sintética'}
+    await control({scenario:'refund-timeout'})
+    data(await point(owner,refund));await worker()
+    expect(await point(owner,{...refund,operationId:randomUUID()})).toMatchObject({status:409,error:{code:'POINT_RESULT_UNCERTAIN'}})
+    data(await point(owner,refund))
+    await control({scenario:'approved'})
+    const returned=await runUntil(checkout.id,c=>c.refundRequests.some(r=>r.operationId===refund.operationId && r.status==='confirmed'))
+    expect(returned.refundedCents).toBe(333)
+    expect(returned.sale?.id).toBe(paid.sale?.id)
+    expect((await stats()).refunds-before.refunds).toBe(1)
+  },60000)
+
   it('recovers a remote accepted charge with response loss and a dead worker without another charge',async()=>{
     const before=await stats();await control({scenario:'timeout-after'})
     const checkout=await reserve(),request={command:'start' as const,operationId:randomUUID(),checkoutId:checkout.id}
@@ -174,7 +209,7 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(data(await point<{checkouts:PointCheckout[]}>(owner,{command:'recover'})).checkouts.some(c=>c.id===checkout.id)).toBe(true)
     expect(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})).toMatchObject({status:200,data:{attemptId:review.attemptId}})
     // Authoritative remote evidence resolves the old attempt even when charging is off.
-    await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',last_updated_date:new Date().toISOString(),transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited',reference_id:'700099'}],refunds:[]}}})
+    await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',last_updated_date:new Date().toISOString(),transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited',reference_id:String(700000 + Number(review.remoteOrderId!.slice(3)))}],refunds:[]}}})
     sql(`update app_private.point_attempts set observed_at=clock_timestamp()-interval '10 minutes',updated_at=clock_timestamp()-interval '10 minutes' where id=${literal(review.attemptId!)}::uuid;`)
     await runUntil(checkout.id,c=>c.saleState==='materialized')
     data(await point(owner,{command:'activate',enabled:true}))

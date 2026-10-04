@@ -36,7 +36,7 @@ export default function ProductSelection({
     modifierIds.length <= 24 &&
     selectedPrice(product, selection) <= 99_999_999;
   return (
-    <PosDialog title={product.name} onClose={onClose}>
+    <PosDialog title={product.name} onClose={onClose} className="product-selection-dialog">
       {product.image && (
         <img
           width={240}
@@ -155,7 +155,7 @@ export default function ProductSelection({
           )}
         </fieldset>
       ))}
-      <div className="dialog-actions mt-6 flex flex-col gap-3">
+      <div className="dialog-actions selection-actions mt-6 flex flex-col gap-3">
         <button
           className="pos-button pos-primary"
           disabled={!valid}

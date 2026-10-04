@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Mail, Check } from "lucide-react";
 import { AccountClientError } from "../lib/account";
+import { AccessButtonContent } from "./AccessBusy";
 
 export default function RequestPinRecovery({
   businessName,
@@ -79,7 +80,7 @@ export default function RequestPinRecovery({
     }
   }
   return (
-    <section className="screen flex flex-col max-compact:flex-1">
+    <section className="access-flow screen">
       <button
         className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
         onClick={onBack}
@@ -87,25 +88,20 @@ export default function RequestPinRecovery({
         <ArrowLeft size={20} aria-hidden="true" />
         Volver al PIN
       </button>
-      <div className="screen-icon mb-8 grid size-16 place-items-center rounded-2xl border border-line max-compact:mb-7 small size-12 rounded-xl mb-6">
+      <div className="access-symbol">
         {sent ? <Check aria-hidden="true" /> : <Mail aria-hidden="true" />}
       </div>
       <h1>{sent ? "Revisa tu correo" : "Recupera tu PIN"}</h1>
       <p>
         {sent
-          ? "Enviamos un enlace para que elijas un nuevo PIN."
-          : `Te enviaremos un enlace para cambiar tu PIN de ${businessName}.`}
+          ? "Enlace enviado. Vence en 15 minutos."
+          : `Recupera tu acceso a ${businessName}.`}
       </p>
       {email && (
         <p className="recovery-email font-medium text-ink [overflow-wrap:anywhere]">
           {email}
         </p>
       )}
-      <p className="field-help text-sm text-muted">
-        {sent
-          ? "Abre el correo de POS México y toca «Elegir nuevo PIN». El enlace vence en 15 minutos."
-          : "Al abrir el enlace podrás elegir tu nuevo PIN."}
-      </p>
       {error && (
         <p
           className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
@@ -121,18 +117,17 @@ export default function RequestPinRecovery({
           aria-busy={busy}
           onClick={() => void send()}
         >
-          {busy
-            ? "Enviando…"
-            : remaining > 0
+          <AccessButtonContent busy={busy}>
+            {remaining > 0
               ? `Reenviar en ${remaining} s`
               : sent
                 ? "Reenviar correo"
-                : "Enviar enlace al correo"}
+                : "Enviar enlace"}
+          </AccessButtonContent>
         </button>
         {sent && (
           <p className="action-note text-center text-sm">
-            Si no llega, revisa la carpeta de spam. Al reenviar, el enlace
-            anterior deja de funcionar.
+            Revisa también spam. Reenviar reemplaza el enlace anterior.
           </p>
         )}
       </div>

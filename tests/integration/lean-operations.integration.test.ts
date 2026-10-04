@@ -9,6 +9,7 @@ import { emptyDetails } from '../../src/lib/product-details'
 import type { PosCommand, Product, Sale } from '../../src/lib/pos-contracts'
 import type { BalanceWaiver, BusinessDayReport, BusinessPeriodReport, CashShift, CheckoutAttempt, DiningTable, KitchenBatch, OperationalOrder, OperationsSnapshot, OrderInputLine } from '../../src/lib/operations-contracts'
 import { businessDate } from '../../src/lib/reporting'
+import { assertFinancialResponse } from '../../src/lib/financial-response'
 import { signedRequest } from './device-proof-fixture'
 
 type Identity = { userId: string; token: string }
@@ -522,7 +523,11 @@ async function payAll(actor:Actor,order:OperationalOrder) {const phase=await che
 async function activeShift(actor:Actor) {return data(await pos<OperationsSnapshot>(actor,{command:'operations'})).shift!}
 async function kitchen(actor:Actor) {return data(await pos<{batches:KitchenBatch[]}>(actor,{command:'kitchen'})).batches}
 function rawKitchenItems(actor:Actor,orderId:string) {return JSON.parse(sql(`select json_agg(json_build_object('id',id,'items',items) order by id) from app_private.kitchen_batches where business_id=${uuid(actor.operator.business.id)} and order_id=${uuid(orderId)} and kind='items';`).trim())}
-function pos<T=unknown>(actor:Actor,command:PosCommand) {return call<T>(actor.identity,{action:'pos',...args(actor),...command})}
+async function pos<T=unknown>(actor:Actor,command:PosCommand) {
+  const reply=await call<T>(actor.identity,{action:'pos',...args(actor),...command})
+  if(reply.status===200) assertFinancialResponse(command,reply.body.data)
+  return reply
+}
 async function raw(person:Identity|null,request:Record<string,unknown>) {return fetch(`${config!.url}/functions/v1/account`,{method:'POST',headers:{'content-type':'application/json',apikey:config!.anonKey,...(person?{authorization:`Bearer ${person.token}`}:{})},body:JSON.stringify(await signedRequest(person?.userId,request)),signal:AbortSignal.timeout(20_000)})}
 async function call<T=unknown>(person:Identity|null,request:Record<string,unknown>):Promise<Reply<T>> {const response=await raw(person,request);return {status:response.status,body:await response.json()}}
 function data<T>(reply:Reply<T>):T {expect(reply.status,JSON.stringify(reply.body.error)).toBe(200);expect(reply.body.data).toBeDefined();return reply.body.data!}

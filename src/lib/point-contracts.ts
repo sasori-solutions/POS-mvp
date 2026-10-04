@@ -6,13 +6,17 @@ export interface PointStoreLocation { street_number: string; street_name: string
 export type PointPaymentState = 'prepared' | 'pending' | 'sent_to_terminal' | 'processing' | 'approved_verified' | 'rejected' | 'cancelled' | 'expired' | 'unknown_review' | 'partially_refunded' | 'refunded'
 export interface PointConnection { id: string; status: 'connected' | 'revoked' | 'reconnect_required'; environment: PointEnvironment; receiverId: string; verifiedAt: string | null }
 export interface PointTerminal { id: string; serial: string; branchId: string; registerId: string; branchName: string; registerName: string; mode: string; verified: boolean; active: boolean; physicalStepsPending: boolean }
+export interface PointRefundRequest {
+  id: string; operationId: string; status: 'pending' | 'unknown_review' | 'confirmed' | 'rejected'
+  amountCents: number; merchandiseCents: number; tipCents: number; reason: string; remoteRefundId: string | null; firstSentAt: string | null
+}
 export interface PointCheckout {
   id: string; attemptId: string | null; state: PointPaymentState; saleState: 'pending' | 'materialized'; totalCents: number; refundedCents: number
-  items: CheckoutAttempt['items']; checkout: CheckoutAttempt; sale: Sale | null; terminal: PointTerminal
+  refundRequests: PointRefundRequest[]; items: CheckoutAttempt['items']; checkout: CheckoutAttempt; sale: Sale | null; terminal: PointTerminal
   cancelCapability: 'backend' | 'terminal' | 'unavailable'; updatedAt: string; statusDetail: string | null; remoteOrderId: string | null
 }
 export interface PointSettings {
-  enabled: boolean; connection: PointConnection | null; terminals: PointTerminal[]; pending: PointCheckout[]
+  actorId: string; enabled: boolean; connection: PointConnection | null; terminals: PointTerminal[]; pending: PointCheckout[]
   permissions: { manage: boolean; charge: boolean; refund: boolean; reports: boolean; admin: boolean }
   commission: { rateBps: number; vatBps: number; version: string }; asOf: string
 }

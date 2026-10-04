@@ -57,6 +57,9 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
   if (!Array.isArray(transactions.payments) || transactions.payments.length !== 1) throw new ProviderError('INVALID_RESPONSE')
   const payment = record(transactions.payments[0])
   const amount = cents(payment.amount)
+  const status = String(order.status ?? ''), detail = String(order.status_detail ?? '')
+  const state = mapState(status, detail, String(payment.status ?? ''), String(payment.status_detail ?? ''))
+  const financiallyVerified = ['approved', 'partially_refunded', 'refunded'].includes(state)
   const proof = monetaryProof === undefined ? null : record(monetaryProof)
   const currency = order.currency ?? order.currency_id ?? proof?.currency_id
   const receiver = identifier(order.user_id)
@@ -68,14 +71,21 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
     const reference = payment.reference_id ?? (payment.reference && record(payment.reference).id)
     if (identifier(proof.id) !== identifier(reference) || identifier(proof.collector_id) !== receiver || proof.live_mode !== (expected.environment === 'live')
       || proof.currency_id !== expected.currency || (proof.external_reference !== undefined && proof.external_reference !== expected.externalReference)
-      || !['approved', 'refunded'].includes(String(proof.status)) || typeof proof.transaction_amount !== 'number'
+      || typeof proof.transaction_amount !== 'number'
       || !Number.isFinite(proof.transaction_amount) || cents(String(proof.transaction_amount)) !== amount) throw new ProviderError('INVALID_RESPONSE')
+    const proofState = String(proof.status)
+    if (financiallyVerified ? !['approved', 'refunded'].includes(proofState)
+      : state === 'rejected' ? !['rejected', 'cancelled'].includes(proofState)
+      : ['canceled', 'expired'].includes(state) ? !['cancelled', 'rejected'].includes(proofState)
+      : !['pending', 'in_process', 'authorized', 'in_mediation'].includes(proofState)) throw new ProviderError('INVALID_RESPONSE')
   }
   const observedAt = typeof order.last_updated_date === 'string' && Number.isFinite(Date.parse(order.last_updated_date)) ? order.last_updated_date : ''
   if (!observedAt) throw new ProviderError('INVALID_RESPONSE')
-  const status = String(order.status ?? ''), detail = String(order.status_detail ?? '')
-  const state = mapState(status, detail, String(payment.status ?? ''), String(payment.status_detail ?? ''))
-  if (['approved', 'partially_refunded', 'refunded'].includes(state) && !proof && order.live_mode === undefined) throw new ProviderError('INVALID_RESPONSE')
+  if (financiallyVerified && !proof && order.live_mode === undefined) throw new ProviderError('INVALID_RESPONSE')
+  // This checkout reserves merchandise only. A terminal-added tip needs an explicit allocation,
+  // and a short payment must never settle the whole snapshot.
+  if (payment.tip_amount !== undefined && cents(payment.tip_amount) !== 0) throw new ProviderError('INVALID_RESPONSE')
+  if (financiallyVerified && payment.paid_amount !== undefined && cents(payment.paid_amount) < amount) throw new ProviderError('INVALID_RESPONSE')
   const refunds: OrderEvidence['refunds'] = []
   if (transactions.refunds !== undefined && !Array.isArray(transactions.refunds)) throw new ProviderError('INVALID_RESPONSE')
   for (const item of transactions.refunds as unknown[] ?? []) {
@@ -86,10 +96,13 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
   }
   if (new Set(refunds.map(r => r.id)).size !== refunds.length || refunds.reduce((sum, r) => sum + r.amountCents, 0) > amount) throw new ProviderError('INVALID_RESPONSE')
   const refunded = refunds.reduce((sum, r) => sum + r.amountCents, 0)
+  if (payment.refunded_amount !== undefined && cents(payment.refunded_amount) !== refunded) throw new ProviderError('INVALID_RESPONSE')
+  if (proof?.transaction_amount_refunded !== undefined && (typeof proof.transaction_amount_refunded !== 'number'
+    || cents(String(proof.transaction_amount_refunded)) !== refunded)) throw new ProviderError('INVALID_RESPONSE')
   if ((state === 'refunded' && refunded !== amount) || (state === 'partially_refunded' && !(refunded > 0 && refunded < amount))) throw new ProviderError('INVALID_RESPONSE')
   return { remoteOrderId: identifier(order.id), paymentId: identifier(payment.id), state, status, statusDetail: detail,
     amountCents: amount, currency: String(currency), receiverId: receiver, environment: expected.environment,
-    externalReference: expected.externalReference, refunds, observedAt, verified: ['approved', 'partially_refunded', 'refunded'].includes(state) }
+    externalReference: expected.externalReference, refunds, observedAt, verified: financiallyVerified }
 }
 export interface PointAdapter {
   exchange(code: string, verifier: string, environment: Environment): Promise<TokenSet>;
@@ -100,6 +113,25 @@ export interface PointAdapter {
   create(token: TokenSet, payload: Json, key: string): Promise<Json>;
   refund(token: TokenSet, orderId: string, paymentId: string, amountCents: number, key: string, total?: boolean): Promise<Json>;
   cancel(token: TokenSet, orderId: string, key: string): Promise<Json>;
+}
+async function responseJSON(response: Response, mutation: boolean): Promise<Json> {
+  if (!response.body) throw new ProviderError(mutation ? 'UNCERTAIN' : 'INVALID_RESPONSE')
+  const reader = response.body.getReader(), chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    while (true) {
+      const part = await reader.read()
+      if (part.done) break
+      length += part.value.length
+      if (length > 131072) { await reader.cancel(); throw new ProviderError(mutation ? 'UNCERTAIN' : 'INVALID_RESPONSE') }
+      chunks.push(part.value)
+    }
+  } finally { reader.releaseLock() }
+  const bytes = new Uint8Array(length)
+  let offset = 0
+  for (const part of chunks) { bytes.set(part, offset); offset += part.length }
+  const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  try { return record(JSON.parse(text)) } catch { throw new ProviderError(mutation ? 'UNCERTAIN' : 'INVALID_RESPONSE') }
 }
 export class MercadoPagoPoint implements PointAdapter {
   private readonly base: string
@@ -116,24 +148,16 @@ export class MercadoPagoPoint implements PointAdapter {
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(key ? { 'X-Idempotency-Key': identifier(key) } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(this.options.timeoutMs ?? 8000) })
       if (response.status === 401) throw new ProviderError('REVOKED', response.status)
-      if (!response.ok) throw new ProviderError(response.status >= 500 || response.status === 429 ? (mutation ? 'UNCERTAIN' : 'UNAVAILABLE') : 'DEFINITIVE_FAILURE', response.status)
-      if (!response.body) throw new ProviderError(mutation ? 'UNCERTAIN' : 'INVALID_RESPONSE')
-      const reader = response.body.getReader(), chunks: Uint8Array[] = []
-      let length = 0
-      try {
-        while (true) {
-          const part = await reader.read()
-          if (part.done) break
-          length += part.value.length
-          if (length > 131072) { await reader.cancel(); throw new ProviderError(mutation ? 'UNCERTAIN' : 'INVALID_RESPONSE') }
-          chunks.push(part.value)
+      if (!response.ok) {
+        if (path === '/oauth/token' && response.status === 400) {
+          // OAuth documents expired/revoked grants as 400, rather than an HTTP 401.
+          // Retain only this stable code; provider descriptions never enter logs or UI.
+          const error = await responseJSON(response, false).catch(() => null)
+          if (error?.error === 'invalid_grant') throw new ProviderError('REVOKED', response.status)
         }
-      } finally { reader.releaseLock() }
-      const bytes = new Uint8Array(length)
-      let offset = 0
-      for (const part of chunks) { bytes.set(part, offset); offset += part.length }
-      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-      try { return record(JSON.parse(text)) } catch { throw new ProviderError(mutation ? 'UNCERTAIN' : 'INVALID_RESPONSE') }
+        throw new ProviderError(response.status >= 500 || response.status === 429 ? (mutation ? 'UNCERTAIN' : 'UNAVAILABLE') : 'DEFINITIVE_FAILURE', response.status)
+      }
+      return await responseJSON(response, mutation)
     } catch (error) {
       if (error instanceof ProviderError) throw error
       throw new ProviderError(mutation ? 'UNCERTAIN' : 'UNAVAILABLE')

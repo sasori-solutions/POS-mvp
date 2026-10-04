@@ -95,6 +95,8 @@ export interface BusinessContext extends BusinessSummary {
   /** Owner-only details; blank projection for employees. */
   profile: BusinessProfile
   employee?: { id: string; name: string; role: BusinessRole; permissions?: BusinessPermission[] }
+  /** Live operator sessions visible only in the owner's business context. */
+  connectedEmployees?: { id: string; name: string; role: BusinessRole; lastSeenAt: string }[]
 }
 
 /** Keep operatorToken in memory; never persist it in browser storage. */

@@ -141,11 +141,11 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     let order=await newOrder(owner,product,2)
     order=await execute(owner,{command:'set_order_discount',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,discount:{kind:'fixed',value:3,reason:'Descuento sintético'}})
     const current=await pay(owner,order,'transfer'),boundary=await pay(owner,await newOrder(owner,product),'card_external')
-    for(const [id,time] of [[prior.saleId,'2026-10-02T18:10:00Z'],[current.saleId,'2026-10-03T18:10:00Z'],[boundary.saleId,'2026-10-03T18:30:00Z']]) await db.query('update app_private.sales set created_at=$1 where id=$2',[time,id])
+    for(const [id,time] of [[prior.saleId,'2026-10-02T18:10:00Z'],[current.saleId,'2026-10-03T18:10:00Z'],[boundary.saleId,'2026-10-03T18:30:00Z']]) await fixtureHistoricalTime('sales','update app_private.sales set created_at=$1 where id=$2',[time,id])
     let refund=await execute<CheckoutAttempt>(owner,{command:'prepare_reversal',operationId:randomUUID(),saleId:prior.saleId!,reason:'Venta anterior'})
     refund=await execute(owner,{command:'start_checkout',operationId:randomUUID(),attemptId:refund.id,expectedRevision:refund.revision})
     await execute(owner,{command:'resolve_checkout',operationId:randomUUID(),attemptId:refund.id,expectedRevision:refund.revision,resolution:'complete',confirmed:true,reason:'Dinero devuelto'})
-    await db.query("update app_private.sale_reversals set created_at='2026-10-03T18:15:00Z' where sale_id=$1",[prior.saleId])
+    await fixtureHistoricalTime('sale_reversals',"update app_private.sale_reversals set created_at='2026-10-03T18:15:00Z' where sale_id=$1",[prior.saleId])
     const report=await reportAt(owner,'2026-10-03','day','2026-10-03T18:30:00Z')
     expect(report).toMatchObject({partial:true,comparisonComparable:true,totals:{grossCents:2002,discountCents:3,salesCents:1999,reversalCents:1001,netCents:998,saleCount:1},previous:{salesCents:1001,saleCount:1}})
     expect(new Date(report.cutoff).toISOString()).toBe('2026-10-03T18:30:00.000Z')
@@ -162,7 +162,7 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
   it('distinguishes real empty and zero-value buckets from calendar slots that do not exist',async()=>{
     const owner=await newActor();await activate(owner);await open(owner)
     const product=await newProduct(owner,0),sale=await pay(owner,await newOrder(owner,product),'cash')
-    await db.query("update app_private.sales set created_at='2026-02-28T17:00:00Z' where id=$1",[sale.saleId])
+    await fixtureHistoricalTime('sales',"update app_private.sales set created_at='2026-02-28T17:00:00Z' where id=$1",[sale.saleId])
     const report=await reportAt(owner,'2026-02-28','month','2026-03-01T06:00:00Z')
     expect(report.series).toHaveLength(28);expect(report.previousSeries).toHaveLength(31)
     expect(report.comparisonComparable).toBe(true)
@@ -210,12 +210,10 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
   })
 
   it('preserves registered IVA without inventing a tax rate or repairing legacy snapshots',async()=>{
-    const owner=await newActor();await activate(owner);await open(owner)
+    const owner=await newActor()
     const product=await newProduct(owner,11600)
-    const known=await pay(owner,await newOrder(owner,product),'cash'),unknown=await pay(owner,await newOrder(owner,product),'cash')
-    await db.query('update app_private.sale_items set tax_treatment=null,tax_bps=null where sale_id=$1',[known.saleId])
-    await db.query('update app_private.sale_items set tax_treatment=null,tax_bps=null,tax_cents=0 where sale_id=$1',[unknown.saleId])
-    await db.query("update app_private.sales set created_at='2026-10-02T18:00:00Z' where id=any($1::uuid[])",[[known.saleId,unknown.saleId]])
+    const known=await fixtureLegacySale(owner,product,1600)
+    await fixtureLegacySale(owner,product,0)
     const report=await reportAt(owner,'2026-10-02','day','2026-10-03T18:30:00Z')
     expect(report.totals).toMatchObject({salesCents:23200,taxCents:1600,grossCents:23200,discountCents:0})
     expect((await db.query<{tax_bps:null;tax_treatment:null}>('select tax_bps,tax_treatment from app_private.sale_items where sale_id=$1',[known.saleId])).rows[0]).toEqual({tax_bps:null,tax_treatment:null})
@@ -249,7 +247,7 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     const prior=await pay(owner,await newOrder(owner,product),'card_external')
     const start=await pay(owner,await newOrder(owner,product,2),'cash')
     const end=await pay(owner,await newOrder(owner,product,3),'transfer')
-    for(const [id,date] of [[prior.saleId,'2025-01-05'],[start.saleId,'2025-01-06'],[end.saleId,'2025-01-12']]) await db.query("update app_private.sales set created_at=$1::date::timestamp at time zone 'America/Mexico_City' + interval '12 hours' where id=$2",[date,id])
+    for(const [id,date] of [[prior.saleId,'2025-01-05'],[start.saleId,'2025-01-06'],[end.saleId,'2025-01-12']]) await fixtureHistoricalTime('sales',"update app_private.sales set created_at=$1::date::timestamp at time zone 'America/Mexico_City' + interval '12 hours' where id=$2",[date,id])
     const week=await execute<BusinessPeriodReport>(owner,{command:'report_period',date:'2025-01-08',period:'week'})
     expect(week.totals).toMatchObject({salesCents:5005,saleCount:2})
     expect(week.previous.salesCents).toBe(1001)
@@ -260,7 +258,7 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     await execute(owner,{command:'resolve_checkout',operationId:randomUUID(),attemptId:refund.id,expectedRevision:refund.revision,resolution:'complete',confirmed:true,reason:'Devuelto externamente'})
     const day=(await db.query<{day:string}>("select to_char(clock_timestamp() at time zone 'America/Mexico_City','YYYY-MM-DD') as \"day\"")).rows[0].day
     // Give the fixture an explicit effective time before the exclusive as-of boundary.
-    await db.query("update app_private.sale_reversals set created_at=clock_timestamp()-interval '1 second' where business_id=$1",[owner.businessId])
+    await fixtureHistoricalTime('sale_reversals',"update app_private.sale_reversals set created_at=clock_timestamp()-interval '1 second' where business_id=$1",[owner.businessId])
     const today=await execute<BusinessPeriodReport>(owner,{command:'report_period',date:day,period:'day'})
     expect(today.totals).toMatchObject({salesCents:0,saleCount:0,reversalCents:1001,netCents:-1001})
     expect(today.series.reduce((sum,p)=>sum+p.reversalCents,0)).toBe(1001)
@@ -567,14 +565,19 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
   it('requires an open shift, hides expected cash until submitted count, serializes movements and closes with exact difference',async()=>{
     const actor=await newActor();await activate(actor);const product=await newProduct(actor,11600)
     let order=await newOrder(actor,product);order=await execute(actor,{command:'begin_order_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision})
-    await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[{lineId:order.items[0].lineId,quantity:1}],paymentMethod:'cash'})).rejects.toThrow('SHIFT_REQUIRED')
+    for (const paymentMethod of ['cash','card_external','transfer'] as const) {
+      await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[{lineId:order.items[0].lineId,quantity:1}],paymentMethod})).rejects.toThrow('SHIFT_REQUIRED')
+    }
+    expect(await execute(actor,{command:'order',orderId:order.id})).toMatchObject({paidCents:0,balanceCents:11600,items:[{paidQuantity:0}]})
     let shift=await open(actor,5000)
     shift=await execute(actor,{command:'cash_movement',operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision,kind:'out',amountCents:1000,reason:'Gasto de caja'})
     await pay(actor,order,'cash')
     shift=await execute(actor,{command:'begin_shift_close',operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision})
     expect(shift).toMatchObject({status:'closing',expectedCents:null,differenceCents:null,countedCents:null})
     const another=await newOrder(actor,product);const checkout=await execute<OperationalOrder>(actor,{command:'begin_order_checkout',operationId:randomUUID(),orderId:another.id,expectedRevision:another.revision})
-    await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:checkout.id,expectedRevision:checkout.revision,items:[{lineId:checkout.items[0].lineId,quantity:1}],paymentMethod:'card_external'})).rejects.toThrow('SHIFT_NOT_OPEN')
+    for (const paymentMethod of ['cash','card_external','transfer'] as const) {
+      await expect(execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:checkout.id,expectedRevision:checkout.revision,items:[{lineId:checkout.items[0].lineId,quantity:1}],paymentMethod})).rejects.toThrow('SHIFT_NOT_OPEN')
+    }
     await expect(execute(actor,{command:'cash_movement',operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision,kind:'in',amountCents:1000,reason:'No durante conteo'})).rejects.toThrow('SHIFT_NOT_OPEN')
     const close={command:'close_shift' as const,operationId:randomUUID(),shiftId:shift.id,expectedRevision:shift.revision,countedCents:15550}
     const closed=await execute<CashShift>(actor,close);expect(await execute(actor,close)).toEqual(closed)
@@ -599,7 +602,7 @@ describe('Lean POS private transactions with real PostgreSQL migrations', () => 
     const report=await execute<BusinessDayReport>(actor,{command:'report',date:day})
     expect(report).toMatchObject({salesCents:11600,reversalCents:11600,reversalTaxCents:1600,netCents:0})
     expect(report.payments.find(p=>p.paymentMethod==='card_external')).toMatchObject({salesCents:11600,reversalCents:11600,netCents:0})
-    await db.query("update app_private.sales set created_at=created_at-interval '1 day' where id=$1",[receipt.saleId])
+    await fixtureHistoricalTime('sales',"update app_private.sales set created_at=created_at-interval '1 day' where id=$1",[receipt.saleId])
     expect(await execute(actor,{command:'report',date:day})).toMatchObject({salesCents:0,reversalCents:11600,netCents:-11600})
   })
 
@@ -741,4 +744,29 @@ async function pay(actor:Actor,order:OperationalOrder,paymentMethod:'cash'|'card
 
 async function reserve(actor:Actor,order:OperationalOrder,quantity:number):Promise<CheckoutAttempt> {
  return execute(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[{lineId:order.items[0].lineId,quantity}],paymentMethod:'cash'})
+}
+
+// Calendar fixtures deliberately assign historical times in the disposable
+// embedded database. Restore the immutable-history guard in the same transaction
+// (rollback restores it too); application SQL has no bypass setting or command.
+async function fixtureHistoricalTime(table:'sales'|'sale_reversals',query:string,values:unknown[]) {
+ await db.transaction(async transaction=>{
+  await transaction.exec('set constraints all immediate')
+  await transaction.exec(`alter table app_private.${table} disable trigger financial_history_immutable`)
+  await transaction.query(query,values)
+  await transaction.exec(`alter table app_private.${table} enable trigger financial_history_immutable`)
+ })
+}
+// Legacy receipts can contain known included IVA without a tax classification,
+// or no registered IVA. Construct valid insert-time snapshots instead of editing
+// a contemporary settled payment/quote into contradictory historical data.
+async function fixtureLegacySale(actor:Actor,product:Product,taxCents:number) {
+ const saleId=randomUUID()
+ await db.transaction(async transaction=>{
+  await transaction.query(`insert into app_private.sales(id,business_id,employee_id,operator_name,operation_id,total_cents,item_count,payment_method,timezone,created_at)
+   values($1,$2,$3,'Propietario sintético',$4,$5,1,'cash','America/Mexico_City','2026-10-02T18:00:00Z')`,[saleId,actor.businessId,actor.employeeId,randomUUID(),product.priceCents])
+  await transaction.query(`insert into app_private.sale_items(business_id,sale_id,product_id,name,category,quantity,unit_price_cents,total_cents,tax_cents,tax_treatment,tax_bps)
+   values($1,$2,$3,$4,$5,1,$6::integer,$6::bigint,$7,null,null)`,[actor.businessId,saleId,product.id,product.name,product.category,product.priceCents,taxCents])
+ })
+ return {saleId}
 }

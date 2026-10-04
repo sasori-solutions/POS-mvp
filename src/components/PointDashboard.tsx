@@ -25,23 +25,29 @@ const metricDefinitions = [
   ['Activación y cohortes', 'Primer pago de producción verificado por comercio. Cohortes por mes del primer pago en UTC; tiempo desde conexión hasta primer pago, excluyendo duraciones negativas. Conectado no significa activo.'],
 ] as const
 
-export default function PointDashboard({ access, timezone, settings, admin = false, onSessionError }: {
+export default function PointDashboard(props: Parameters<typeof PointDashboardSession>[0]) {
+  return <PointDashboardSession key={`${props.access.businessId}:${props.access.operatorToken}:${props.access.deviceToken ?? ''}:${props.admin ?? false}:${props.admin ? props.settings?.permissions.admin : props.settings?.permissions.reports}`} {...props} />
+}
+
+function PointDashboardSession({ access, timezone, settings, admin = false, onSessionError }: {
   access: PosAccess; timezone: string; settings: PointSettings | null; admin?: boolean; onSessionError?: (error: AccountClientError) => void
 }) {
   const today = businessDate(timezone), [from, setFrom] = useState(`${today.slice(0, 7)}-01`), [to, setTo] = useState(today)
   const [report, setReport] = useState<PointReport | PointAdminReport | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [loadedRange, setLoadedRange] = useState('')
   const [pageBusy, setPageBusy] = useState(false)
-  const alive = useRef(true), running = useRef(false), heading = useRef<HTMLHeadingElement>(null)
+  const alive = useRef(true), running = useRef(false), pageRunning = useRef(false), version = useRef(0), heading = useRef<HTMLHeadingElement>(null)
   const permitted = admin ? settings?.permissions.admin : settings?.permissions.reports
   useEffect(() => { alive.current = true; heading.current?.focus(); return () => { alive.current = false } }, [])
   useEffect(() => { if (permitted) void load() }, [permitted, admin])
   async function load() {
     if (running.current || !permitted || !from || !to || from > to) return
+    const request = ++version.current
+    pageRunning.current = false; setPageBusy(false)
     running.current = true; setBusy(true); setError('')
     try {
       const result = admin ? await pointRequest(access, { command: 'admin_report', from, to }) : await pointRequest(access, { command: 'merchant_report', from, to })
-      if (alive.current) { setReport(result); setLoadedRange(`${from}:${to}`) }
+      if (alive.current && request === version.current) { setReport(result); setLoadedRange(`${from}:${to}`) }
     } catch (caught) {
       if (!alive.current) return
       setError(caught instanceof Error ? caught.message : 'No pudimos cargar el reporte.')
@@ -56,25 +62,30 @@ export default function PointDashboard({ access, timezone, settings, admin = fal
     ['Comisión neta SASORI', report ? money(report.commissionNetCents) : '—'], ['IVA de comisión', report ? money(report.commissionVatCents) : '—'], ['Comisión e IVA', report ? money(report.commissionTotalCents) : '—'],
   ]
   async function moreBusinesses() {
-    if (!global?.nextCursor || pageBusy) return
-    setPageBusy(true)
+    if (!global?.nextCursor || pageRunning.current || running.current) return
+    const request = version.current
+    pageRunning.current = true; setPageBusy(true)
     try {
       const page = await pointRequest(access, { command: 'admin_report', from: global.from, to: global.to, cursor: global.nextCursor })
-      if (alive.current) setReport({ ...global, businesses: [...global.businesses, ...page.businesses], nextCursor: page.nextCursor })
-    } catch (caught) { if (alive.current) setError(caught instanceof Error ? caught.message : 'No pudimos cargar la siguiente página.') }
-    finally { if (alive.current) setPageBusy(false) }
+      if (alive.current && request === version.current) setReport({ ...global, businesses: [...global.businesses, ...page.businesses], nextCursor: page.nextCursor })
+    } catch (caught) { if (alive.current && request === version.current) setError(caught instanceof Error ? caught.message : 'No pudimos cargar la siguiente página.') }
+    finally { if (alive.current && request === version.current) { pageRunning.current = false; setPageBusy(false) } }
   }
   async function exportReport() {
-    if (!report) return
+    if (!report || pageRunning.current || running.current) return
+    const request = version.current
+    pageRunning.current = true
     let businesses = global?.businesses ?? []
     let cursor = global?.nextCursor
     setPageBusy(true)
     try {
     for (let page = 0; cursor && page < 100; page++) {
       const next = await pointRequest(access, { command: 'admin_report', from: report.from, to: report.to, cursor })
+      if (!alive.current || request !== version.current) return
       businesses = [...businesses, ...next.businesses]; cursor = next.nextCursor
     }
     if (cursor) throw new Error('El detalle excede el límite de exportación. Consulta rangos más pequeños.')
+    if (!alive.current || request !== version.current) return
     downloadPointCsv(`point-${admin ? 'sasori' : 'comercio'}-${report.from}-${report.to}.csv`, [
       ['Concepto', 'Centavos MXN', 'Desde', 'Hasta', 'Zona de reporte', 'Corte UTC'],
       ['Volumen bruto verificado', report.grossCents, report.from, report.to, report.timezone, report.asOf],
@@ -84,8 +95,8 @@ export default function PointDashboard({ access, timezone, settings, admin = fal
       ['Detalle por terminal', 'Bruto centavos', 'Devoluciones centavos', 'Cobros'], ...report.terminals.map(terminal => [terminal.terminalId, terminal.grossCents, terminal.refundCents, terminal.count]),
       ...(global ? [['Detalle completo por comercio', 'Nombre', 'Bruto centavos', 'Devoluciones centavos', 'Cobros'], ...businesses.map(business => [business.businessId, business.name, business.grossCents, business.refundCents, business.paymentCount])] : []),
     ])
-    } catch (caught) { if (alive.current) setError(caught instanceof Error ? caught.message : 'No pudimos exportar el detalle completo.') }
-    finally { if (alive.current) setPageBusy(false) }
+    } catch (caught) { if (alive.current && request === version.current) setError(caught instanceof Error ? caught.message : 'No pudimos exportar el detalle completo.') }
+    finally { if (alive.current && request === version.current) { pageRunning.current = false; setPageBusy(false) } }
   }
   return <div className="point-dashboard ops-form">
     <h2 ref={heading} tabIndex={-1} className="text-2xl font-medium">{admin ? 'Panel privado de SASORI' : 'Pagos integrados y comisión'}</h2>
@@ -142,7 +153,7 @@ export default function PointDashboard({ access, timezone, settings, admin = fal
         </>}
         <details className="analytics-card"><summary>Definiciones y fuentes de las métricas</summary><dl className="mt-4 flex flex-col gap-4">{metricDefinitions.map(([label, definition]) => <div key={label}><dt className="font-medium">{label}</dt><dd className="mt-1 text-sm">{definition}</dd></div>)}</dl><p className="mt-4 text-sm">Fuente: registros financieros verificados y snapshots del POS, con corte UTC y periodos locales. Margen por producto, CAC, churn, LTV y recuperación de equipo requieren datos y definiciones adicionales.</p></details>
       </>}
-      {!admin && settings?.permissions.manage && <PointStatements access={access} onSessionError={onSessionError} />}
+      {!admin && settings?.permissions.manage && <PointStatements access={access} actorId={settings.actorId} onSessionError={onSessionError} />}
     </>}
   </div>
 }

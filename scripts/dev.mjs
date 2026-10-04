@@ -13,7 +13,9 @@ const directory = join(root, '.local-dev')
 const cli = join(root, 'node_modules/supabase/dist/supabase.js')
 const args = process.argv.slice(2)
 const pointSimulatorEnabled = args.includes('--point-simulator')
-const frontendArgs = args.filter(arg => arg !== '--point-simulator')
+const pointManualWorker = args.includes('--point-manual-worker')
+if (pointManualWorker && !pointSimulatorEnabled) throw new Error('--point-manual-worker requires --point-simulator.')
+const frontendArgs = args.filter(arg => !['--point-simulator', '--point-manual-worker'].includes(arg))
 const portIndex = args.indexOf('--port')
 const portArgument = args.find(arg => arg.startsWith('--port='))?.slice(7)
 const port = Number(portIndex < 0 ? portArgument ?? 5173 : args[portIndex + 1])
@@ -108,7 +110,7 @@ async function main() {
       pointSecrets={tokenKey:randomBytes(32).toString('base64url'),workerSecret:randomBytes(32).toString('base64url')}
       await writeFile(secretsPath,JSON.stringify(pointSecrets),{mode:0o600,flag:'wx'})
     }
-    pointSimulator=await startSimulator({host:'0.0.0.0',port:settings.pointSimulatorPort,stateFile:join(directory,'point-simulator.json'),realtime:true})
+    pointSimulator=await startSimulator({host:'0.0.0.0',port:settings.pointSimulatorPort,stateFile:join(directory,'point-simulator.json'),realtime:!pointManualWorker})
     environment+=`MP_CLIENT_ID=sim-client\nMP_CLIENT_SECRET=sim-secret\nMP_REDIRECT_URI=${origin}/point/callback\nMP_ENVIRONMENT=sandbox\nMP_TOKEN_KEYS=${JSON.stringify({local:pointSecrets.tokenKey})}\nMP_TOKEN_ACTIVE_KEY=local\nMP_WEBHOOK_SECRET=simulator-webhook-secret\nPOINT_WORKER_SECRET=${pointSecrets.workerSecret}\nMP_ALLOW_LOCAL_SIMULATOR=true\nMP_API_BASE_URL=http://host.docker.internal:${settings.pointSimulatorPort}\nMP_OAUTH_AUTHORIZATION_URL=http://127.0.0.1:${settings.pointSimulatorPort}/authorization\nPOINT_CHARGES_ENABLED=true\n`
   }
   await writeFile(functionEnv,environment,{mode:0o600})
@@ -144,7 +146,8 @@ async function main() {
     console.log(`Point simulator: ${simulatorUrl}; serial SERIAL-1. Connect and activate it from Mercado Pago Point. Sandbox payments have no SASORI commission.`)
     // This local scheduler supports a manual development session. Hosted recovery
     // uses the durable pg_cron/Vault scheduler documented in the Point runbook.
-    pointTimer=setInterval(async()=>{
+    if (pointManualWorker) console.log('Point worker is manual for deterministic integration tests.')
+    else pointTimer=setInterval(async()=>{
       if(workerBusy || stopping) return
       workerBusy=true
       try {

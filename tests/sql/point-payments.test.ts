@@ -39,7 +39,7 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     expect((await point<PointCheckout>(actor, { ...start, operationId: randomUUID() })).attemptId).toBe(first.attemptId)
     await expect(point(actor, { ...start, operationId: start.operationId, checkoutId: randomUUID() })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
     for (const command of ['record_checkout', 'resolve_checkout', 'update_checkout', 'start_checkout']) await expect(pos(actor, { command, operationId: randomUUID(), attemptId: reservation.id, expectedRevision: reservation.revision, confirmed: true })).rejects.toThrow('POINT_RESULT_UNCERTAIN')
-    const jobs = await service<{ jobs: { id: string; leaseToken: string; payload: { createPayload: { transactions: { payments: { amount: string }[] } }; idempotencyKey: string; firstSentAt: string } }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID() })
+    const jobs = await service<{ jobs: { id: string; leaseToken: string; payload: { createPayload: { transactions: { payments: { amount: string }[] } }; idempotencyKey: string; firstSentAt: string } }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: true })
     expect(jobs.jobs).toHaveLength(1)
     expect(jobs.jobs[0].payload.createPayload.transactions.payments[0].amount).toBe('10.01')
     expect(jobs.jobs[0].payload.idempotencyKey).toBe(first.attemptId)
@@ -73,7 +73,7 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     const refund = { command: 'refund', operationId: randomUUID(), checkoutId: checkout.id, amountCents: 600, merchandiseCents: 600, tipCents: 0, reason: 'Devolución sintética' }
     await point(actor, refund)
     await point(actor, refund)
-    await expect(point(actor, { ...refund, operationId: randomUUID() })).rejects.toThrow('POINT_REFUND_LIMIT')
+    await expect(point(actor, { ...refund, operationId: randomUUID() })).rejects.toThrow('POINT_RESULT_UNCERTAIN')
     const confirmed = { ...evidence, state: 'partially_refunded', refunds: [{ id: 'synthetic-refund-1', amountCents: 600, confirmedAt: new Date().toISOString() }] }
     await service('apply_order', confirmed); await service('apply_order', confirmed)
     await service('apply_order', { ...evidence, state: 'approved_verified', observedAt: '2026-01-01T00:00:00Z' })
@@ -146,6 +146,185 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     const report=await point<PointReport>(actor,{command:'merchant_report',from:'2026-01-01',to:'2026-12-31'})
     expect(report.health).toMatchObject({receivedEvents:1,duplicates:1,invalidSignatures:null})
     expect(report.lastReconciledAt).toBeTruthy()
+  })
+
+  it('keeps definitive failures immutable and requires a fresh checkout after rejection', async () => {
+    const { actor, checkout, reservation } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = { ...await facts(started.attemptId!), state: 'rejected' }
+    await service('apply_order', evidence)
+    await service('apply_order', evidence)
+    await expect(point(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })).rejects.toThrow('POINT_STATE_INVALID')
+    expect((await pos<CheckoutAttempt>(actor, { command: 'attempt', attemptId: reservation.id })).status).toBe('aborted')
+    const current = await pos<OperationalOrder>(actor, { command: 'order', orderId: reservation.orderId })
+    const next = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: current.id, expectedRevision: current.revision, items: current.items.map(line => ({ lineId: line.lineId, quantity: line.quantity - line.paidQuantity })), paymentMethod: 'card_integrated' })
+    const prepared = await point<PointCheckout>(actor, { command: 'prepare', operationId: randomUUID(), checkoutAttemptId: next.id, terminalId: checkout.terminal.id })
+    expect((await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: prepared.id })).state).toBe('pending')
+    expect(next.id).not.toBe(reservation.id)
+  })
+
+  it('shows cancelled before sending and does not revive an aborted reservation', async () => {
+    const { actor, checkout } = await setup()
+    expect(await point(actor, { command: 'cancel', checkoutId: checkout.id })).toMatchObject({ state: 'cancelled', saleState: 'pending' })
+    await expect(point(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })).rejects.toThrow('POINT_STATE_INVALID')
+  })
+
+  it('keeps new jobs queued when charges are disabled but permits the original sent identity', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await db.query("update app_private.point_jobs set available_at='-infinity' where attempt_id=$1", [started.attemptId])
+    await point(actor, { command: 'activate', enabled: false })
+    let jobs = await service<{ jobs: { id: string; attemptId: string; leaseToken: string }[] }>('claim_jobs', { limit: 100, leaseToken: randomUUID(), chargesEnabled: true })
+    expect(jobs.jobs.some(job => job.attemptId === started.attemptId)).toBe(false)
+    await point(actor, { command: 'activate', enabled: true })
+    jobs = await service('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: true })
+    const job = jobs.jobs[0]
+    expect(job.attemptId).toBe(started.attemptId)
+    await service('fail_job', { id: job.id, leaseToken: job.leaseToken, code: 'UNCERTAIN', uncertain: true, delaySeconds: 1 })
+    await point(actor, { command: 'activate', enabled: false })
+    await db.query("update app_private.point_jobs set available_at='-infinity' where id=$1", [job.id])
+    const retry = await service<{ jobs: { id: string; payload: { idempotencyKey: string } }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: false })
+    expect(retry.jobs[0]).toMatchObject({ id: job.id, payload: { idempotencyKey: started.attemptId } })
+  })
+
+  it('recovers refund requests across clients and never attributes an external refund by matching amount', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    const request = { command: 'refund', operationId: randomUUID(), checkoutId: checkout.id, amountCents: 200, merchandiseCents: 200, tipCents: 0, reason: 'Reembolso' }
+    const created = await point<PointCheckout>(actor, request)
+    expect(created.refundRequests).toHaveLength(1)
+    expect(created.refundRequests[0]).toMatchObject({ operationId: request.operationId, status: 'pending', amountCents: 200, firstSentAt: null })
+    await expect(point(actor, { ...request, operationId: randomUUID() })).rejects.toThrow('POINT_RESULT_UNCERTAIN')
+    await service('apply_order', { ...evidence, state: 'partially_refunded', refunds: [{ id: 'outside-request', amountCents: 200, confirmedAt: new Date().toISOString() }] })
+    expect((await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })).refundRequests[0].status).toBe('pending')
+    const requestId = created.refundRequests[0].id
+    await db.query("update app_private.point_jobs set available_at='-infinity' where refund_id=$1", [requestId])
+    const claimed = await service<{ jobs: { id: string; leaseToken: string; payload: { refundRequest: { id: string; firstSentAt: string } } }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: true })
+    const job = claimed.jobs[0]
+    expect(job.payload.refundRequest.id).toBe(requestId)
+    expect(job.payload.refundRequest.firstSentAt).toBeTruthy()
+    await expect(service('record_remote_refund', { jobId: job.id, leaseToken: randomUUID(), refundId: requestId, remoteRefundId: 'own-refund' })).rejects.toThrow('POINT_LEASE_LOST')
+    await service('record_remote_refund', { jobId: job.id, leaseToken: job.leaseToken, refundId: requestId, remoteRefundId: 'own-refund' })
+    await expect(service('record_remote_refund', { jobId: job.id, leaseToken: job.leaseToken, refundId: requestId, remoteRefundId: 'different-refund' })).rejects.toThrow('POINT_FACT_MISMATCH')
+    await service('apply_order', { ...evidence, state: 'partially_refunded', refunds: [{ id: 'outside-request', amountCents: 200, confirmedAt: new Date().toISOString() }, { id: 'own-refund', amountCents: 200, confirmedAt: new Date().toISOString() }] })
+    expect((await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })).refundRequests[0]).toMatchObject({ status: 'confirmed', remoteRefundId: 'own-refund' })
+    await point(actor, { ...request, operationId: randomUUID() })
+  })
+
+  it('counts integrated sales and provider refunds in ordinary reports and chart intervals', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state: 'approved_verified', observedAt: '2026-08-01T12:00:00Z' })
+    await service('apply_order', { ...evidence, state: 'partially_refunded', refunds: [{ id: 'report-refund', amountCents: 201, confirmedAt: '2026-08-01T13:00:00Z' }] })
+    const report = await pos<{ totals: import('../../src/lib/operations-contracts').BusinessDayReport; series: { reversalCents: number; netCents: number }[] }>(actor, { command: 'report_period', date: '2026-08-01', period: 'day' })
+    expect(report.totals).toMatchObject({ salesCents: 1001, reversalCents: 201, netCents: 800, unallocatedRefundCents: 201, unknownReversalTaxCents: 201 })
+    expect(report.totals.payments.find(row => row.paymentMethod === 'card_integrated')).toMatchObject({ salesCents: 1001, reversalCents: 201, netCents: 800 })
+    expect(report.totals.operators[0]).toMatchObject({ salesCents: 1001, reversalCents: 201, netCents: 800 })
+    expect(report.totals.products[0].reversalQuantity).toBe(0)
+    expect(report.series.reduce((sum, row) => sum + row.reversalCents, 0)).toBe(201)
+    expect(report.series.reduce((sum, row) => sum + row.netCents, 0)).toBe(800)
+  })
+
+  it('rejects provider identity and financial statement rewriting', async () => {
+    const { actor, checkout } = await setup(1001)
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await expect(db.query('update app_private.point_attempts set amount_cents=999 where id=$1', [started.attemptId])).rejects.toThrow('IMMUTABLE_FINANCIAL_RECORD')
+    await expect(db.query('update app_private.point_checkouts set rate_bps=999 where id=$1', [checkout.id])).rejects.toThrow('IMMUTABLE_FINANCIAL_RECORD')
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'approved_verified', observedAt: '2026-05-01T12:00:00Z' })
+    const statement = await point<CommissionStatement>(actor, { command: 'close_statement', operationId: randomUUID(), period: '2026-05' })
+    await expect(db.query('update app_private.point_statements set net_cents=100,total_cents=100+vat_cents where id=$1', [statement.id])).rejects.toThrow('IMMUTABLE_FINANCIAL_RECORD')
+    await expect(db.query('delete from app_private.point_statement_lines where statement_id=$1', [statement.id])).rejects.toThrow('IMMUTABLE_FINANCIAL_RECORD')
+  })
+
+  it('does not revoke a reconnected account after a stale-token failure', async () => {
+    const { actor, connectionId } = await setup()
+    const original = await service<{ tokenVersion: number; receiverId: string }>('connection_get', { connectionId })
+    await service('connection_save', { businessId: actor.businessId, environment: 'live', receiverId: original.receiverId, tokensCiphertext: 'synthetic-reconnected', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+    expect(await service('connection_revoke', { connectionId, expectedTokenVersion: original.tokenVersion })).toEqual({ revoked: false })
+    const current = await service<{ tokenVersion: number; status: string }>('connection_get', { connectionId })
+    expect(current.tokenVersion).toBe(original.tokenVersion + 1)
+    expect(current.status).toBe('connected')
+    await service('connection_revoke', { connectionId, expectedTokenVersion: current.tokenVersion })
+    expect(await service('connection_get', { connectionId })).toMatchObject({ status: 'revoked' })
+  })
+
+  it('releases a prepared terminal reservation without a provider attempt while preserving the started guard', async () => {
+    const { actor, checkout, reservation } = await setup()
+    const release = { command: 'resolve_checkout', operationId: randomUUID(), attemptId: reservation.id, expectedRevision: reservation.revision, resolution: 'abort', confirmed: true, reason: 'Editar cuenta' }
+    const released = await pos<CheckoutAttempt>(actor, release)
+    expect(await pos(actor, release)).toEqual(released)
+    expect(released.status).toBe('aborted')
+    expect((await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })).state).toBe('cancelled')
+    const next = await setup()
+    await point(next.actor, { command: 'start', operationId: randomUUID(), checkoutId: next.checkout.id })
+    const started = await pos<CheckoutAttempt>(next.actor, { command: 'attempt', attemptId: next.reservation.id })
+    await expect(pos(next.actor, { command: 'resolve_checkout', operationId: randomUUID(), attemptId: started.id, expectedRevision: started.revision, resolution: 'abort', confirmed: true, reason: 'Editar cuenta' })).rejects.toThrow('POINT_RESULT_UNCERTAIN')
+  })
+
+  it('settles already-sent approval while new business charges are disabled', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state: 'unknown_review', statusDetail: 'action_required' })
+    await point(actor, { command: 'activate', enabled: false })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ saleState: 'materialized', state: 'approved_verified' })
+  })
+
+  it('holds a physical terminal reservation across a receiver reconnection', async () => {
+    const { actor, checkout, connectionId } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'unknown_review' })
+    const other = await service<{ id: string }>('connection_save', { businessId: actor.businessId, environment: 'live', receiverId: randomUUID(), tokensCiphertext: 'synthetic-other-collector', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+    expect(other.id).not.toBe(connectionId)
+    await expect(service('terminal_save', { connectionId: other.id, terminalId: checkout.terminal.id, serial: checkout.terminal.serial, storeId: 'NEW-STORE', posId: 'NEW-POS', mode: 'PDV', verified: true, physicallyConfirmed: true })).rejects.toThrow('POINT_TERMINAL_BUSY')
+    expect((await db.query<{ connection_id: string }>('select connection_id from app_private.point_terminal_reservations where attempt_id=$1', [started.attemptId])).rows[0].connection_id).toBe(connectionId)
+  })
+
+  it('sweeps an old uncertain attempt even without a new webhook', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'unknown_review' })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    await db.query("update app_private.point_attempts set observed_at=clock_timestamp()-interval '10 minutes',updated_at=clock_timestamp()-interval '10 minutes' where id=$1", [started.attemptId])
+    await point(actor, { command: 'activate', enabled: false })
+    await service('pending_sweep', {})
+    expect((await db.query<{ n: number }>("select count(*)::int n from app_private.point_jobs where attempt_id=$1 and kind='reconcile_order' and status='queued'", [started.attemptId])).rows[0].n).toBe(1)
+  })
+
+  it('recovers an expired final worker lease without releasing uncertain money or terminal', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'unknown_review' })
+    await db.query("update app_private.point_jobs set status='leased',attempts=12,lease_token=$2,lease_until=clock_timestamp()-interval '1 minute' where attempt_id=$1", [started.attemptId, randomUUID()])
+    await db.query("update app_private.point_attempts set observed_at=clock_timestamp()-interval '10 minutes' where id=$1", [started.attemptId])
+    await service('pending_sweep', {})
+    const jobs = (await db.query<{ kind: string; status: string; last_error: string | null }>('select kind,status,last_error from app_private.point_jobs where attempt_id=$1 order by created_at', [started.attemptId])).rows
+    expect(jobs).toEqual([{ kind: 'create_order', status: 'failed', last_error: 'POINT_LEASE_EXHAUSTED' }, { kind: 'reconcile_order', status: 'queued', last_error: null }])
+    expect((await db.query<{ n: number }>('select count(*)::int n from app_private.point_terminal_reservations where attempt_id=$1', [started.attemptId])).rows[0].n).toBe(1)
+    await service('pending_sweep', {})
+    expect((await db.query<{ n: number }>("select count(*)::int n from app_private.point_incidents where attempt_id=$1 and code='retries_exhausted'", [started.attemptId])).rows[0].n).toBe(1)
+  })
+
+  it.each([false, true])('preserves the settled payment when a refund worker fails after a timeout (partial=%s)', async (partial) => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    if (partial) await service('apply_order', { ...evidence, state: 'partially_refunded', refunds: [{ id: 'previous-refund', amountCents: 101, confirmedAt: new Date().toISOString() }] })
+    const pending = await point<PointCheckout>(actor, { command: 'refund', operationId: randomUUID(), checkoutId: checkout.id, amountCents: 200, merchandiseCents: 200, tipCents: 0, reason: 'Reembolso con respuesta perdida' })
+    const request = pending.refundRequests[0]
+    await db.query("update app_private.point_jobs set available_at='-infinity' where refund_id=$1", [request.id])
+    const claimed = await service<{ jobs: { id: string; leaseToken: string }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: true })
+    const job = claimed.jobs[0]
+    await service('fail_job', { id: job.id, leaseToken: job.leaseToken, code: 'UNCERTAIN', uncertain: true, delaySeconds: 1 })
+    const recovered = await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })
+    expect(recovered).toMatchObject({ state: partial ? 'partially_refunded' : 'approved_verified', saleState: 'materialized', refundedCents: partial ? 101 : 0 })
+    expect(recovered.refundRequests[0]).toMatchObject({ id: request.id, status: 'unknown_review' })
+    expect((await db.query<{ status: string; last_error: string }>('select status,last_error from app_private.point_jobs where id=$1', [job.id])).rows[0]).toEqual({ status: 'queued', last_error: 'UNCERTAIN' })
   })
 
   it('uses inclusive local dates at midnight and preserves complete global detail across pages', async () => {

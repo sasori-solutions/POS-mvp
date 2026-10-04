@@ -7,6 +7,7 @@ import ProductEditor from "./ProductEditor";
 import { productDetails, isSoldOut } from "../lib/product-details";
 import { CatalogFilters, EmptyCatalog, PosDialog } from "./PosShared";
 import { accessErrorCodes, type CatalogState } from "./useCatalog";
+import LoadingPlaceholder, { PendingIndicator } from "./LoadingPlaceholder";
 
 export default function ProductsScreen({
   access,
@@ -90,7 +91,7 @@ export default function ProductsScreen({
       )}
       {catalog.error && (
         <div
-          className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+          className="pos-error mt-6 bg-danger-soft p-4 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
           role="alert"
         >
           <p>{catalog.error}</p>
@@ -104,9 +105,7 @@ export default function ProductsScreen({
         </div>
       )}
       {catalog.loading && !catalog.loaded && (
-        <p className="pos-status my-4 text-sm text-muted" role="status">
-          Cargando productos…
-        </p>
+        <LoadingPlaceholder variant="list" rows={5} label="Cargando productos" />
       )}
       {catalog.loaded && !filtered.length ? (
         <EmptyCatalog
@@ -352,7 +351,7 @@ function ProductDeletion({ product, access, onClose, onDeleted, onRefresh, onSes
           <button className="pos-button pos-primary" onClick={onRefresh}>Actualizar productos</button>
         ) : (
           <button className="pos-button border-danger bg-danger text-white enabled:hover:brightness-90" disabled={busy} onClick={() => void remove()}>
-            {busy ? "Eliminando…" : uncertain ? "Reintentar eliminación" : "Eliminar producto"}
+            {busy && <PendingIndicator label="Eliminando producto" />}{uncertain ? "Reintentar eliminación" : "Eliminar producto"}
           </button>
         )}
       </div>
@@ -448,7 +447,7 @@ function ProductActivation({
             onClick={() => void save()}
             disabled={busy}
           >
-            {busy ? "Guardando…" : product.active ? "Desactivar" : "Activar"}
+            {busy && <PendingIndicator label="Guardando disponibilidad" />}{product.active ? "Desactivar" : "Activar"}
           </button>
         )}
         <button
