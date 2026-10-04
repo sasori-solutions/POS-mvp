@@ -143,7 +143,7 @@ async function main() {
   console.log('Development owner PIN: 123456 (initial fixture). Use /dev-login; no Google account required.')
   if (pointSimulatorEnabled) {
     const simulatorUrl=`http://127.0.0.1:${settings.pointSimulatorPort}`
-    console.log(`Point simulator: ${simulatorUrl}; serial SERIAL-1. Connect and activate it from Mercado Pago Point. Sandbox payments have no SASORI commission.`)
+    console.log(`Point simulator: ${simulatorUrl}; serial SERIAL-1. Connect and activate it from Vincular una terminal. Sandbox payments have no SASORI commission.`)
     // This local scheduler supports a manual development session. Hosted recovery
     // uses the durable pg_cron/Vault scheduler documented in the Point runbook.
     if (pointManualWorker) console.log('Point worker is manual for deterministic integration tests.')

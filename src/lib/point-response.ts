@@ -79,7 +79,8 @@ function statement(value: unknown) {
 /** A malformed success may have committed. Keep its operation pending for exact recovery. */
 export function assertPointResponse(command: PointCommand, value: unknown): void {
   try {
-    if (['prepare', 'start', 'status', 'cancel', 'incident', 'refund', 'refund_context'].includes(command.command)) {
+    if (command.command === 'simulate') { requireValue(object(value).accepted === true)
+    } else if (['prepare', 'start', 'status', 'cancel', 'incident', 'refund', 'refund_context'].includes(command.command)) {
       checkout(value)
       if ('checkoutId' in command) requireValue(same(value.id, command.checkoutId))
       if (command.command === 'prepare') requireValue(same(value.checkout.id, command.checkoutAttemptId) && value.terminal.id === command.terminalId)
@@ -100,7 +101,7 @@ export function assertPointResponse(command: PointCommand, value: unknown): void
       if (command.command === 'record_commission_payment') requireValue(data.status === 'invoiced' && (data.collectedCents as number) >= command.amountCents)
     } else if (command.command === 'recover') {
       const data = object(value); requireValue(Array.isArray(data.checkouts)); data.checkouts.forEach(checkout)
-    } else if (['settings', 'oauth_callback', 'verify_connection', 'link_terminal', 'test_terminal', 'activate', 'disconnect'].includes(command.command)) settings(value)
+    } else if (['settings', 'connect_sandbox', 'oauth_callback', 'verify_connection', 'link_terminal', 'test_terminal', 'activate', 'disconnect'].includes(command.command)) settings(value)
   } catch {
     throw new AccountClientError('SERVER_ERROR', 'No pudimos verificar el resultado de Point. Conserva el mismo intento para consultarlo.')
   }

@@ -19,6 +19,44 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
   }, 60_000)
   afterAll(async () => { await db?.close() })
 
+  it('enrolls only an empty dedicated sandbox business and permanently blocks live reconnection', async () => {
+    const actor = await newActor()
+    const payload = { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId: randomUUID(), tokensCiphertext: 'synthetic-encrypted', expiresAt: '2099-01-01T00:00:00Z' }
+    expect(await point(actor, { command: 'connect_sandbox', operationId: payload.operationId })).toMatchObject({ backendDirective: { kind: 'connect_sandbox' } })
+    await service('official_sandbox_connect', payload)
+    expect(await point<PointSettings>(actor, { command: 'settings' })).toMatchObject({ sandbox: { testBusiness: true }, connection: { environment: 'sandbox' }, terminals: [{ id: 'NEWLAND_N950__SBX0000001', active: true, verified: true }] })
+    await point(actor, { command: 'disconnect' })
+    await expect(point(actor, { command: 'oauth_start', operationId: randomUUID(), environment: 'live' })).rejects.toThrow('POINT_STATE_INVALID')
+    await expect(service('connection_save', { ...payload, environment: 'live' })).rejects.toThrow('POINT_STATE_INVALID')
+    await service('official_sandbox_connect', payload)
+    await db.query('delete from auth.sessions where id=$1', [actor.sessionId])
+    await expect(service('official_sandbox_connect', payload)).rejects.toThrow()
+  })
+
+  it('rejects official sandbox enrollment for business with live history and for employees', async () => {
+    const { actor } = await setup()
+    await expect(point(actor, { command: 'connect_sandbox', operationId: randomUUID() })).rejects.toThrow('POINT_STATE_INVALID')
+    const employee = await newActor()
+    await db.query("update app_private.employees set role='cashier' where id=$1", [employee.employeeId])
+    await db.query("update app_private.business_memberships set role='cashier' where business_id=$1 and user_id=$2", [employee.businessId, employee.userId])
+    await expect(point(employee, { command: 'connect_sandbox', operationId: randomUUID() })).rejects.toThrow('DEVICE_LINK_REQUIRED')
+    await expect(db.query("select app_private.point_command($1,$2,$3::jsonb)", [employee.businessId, employee.employeeId, JSON.stringify({ command: 'connect_sandbox', operationId: randomUUID() })])).rejects.toThrow('PERMISSION_DENIED')
+  })
+
+  it('authorizes simulation only for own official sandbox checkout, never writes a payment result', async () => {
+    const { actor, checkout } = await setup(1001, 'sandbox', true)
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await db.query("update app_private.point_attempts set remote_order_id='ORD-SANDBOX' where id=$1", [started.attemptId])
+    expect(await point(actor, { command: 'simulate', checkoutId: checkout.id, status: 'processed' })).toMatchObject({ backendDirective: { remoteOrderId: 'ORD-SANDBOX' } })
+    expect((await db.query<{ n: number }>('select count(*)::int n from app_private.sales where business_id=$1', [actor.businessId])).rows[0].n).toBe(0)
+    await expect(point(actor, { command: 'simulate', checkoutId: checkout.id, status: 'refunded' })).rejects.toThrow('VALIDATION_ERROR')
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    const other = await newActor()
+    await expect(point(other, { command: 'simulate', checkoutId: checkout.id, status: 'processed' })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
+    const live = await setup()
+    await expect(point(live.actor, { command: 'simulate', checkoutId: live.checkout.id, status: 'processed' })).rejects.toThrow('POINT_STATE_INVALID')
+  })
+
   it('keeps feature disabled, private tables protected, service grants bounded and admins empty', async () => {
     const actor = await newActor()
     expect(await point<PointSettings>(actor, { command: 'settings' })).toMatchObject({ enabled: false, connection: null, permissions: { admin: false } })
@@ -367,10 +405,11 @@ async function point<T = unknown>(actor: Actor, command: Record<string, unknown>
 async function service<T = unknown>(action: string, payload: Record<string, unknown>): Promise<T> {
   return (await db.query<{ result: T }>('select public.point_service($1,$2::jsonb) result', [action, JSON.stringify(payload)])).rows[0].result
 }
-async function setup(price = 1001, environment = 'live') {
+async function setup(price = 1001, environment = 'live', official = false) {
   const actor = await newActor(); await pos(actor, { command: 'activate_operations', operationId: randomUUID() }); await pos(actor, { command: 'open_shift', operationId: randomUUID(), openingCents: 0 })
-  const connection = await service<{ id: string }>('connection_save', { businessId: actor.businessId, environment, receiverId: randomUUID(), tokensCiphertext: 'encrypted-synthetic-tokens', expiresAt: new Date(Date.now() + 60_000).toISOString() })
-  const terminalId = `SYNTHETIC-${randomUUID()}`
+  if (official) await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId: randomUUID(), tokensCiphertext: 'synthetic-test-token', expiresAt: '2099-01-01T00:00:00Z' })
+  const connection = official ? (await point<PointSettings>(actor, { command: 'settings' })).connection! : await service<{ id: string }>('connection_save', { businessId: actor.businessId, environment, receiverId: randomUUID(), tokensCiphertext: 'encrypted-synthetic-tokens', expiresAt: new Date(Date.now() + 60_000).toISOString() })
+  const terminalId = official ? 'NEWLAND_N950__SBX0000001' : `SYNTHETIC-${randomUUID()}`
   await service('terminal_save', { connectionId: connection.id, terminalId, serial: terminalId, storeId: 'STORE-1', posId: 'POS-1', mode: 'PDV', verified: true, physicallyConfirmed: true })
   await point(actor, { command: 'activate', enabled: true })
   const product = await pos<Product>(actor, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Producto ficticio', category: 'Bebidas', priceCents: price, details: { ...emptyDetails(), taxTreatment: 'vat_16', taxBps: 1600 } })

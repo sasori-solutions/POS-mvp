@@ -142,7 +142,7 @@ export default function HomeScreen({
     const captured = operatorScope;
     void pointRequest(access, {command: 'oauth_callback', ...callback}).then(settings => {
       if (pointScope.current !== captured) return;
-      point.setSettings(settings); setPointNotice('error' in callback ? 'Autorización rechazada. Puedes conectar de nuevo.' : 'Autorización recibida. Verifica credenciales y configuración de la terminal antes de activar.');
+      point.setSettings(settings); setPointNotice('error' in callback ? 'Autorización rechazada. Puedes conectar de nuevo.' : '');
     }).catch(caught => { if (pointScope.current === captured) setPointNotice(caught instanceof Error ? caught.message : 'La autorización venció. Reconecta Mercado Pago.'); });
     return () => { pointScope.current = ''; };
   }, [operatorScope]);
@@ -405,7 +405,7 @@ export default function HomeScreen({
       </button>
     );
   }
-  const title = pointPage === 'setup' ? 'Mercado Pago Point' : pointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
+  const title = pointPage === 'setup' ? 'Vincular una terminal' : pointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
   return (
     <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent && !pointPage} title={title} busy={busy}
       onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin}
@@ -418,9 +418,10 @@ export default function HomeScreen({
         : undefined}>
       {pointPage && <div className="workspace-management">
         {pointNotice && <p role="status" className="mb-4">{pointNotice}</p>}
-        {pointPage === 'setup' ? <PointSetup access={access} controller={point} onBack={() => setPointPage(null)} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
+        {pointPage === 'setup' ? <PointSetup access={access} controller={point} readyToCharge={Boolean(snapshot?.enabled && snapshot.shift?.status === 'open')} onOpenCash={() => { setPointNotice(''); setActive('Caja'); }} onStartSale={() => { setPointNotice(''); setActive('Venta'); }} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
       </div>}
       {managementContent && <div className="workspace-management">{managementContent}</div>}
+      {point.settings?.sandbox?.testBusiness && !pointPage && !managementContent && <p className="mb-4 text-sm text-muted" role="status">Negocio de pruebas · Los cobros con Mercado Pago son simulados.</p>}
       <section
         className="pos-content flex min-w-0 flex-1 flex-col"
         hidden={Boolean(managementContent || pointPage)}

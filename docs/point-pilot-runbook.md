@@ -1,6 +1,23 @@
 # Point: alta, piloto y operación
 
-Esta entrega se implementa sobre `main` 43c0de4. Las credenciales, el ensayo físico y la activación comercial son etapas independientes. El simulador HTTP sirve para verificar el software; no acredita un cobro bancario productivo.
+La publicación requiere las migraciones financieras y Point completas del repositorio. Las credenciales, el ensayo físico y la activación comercial son etapas independientes. El simulador HTTP local sirve para verificar el software; no acredita una conexión al simulador oficial ni un cobro bancario productivo.
+
+## Terminal virtual oficial de Mercado Pago
+
+Este recorrido usa la API oficial y no requiere una terminal física. Es distinto de `npm run dev -- --point-simulator`, que ejecuta nuestro proveedor HTTP local.
+
+1. Crea una aplicación Point de México en [Mercado Pago Developers](https://www.mercadopago.com.mx/developers/es/docs/mp-point/create-application) y activa sus credenciales de prueba. Conserva el Access Token únicamente en los secretos Edge de Supabase como `MP_TEST_ACCESS_TOKEN`; nunca en el navegador, Git, mensajes o variables `VITE_*`.
+2. Configura `MP_ENVIRONMENT=sandbox`, `MP_REDIRECT_URI=https://pos-mexico-mvp.pages.dev/point/callback`, las claves de cifrado `MP_TOKEN_KEYS` / `MP_TOKEN_ACTIVE_KEY`, `POINT_WORKER_SECRET` y `MP_WEBHOOK_SECRET`. Para usar OAuth añade `MP_CLIENT_ID` y `MP_CLIENT_SECRET`; la conexión directa de pruebas usa el Access Token del servidor.
+3. Publica las cuatro funciones y configura el scheduler descrito abajo. Habilita `POINT_CHARGES_ENABLED=true` sólo con las credenciales de prueba verificadas y el worker operativo. No configures `MP_API_BASE_URL` ni `MP_ALLOW_LOCAL_SIMULATOR` en cloud.
+4. Crea un **negocio nuevo dedicado a pruebas**. En **Vincular una terminal → Pruebas**, pulsa **Vincular terminal virtual**. El servidor comprueba la identidad de prueba y vincula `NEWLAND_N950__SBX0000001`. El negocio queda marcado permanentemente como pruebas; no admite una conexión live posterior y no puede contener ventas reales anteriores al alta.
+5. Activa el modo prueba, abre un turno y crea una cuenta. En **Cobrar → Mercado Pago → Enviar a terminal**, espera a que exista la orden del proveedor. Selecciona un resultado en **Simulador de Mercado Pago** y pulsa **Simular resultado**.
+6. El servidor envía el evento oficial a `/v1/orders/{id}/events`. La respuesta 204 sólo acepta la solicitud; la consulta posterior verifica identidad, importe, moneda y estado antes de registrar una venta. El simulador permite aprobación, rechazo, cancelación, expiración y revisión. Las pruebas aparecen únicamente en el negocio dedicado, nunca se convierten en una comisión de cobros live.
+
+Si faltan secretos, el acceso permanece visible pero deshabilitado. Un build aprobado no acredita una prueba oficial: conserva la evidencia de la orden y su resultado una vez configuradas las credenciales. El prefijo `APP_USR` por sí solo no distingue credenciales reales de prueba. La validación falla de forma segura si no puede verificar la identidad de prueba.
+
+El token de prueba del servidor corresponde a un receptor y sólo puede vincularse a un negocio. Conserva ese negocio para las pruebas siguientes. No retires ni sustituyas el token mientras tenga operaciones pendientes: la conexión cifrada debe coincidir con el secreto vigente para seguir conciliando. La activación requiere verificar la respuesta real de `/users/me`; actualmente se exige la etiqueta `test_user` y se rechaza cualquier identidad que no la acredite.
+
+Fuentes: [terminal virtual](https://www.mercadopago.com.mx/developers/es/docs/mp-point/integration-test), [eventos de simulación](https://www.mercadopago.com.mx/developers/es/reference/in-person-payments/point/orders/simulate-order/post).
 
 ## Configuración y publicación por etapas
 
@@ -9,13 +26,13 @@ Esta entrega se implementa sobre `main` 43c0de4. Las credenciales, el ensayo fí
 3. `MP_TOKEN_KEYS` es un mapa de ID de clave a 32 bytes aleatorios en base64url; el ID activo se indica en `MP_TOKEN_ACTIVE_KEY`. Las claves se mantienen en secretos del backend, separados de los ciphertexts PostgreSQL. Para rotar, añadir una clave, cambiar el ID activo y conservar las anteriores hasta que se recifren o reconecten las conexiones que las necesitan. Respaldar claves y datos mediante los controles del proyecto; perder una clave impide recuperar sus pendientes.
 4. Configurar la notificación de tipo **Order** en la aplicación de Mercado Pago con el endpoint específico `point-webhook`. Verificar firma, ACK después de persistencia y reintentos con el simulador antes de habilitar un comercio.
 5. Guardar en Vault `sasori_point_worker_url` y `sasori_point_worker_secret`, que coincida con el secreto Edge. Ejecutar [install-point-scheduler.sql](../scripts/install-point-scheduler.sql). El job usa pg_cron/pg_net del stack existente; no contrata servicios. Confirmar invocaciones HTTP exitosas, renovación de leases y progreso real de cola en `cron.job_run_details` y `net._http_response`. Tener un job registrado no prueba que esté procesando.
-6. Verificar backend compatible y permisos antes de considerar el merge. El merge activa la publicación automática de Pages; este encargo sólo prepara el PR y no autoriza esa publicación.
+6. Verificar backend compatible y permisos antes del merge autorizado. El merge activa la publicación automática de Pages; seguir [DEPLOYMENT.md](../DEPLOYMENT.md) y comprobar el deployment y sus assets públicos.
 
 El interruptor del entorno y el del negocio deben permitir nuevos cobros. Desactivarlos conserva webhooks, consultas, conciliación y recuperación de los intentos existentes.
 
 ## Alta del dueño
 
-1. Entrar con la identidad del dueño y desbloquear su negocio. Abrir Mercado Pago en Más y autorizar la cuenta del comercio. Un state aleatorio vincula negocio, usuario y sesión; expira y se consume una sola vez. Si se rechaza o vence, iniciar una autorización nueva.
+1. Entrar con la identidad del dueño y desbloquear su negocio. Abrir **Vincular una terminal**, elegir **Cobros reales** y autorizar la cuenta del comercio. Un state aleatorio vincula negocio, usuario y sesión; expira y se consume una sola vez. Si se rechaza o vence, iniciar una autorización nueva.
 2. Verificar la cuenta receptora. Seleccionar o crear sucursal y caja del proveedor. Los nombres de sucursal/caja local siguen siendo la configuración del local; el vínculo del proveedor queda registrado por separado.
 3. Identificar la terminal por su serial. En la app de Mercado Pago, el dueño debe asociarla a esa sucursal/caja. Una caja en modo PDV admite una sola terminal. Habilitar el modo PDV mediante la capacidad documentada; reiniciar y completar las instrucciones físicas cuando se solicite.
 4. Ejecutar la comprobación de configuración, revisar cuenta, entorno, caja y serial, y activar el negocio. La comprobación no ejecuta un cargo ni demuestra que el equipo esté online.

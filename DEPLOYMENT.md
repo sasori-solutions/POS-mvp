@@ -11,7 +11,7 @@
 
 ## Automatic path
 
-1. Work in an isolated branch/worktree, open a PR and obtain review from the other developer. Run focused checks for changed behavior. **Basic checks** runs `npm run test:smoke` and `npm run build` (including TypeScript). The complete browser/SQL/Edge/integration suites are available in **Full checks (manual)** when needed.
+1. Work in an isolated branch/worktree, open a PR and obtain review from the other developer. Run focused checks for changed behavior. **Basic checks** runs `npm run test:smoke` and `npm run build` (including TypeScript). **Required financial checks** also runs the reusable full workflow for browser, SQL, Edge and integration coverage. Both gates must pass before automatic publication; **Full checks (manual)** remains available for independent investigation.
 2. Publish and verify any required compatible Supabase migrations/functions **before merging**. The currently served frontend must continue to work against that backend. If a change cannot be backward compatible, split it into staged changes before merging. Follow the module's migration checks and destructive-operation requirements; this runbook does not authorize data deletion.
 3. Merge the reviewed PR into `main`. The push starts CI. CI builds once and retains `production-dist` for one day; the reusable deployment workflow downloads that same artifact. No second build or repeated test suite is run on the automatic path.
 4. Deployments share a concurrency group and finish serially. Just before upload, CI compares its commit with remote `main`; obsolete builds are skipped. A skipped run is not evidence that the newer run deployed successfully.

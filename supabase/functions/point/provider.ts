@@ -26,7 +26,7 @@ export function cents(value: unknown): number {
   if (!Number.isSafeInteger(amount) || amount > 999999999) throw new ProviderError('INVALID_RESPONSE')
   return amount
 }
-export interface TokenSet { accessToken: string; refreshToken: string; expiresAt: string; receiverId: string; environment: Environment; scope: string }
+export interface TokenSet { accessToken: string; refreshToken: string; expiresAt: string; receiverId: string; environment: Environment; scope: string; source?: 'server_test' }
 export interface ExpectedOrder { amountCents: number; currency: string; receiverId: string; environment: Environment; externalReference: string; terminalId: string }
 export interface OrderEvidence {
   remoteOrderId: string; paymentId: string; state: PaymentState; status: string; statusDetail: string;
@@ -147,6 +147,7 @@ export class MercadoPagoPoint implements PointAdapter {
       const response = await (this.options.fetch ?? fetch)(this.base + path, { method, redirect: 'error',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(key ? { 'X-Idempotency-Key': identifier(key) } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(this.options.timeoutMs ?? 8000) })
+      if (response.status === 204 && method === 'POST' && /^\/v1\/orders\/[A-Za-z0-9_-]+\/events$/.test(path)) return {}
       if (response.status === 401) throw new ProviderError('REVOKED', response.status)
       if (!response.ok) {
         if (path === '/oauth/token' && response.status === 400) {

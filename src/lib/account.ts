@@ -17,7 +17,7 @@ export const accountErrorMessages: Record<AccountErrorCode, string> = {
   POINT_PERIOD_CLOSED: 'El periodo está cerrado. Los ajustes se registran en el siguiente periodo.',
   POINT_LEASE_LOST: 'La conciliación está en proceso. Revisa el estado actualizado.',
   POINT_OAUTH_INVALID: 'La autorización venció o ya se utilizó. Inicia la conexión nuevamente.',
-  POINT_CONFIGURATION_REQUIRED: 'La integración requiere configuración del backend antes del piloto.',
+  POINT_CONFIGURATION_REQUIRED: 'Falta configurar la aplicación de Mercado Pago para este entorno.',
   POINT_SERVICE_UNAVAILABLE: 'El proveedor no pudo confirmar el resultado. Conserva el intento para revisión.',
   POINT_REFRESH_BUSY: 'Estamos renovando la conexión. Espera y vuelve a consultar.',
   POINT_IDEMPOTENCY_WINDOW_EXPIRED: 'La garantía de recuperación venció. Este intento requiere revisión sin cobrar de nuevo.',

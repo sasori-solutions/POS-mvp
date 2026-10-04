@@ -8,7 +8,7 @@ import { money, saleDate } from "../lib/pos";
 export const paymentLabels = {
   cash: "Efectivo",
   card_external: "Tarjeta externa",
-  card_integrated: "Tarjeta integrada",
+  card_integrated: "Mercado Pago",
   transfer: "Transferencia",
 };
 

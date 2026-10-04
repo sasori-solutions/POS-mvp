@@ -59,9 +59,17 @@ npm ci
 npm run dev -- --point-simulator --port 5177
 ```
 
-Docker Desktop debe estar funcionando con contenedores Linux. En Windows, el runner usa las entradas Node de Supabase y Vite para conservar rutas con espacios sin comandos de shell. Abre `http://127.0.0.1:5177/dev-login`, entra con `owner@pos.local.test` y el PIN inicial `123456`. Desde **Mercado Pago Point**, conecta el proveedor simulado, verifica la conexión, elige **Sucursal de prueba / Caja de prueba**, vincula el serial **SERIAL-1**, prueba la configuración y activa el negocio. El callback conserva el state/PKCE y atraviesa la autorización normal del backend. La comprobación física de una terminal real sigue siendo una etapa separada.
+Docker Desktop debe estar funcionando con contenedores Linux. En Windows, el runner usa las entradas Node de Supabase y Vite para conservar rutas con espacios sin comandos de shell. Abre `http://127.0.0.1:5177/dev-login`, entra con `owner@pos.local.test` y el PIN inicial `123456`. En **Vincular una terminal**:
 
-Activa el módulo operativo y abre un turno para probar una cuenta con **Tarjeta integrada**. El worker local procesa la cola cada tres segundos mientras este runner permanezca abierto. Una recarga o bloqueo del navegador conserva los intentos en PostgreSQL. Los cobros del entorno sandbox no generan comisión SASORI; los estados de cuenta productivos se verifican con la suite SQL financiera.
+1. **Cuenta:** conserva **Pruebas** y pulsa **Conectar Mercado Pago**. La cuenta se verifica al regresar.
+2. **Terminal:** selecciona **Terminal de prueba** (`SERIAL-1`, Sucursal de prueba / Caja de prueba), pulsa **Vincular terminal** y después **Comprobar terminal**.
+3. **Listo:** pulsa **Activar modo prueba**. El acceso siguiente abre Caja si falta un turno, o Venta si ya está abierto.
+
+El callback conserva el state/PKCE y atraviesa la autorización normal del backend. La comprobación física de una terminal real sigue siendo una etapa separada.
+
+Activa el módulo operativo y abre un turno. Añade productos, entra a **Cobrar**, selecciona **Mercado Pago** y pulsa **Enviar a terminal**. Se envía el importe exacto de la reserva, con sus descuentos e IVA; en una cuenta dividida, sólo el de los artículos seleccionados. Esta integración envía el importe, no el detalle de productos, y solicita `no_ticket`. El pago se registra automáticamente cuando el backend verifica su aprobación; **Tarjeta externa** conserva el registro manual.
+
+El worker local procesa la cola cada tres segundos mientras este runner permanezca abierto. Una recarga o bloqueo del navegador conserva los intentos en PostgreSQL. Los cobros del entorno sandbox no generan comisión SASORI; los estados de cuenta productivos se verifican con la suite SQL financiera.
 
 El runner imprime el puerto exclusivo de su proveedor HTTP. Para cambiar el resultado de los siguientes cobros, usa esa URL de simulador, por ejemplo:
 

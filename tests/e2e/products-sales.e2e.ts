@@ -172,7 +172,8 @@ test('lost deletion response retries the same operation and blocks repeated taps
     await page.getByRole('button', { name: 'Eliminar Latte', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: 'Eliminar producto' })
     await dialog.getByRole('button', { name: 'Eliminar producto', exact: true }).click()
-    await expect(dialog.getByRole('button', { name: 'Eliminando…' })).toBeDisabled()
+    await expect(dialog.getByRole('button', { name: /Eliminar producto$/ })).toBeDisabled()
+    await expect(dialog.getByRole('status', { name: 'Eliminando producto', exact: true })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Cancelar' })).toBeDisabled()
     await expect(dialog.getByRole('button', { name: 'Reintentar eliminación' })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Editar Latte', exact: true })).toHaveCount(1)
@@ -224,7 +225,7 @@ test('product actions stay above navigation on phone and tablet', async ({ page 
   } finally { await backend.db.close() }
 })
 
-for (const method of ['Efectivo', 'Tarjeta', 'Transferencia']) test(`sale registers ${method}, quantities, exact total and historical detail`, async ({ page }, info) => {
+for (const method of ['Efectivo', 'Tarjeta externa', 'Transferencia']) test(`sale registers ${method}, quantities, exact total and historical detail`, async ({ page }, info) => {
   const backend = await mockPos(page)
   try {
     await unlock(page)
@@ -235,8 +236,10 @@ for (const method of ['Efectivo', 'Tarjeta', 'Transferencia']) test(`sale regist
     await page.getByRole('button', { name: 'Aumentar Latte' }).click()
     await page.getByRole('button', { name: 'Quitar Croissant' }).click()
     await charge(page, '$116.00')
-    await page.locator('label').filter({has:page.getByRole('radio', {name:method,exact:true})}).click()
-    if (method === 'Tarjeta') await expect(page.getByText('Cobra en tu terminal y registra el pago.')).toBeVisible()
+    const methodLabel = method === 'Tarjeta externa' ? 'Tarjeta externa Registro manual' : method
+    const option = page.locator('label').filter({has:page.getByRole('radio', {name:methodLabel,exact:true})})
+    await option.click()
+    if (method === 'Tarjeta externa') await expect(option.getByText('Registro manual', {exact:true})).toBeVisible()
     if (method === 'Transferencia') await expect(page.getByText(/Verifica que recibiste la transferencia/)).toHaveCount(0)
     await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Venta registrada' })).toBeVisible()
@@ -287,7 +290,8 @@ test('rapid double submission sends one command and blocks editing while saving'
     await unlock(page); await add(page, 'Latte'); await openCart(page)
     await charge(page, '$58.00')
     await page.getByRole('button', { name: 'Registrar pago' }).evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click() })
-    await expect(page.getByRole('button', { name: 'Registrando…' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: /Registrar pago|Reintentar registro/ })).toBeDisabled()
+    await expect(page.getByRole('status', { name: 'Registrando pago', exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Venta registrada' })).toBeVisible()
     expect(backend.calls.filter(command => command.command === 'complete_sale')).toHaveLength(1)
     expect((await backend.sales()).sales).toHaveLength(1)

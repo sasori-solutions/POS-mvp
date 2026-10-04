@@ -37,6 +37,17 @@ describe('Point HTTP trust boundary', () => {
       expect(() => parseAccountRequest({ ...request, ...changed })).toThrow(RequestValidationError)
     }
   })
+  it('accepts scoped official simulation commands but rejects tokens and unsupported state', () => {
+    const connect = { ...owner, command: 'connect_sandbox', operationId: randomUUID() }
+    expect(parseAccountRequest(connect)).toEqual(connect)
+    expect(() => parseAccountRequest({ ...connect, accessToken: 'secret' })).toThrow(RequestValidationError)
+    for (const status of ['processed', 'failed', 'canceled', 'expired', 'action_required']) {
+      const request = { ...owner, command: 'simulate', checkoutId: randomUUID(), status }
+      expect(parseAccountRequest(request)).toEqual(request)
+      expect(() => parseAccountRequest({ ...request, remoteOrderId: 'guessed' })).toThrow(RequestValidationError)
+    }
+    expect(() => parseAccountRequest({ ...owner, command: 'simulate', checkoutId: randomUUID(), status: 'refunded' })).toThrow(RequestValidationError)
+  })
   it('cannot manually declare an integrated payment successful', () => {
     const request = { action: 'pos', businessId: owner.businessId, operatorToken: owner.operatorToken, command: 'record_payment', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: 1, paymentMethod: 'card_integrated', confirmed: true, items: [{ lineId: randomUUID(), quantity: 1 }] }
     expect(() => parseAccountRequest(request)).toThrow(RequestValidationError)

@@ -275,12 +275,12 @@ Deno.serve(async (request: Request) => {
     if (action.action === 'point' || action.action === 'device_point') {
       let result = await processPointResult(admin, action, data.data,
         identityArgs.p_user_id ? { userId: identityArgs.p_user_id, authSessionId: identityArgs.p_auth_session_id } : undefined)
-      if (['oauth_callback','verify_connection','link_terminal','test_terminal'].includes(action.command)) {
+      if (['connect_sandbox','oauth_callback','verify_connection','link_terminal','test_terminal'].includes(action.command)) {
         const refreshed = action.action === 'point'
           ? await admin.rpc('point_execute', { ...identityArgs, p_business_id: action.businessId, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
           : await admin.rpc('point_device', { p_device_token: action.deviceToken, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
         if (refreshed.error || !refreshed.data?.data) return errorResponse('SERVER_ERROR', headers)
-        result = refreshed.data.data
+        result = await processPointResult(admin, { ...action, command: 'settings' }, refreshed.data.data)
       }
       return new Response(JSON.stringify({ data: result }), { status: 200, headers })
     }

@@ -30,6 +30,11 @@ export function parsePointCommand(input: Record<string, unknown>, accessKeys: st
   switch (input.command) {
     case 'settings': case 'recover': case 'verify_connection': case 'resources': case 'disconnect': case 'statements':
       keys([]); return { command: input.command }
+    case 'connect_sandbox': keys(['operationId']); return { command: input.command, operationId: operation() }
+    case 'simulate':
+      keys(['checkoutId', 'status'])
+      if (!['processed', 'failed', 'canceled', 'expired', 'action_required'].includes(String(input.status))) invalid()
+      return { command: input.command, checkoutId: checkout(), status: input.status as 'processed' | 'failed' | 'canceled' | 'expired' | 'action_required' }
     case 'oauth_start':
       keys(['operationId', ...(Object.hasOwn(input,'environment') ? ['environment'] : [])])
       if (Object.hasOwn(input,'environment') && input.environment !== 'live' && input.environment !== 'sandbox') invalid()

@@ -48,6 +48,6 @@ test('overlapping dialogs have unique headings and retain the requested module c
 test.each([1, 2])('payment methods use all available columns without inactive empty slots: %s', count => {
   const methods = count === 1 ? ['cash'] as const : ['cash', 'transfer'] as const
   render(<PaymentMethodPicker methods={[...methods]} value="cash" disabled={false} onChange={vi.fn()} name="payment" />)
-  expect(screen.getByRole('group', { name: 'Método de pago' }).style.gridTemplateColumns).toBe(`repeat(${methods.length}, minmax(0, 1fr))`)
+  expect(screen.getByRole('group', { name: 'Método de pago' }).style.getPropertyValue('--payment-columns')).toBe(String(methods.length))
   expect(screen.getAllByRole('radio')).toHaveLength(methods.length)
 })

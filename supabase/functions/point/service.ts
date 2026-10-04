@@ -2,7 +2,7 @@ import { challenge, digest, randomSecret, TokenVault } from './crypto.ts'
 import { cents, identifier, MercadoPagoPoint, ProviderError, record, verifyOrder } from './provider.ts'
 import type { Environment, ExpectedOrder, PointAdapter, TokenSet } from './provider.ts'
 export interface RpcClient { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> }
-export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string }
+export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string; testAccessToken?: string; localSimulator?: boolean; oauthAvailable?: boolean }
 export class PointServiceError extends Error { constructor(readonly code: string) { super(code) } }
 export async function serviceRpc(admin: RpcClient, action: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   const response = await admin.rpc('point_service', { p_action: action, p_payload: payload })
@@ -18,7 +18,8 @@ export async function serviceRpc(admin: RpcClient, action: string, payload: Reco
 export function configuration(env = (name: string) => Deno.env.get(name)): Configuration {
   const clientId = env('MP_CLIENT_ID'), clientSecret = env('MP_CLIENT_SECRET'), redirectUri = env('MP_REDIRECT_URI')
   const environment = env('MP_ENVIRONMENT')
-  if (!clientId || !clientSecret || !redirectUri || !['sandbox', 'live'].includes(environment ?? '')) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
+  const testAccessToken = env('MP_TEST_ACCESS_TOKEN')
+  if ((!clientId || !clientSecret) && !testAccessToken || !redirectUri || !['sandbox', 'live'].includes(environment ?? '')) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
   const url = new URL(redirectUri)
   const local = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
   if (url.username || url.password || url.hash || url.search || (url.protocol !== 'https:' && !(local && url.protocol === 'http:'))) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
@@ -34,9 +35,9 @@ export function configuration(env = (name: string) => Deno.env.get(name)): Confi
     if (!simulator || environment !== 'sandbox' || authorization.protocol !== 'http:' || !['127.0.0.1','localhost','[::1]'].includes(authorization.hostname)
       || authorization.username || authorization.password || authorization.search || authorization.hash || authorization.pathname !== '/authorization') throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
   }
-  return { adapter: new MercadoPagoPoint({ clientId, clientSecret, redirectUri, baseUrl, allowLocalSimulator: simulator }),
-    vault: new TokenVault(keys, env('MP_TOKEN_ACTIVE_KEY') ?? ''), clientId, redirectUri, environment: environment as Environment,
-    chargesEnabled: env('POINT_CHARGES_ENABLED') === 'true', authorizationUrl }
+  return { adapter: new MercadoPagoPoint({ clientId: clientId ?? '', clientSecret: clientSecret ?? '', redirectUri, baseUrl, allowLocalSimulator: simulator }),
+    vault: new TokenVault(keys, env('MP_TOKEN_ACTIVE_KEY') ?? ''), clientId: clientId ?? '', redirectUri, environment: environment as Environment,
+    chargesEnabled: env('POINT_CHARGES_ENABLED') === 'true', authorizationUrl, testAccessToken, localSimulator: simulator, oauthAvailable: Boolean(clientId && clientSecret) }
 }
 function binding(connection: Record<string, unknown>): string { return `mercadopago:${connection.businessId}:${connection.environment}` }
 type ConnectionToken = TokenSet & { connectionVersion: number }
@@ -48,6 +49,10 @@ export async function connectionToken(admin: RpcClient, config: Configuration, c
   let connection = await serviceRpc(admin, 'connection_get', { connectionId })
   let token = await config.vault.open<TokenSet>(String(connection.tokensCiphertext), binding(connection))
   if (token.receiverId !== connection.receiverId || token.environment !== connection.environment) throw new PointServiceError('POINT_FACT_MISMATCH')
+  if (token.source === 'server_test') {
+    if (config.localSimulator || token.environment !== 'sandbox' || !config.testAccessToken || token.accessToken !== config.testAccessToken) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
+    return versionedToken(token, connection)
+  }
   if (Date.parse(token.expiresAt) > Date.now() + 60000) return versionedToken(token, connection)
   const leaseToken = crypto.randomUUID()
   const claim = await serviceRpc(admin, 'refresh_claim', { connectionId, leaseToken })
@@ -85,12 +90,32 @@ async function terminals(config: Configuration, token: TokenSet, storeId?: strin
 export async function processPointResult(admin: RpcClient, request: Record<string, unknown>, result: unknown,
   identity?: { userId: string; authSessionId: string }, supplied?: Configuration): Promise<unknown> {
   const data = record(result)
-  if (!data.backendDirective) return redacted(data)
+  if (!data.backendDirective) {
+    if (request.command === 'settings') {
+      let available = false, availableEnvironment: Environment | null = null
+      let official = supplied ? !supplied.localSimulator : Deno.env.get('MP_ALLOW_LOCAL_SIMULATOR') !== 'true'
+      try { const configured = supplied ?? configuration(); official = !configured.localSimulator; available = Boolean(configured.testAccessToken && official); availableEnvironment = configured.oauthAvailable ? configured.environment : null } catch { /* Feature remains visible but disabled without server credentials. */ }
+      return redacted({ ...data, availableEnvironment, sandbox: { available, official, testBusiness: record(data.sandbox ?? {}).testBusiness === true } })
+    }
+    return redacted(data)
+  }
   const directive = record(data.backendDirective), config = supplied ?? configuration()
   const command = String(directive.kind ?? request.command)
   const businessId = identifier(directive.businessId ?? request.businessId)
+  if (command === 'connect_sandbox') {
+    if (!identity?.userId || !identity.authSessionId || config.localSimulator || !config.testAccessToken) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
+    const provisional: TokenSet = { accessToken: config.testAccessToken, refreshToken: '', expiresAt: '2099-01-01T00:00:00Z', receiverId: '', environment: 'sandbox', scope: 'read write', source: 'server_test' }
+    const account = await config.adapter.request(provisional, '/users/me')
+    provisional.receiverId = identifier(account.id)
+    // Fail closed if a production credential was accidentally supplied as the test secret.
+    await config.adapter.verifyAccount(provisional)
+    const tokensCiphertext = await config.vault.seal(provisional, `mercadopago:${businessId}:sandbox`)
+    await serviceRpc(admin, 'official_sandbox_connect', { businessId, employeeId: directive.employeeId, operationId: request.operationId, ...identity, operatorToken: request.operatorToken, tokensCiphertext, receiverId: provisional.receiverId, expiresAt: provisional.expiresAt })
+    return { connected: true }
+  }
   if (command === 'oauth_start' || command === 'oauth_callback') {
     if (!identity?.userId || !identity.authSessionId) throw new PointServiceError('PERMISSION_DENIED')
+    if (config.oauthAvailable === false) throw new PointServiceError('POINT_CONFIGURATION_REQUIRED')
     if (request.environment !== undefined && request.environment !== config.environment) throw new PointServiceError('POINT_OAUTH_INVALID')
     if (command === 'oauth_start') {
       const state = randomSecret(), verifier = randomSecret(), stateHash = await digest(state)
@@ -121,6 +146,22 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
     const token = await connectionToken(admin, config, connectionId)
     connectionVersion = token.connectionVersion
     await config.adapter.verifyAccount(token)
+    if (command === 'simulate') {
+      if (config.localSimulator || token.source !== 'server_test' || token.environment !== 'sandbox' || !['processed', 'failed', 'canceled', 'expired', 'action_required'].includes(String(request.status))) throw new PointServiceError('POINT_STATE_INVALID')
+      if (!identity?.userId || !identity.authSessionId) throw new PointServiceError('PERMISSION_DENIED')
+      const remoteOrderId = identifier(directive.remoteOrderId)
+      const before = await config.adapter.order(token, remoteOrderId)
+      if (identifier(before.id) !== remoteOrderId || identifier(before.user_id) !== token.receiverId || record(record(before.config).point).terminal_id !== 'NEWLAND_N950__SBX0000001' || before.live_mode === true || !['created', 'at_terminal', 'action_required'].includes(String(before.status))) throw new PointServiceError('POINT_STATE_INVALID')
+      const authorization = await serviceRpc(admin, 'official_sandbox_authorize', { businessId, ...identity, operatorToken: request.operatorToken, checkoutId: request.checkoutId, status: request.status })
+      const fresh = record(authorization.backendDirective)
+      if (fresh.connectionId !== connectionId || fresh.remoteOrderId !== remoteOrderId) throw new PointServiceError('POINT_STATE_INVALID')
+      const status = String(request.status)
+      await config.adapter.request(token, `/v1/orders/${remoteOrderId}/events`, 'POST', { status, ...(['processed', 'failed'].includes(status) ? { payment_method_type: 'credit_card', installments: 1, payment_method_id: 'visa', status_detail: status === 'processed' ? 'accredited' : 'insufficient_amount' } : {}) })
+      // Accepted is not a payment result. Existing worker/webhook GET reconciliation owns all money writes.
+      return { accepted: true }
+    }
+    if (token.source === 'server_test' && command === 'resources') return { branches: [{ id: 'sandbox', name: 'Pruebas' }], registers: [{ id: 'sandbox', branchId: 'sandbox', name: 'Terminal virtual' }], terminals: [{ id: 'NEWLAND_N950__SBX0000001', serial: 'SBX0000001', branchId: 'sandbox', registerId: 'sandbox', mode: 'PDV', branchName: 'Pruebas', registerName: 'Terminal virtual' }] }
+    if (token.source === 'server_test' && ['link_terminal', 'test_terminal', 'create_branch', 'create_register'].includes(command)) throw new PointServiceError('POINT_STATE_INVALID')
     if (command === 'verify_connection') {
       await serviceRpc(admin, 'connection_verified', { connectionId })
       return redacted({ ...data, verified: true, terminalReady: false })
@@ -128,9 +169,15 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
     if (command === 'resources') {
       const stores = await config.adapter.request(token, `/users/${identifier(token.receiverId)}/stores/search?limit=50&offset=0`)
       const points = await config.adapter.request(token, '/pos?limit=50&offset=0')
-      const branches = Array.isArray(stores.results) ? stores.results.map(item => { const s = record(item); return { id: identifier(s.id), name: String(s.name ?? '') } }) : []
-      const registers = Array.isArray(points.results) ? points.results.map(item => { const p = record(item); if (p.user_id !== undefined && identifier(p.user_id) !== token.receiverId) throw new ProviderError('INVALID_RESPONSE'); return { id: identifier(p.id), branchId: identifier(p.store_id), name: String(p.name ?? '') } }) : []
-      return { branches, registers, terminals: await terminals(config, token) }
+      if (!Array.isArray(stores.results) || !Array.isArray(points.results)) throw new ProviderError('INVALID_RESPONSE')
+      const branches = stores.results.map(item => { const s = record(item); if (s.user_id !== undefined && identifier(s.user_id) !== token.receiverId) throw new ProviderError('INVALID_RESPONSE'); return { id: identifier(s.id), name: String(s.name ?? '') } })
+      const registers = points.results.map(item => { const p = record(item); if (p.user_id !== undefined && identifier(p.user_id) !== token.receiverId) throw new ProviderError('INVALID_RESPONSE'); return { id: identifier(p.id), branchId: identifier(p.store_id), name: String(p.name ?? '') } })
+      const availableTerminals = (await terminals(config, token)).map(terminal => ({
+        ...terminal,
+        branchName: branches.find(branch => branch.id === terminal.branchId)?.name ?? '',
+        registerName: registers.find(register => register.id === terminal.registerId)?.name ?? '',
+      }))
+      return { branches, registers, terminals: availableTerminals }
     }
     if (command === 'create_branch') {
       const raw = await config.adapter.request(token, `/users/${identifier(token.receiverId)}/stores`, 'POST',

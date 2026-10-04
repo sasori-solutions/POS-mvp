@@ -1,11 +1,17 @@
 import type { CheckoutAttempt } from './operations-contracts.ts'
 import type { Sale } from './pos-contracts.ts'
 
+export type PointSimulationStatus = 'processed' | 'failed' | 'canceled' | 'expired' | 'action_required'
 export type PointEnvironment = 'live' | 'sandbox'
 export interface PointStoreLocation { street_number: string; street_name: string; city_name: string; state_name: string; latitude: number; longitude: number; reference?: string }
 export type PointPaymentState = 'prepared' | 'pending' | 'sent_to_terminal' | 'processing' | 'approved_verified' | 'rejected' | 'cancelled' | 'expired' | 'unknown_review' | 'partially_refunded' | 'refunded'
 export interface PointConnection { id: string; status: 'connected' | 'revoked' | 'reconnect_required'; environment: PointEnvironment; receiverId: string; verifiedAt: string | null }
 export interface PointTerminal { id: string; serial: string; branchId: string; registerId: string; branchName: string; registerName: string; mode: string; verified: boolean; active: boolean; physicalStepsPending: boolean }
+/** Provider discovery is distinct from a saved, verified terminal in this business. */
+export interface PointAvailableTerminal {
+  id: string; serial: string; branchId: string; registerId: string; mode: string
+  branchName?: string; registerName?: string
+}
 export interface PointRefundRequest {
   id: string; operationId: string; status: 'pending' | 'unknown_review' | 'confirmed' | 'rejected'
   amountCents: number; merchandiseCents: number; tipCents: number; reason: string; remoteRefundId: string | null; firstSentAt: string | null
@@ -16,6 +22,8 @@ export interface PointCheckout {
   cancelCapability: 'backend' | 'terminal' | 'unavailable'; updatedAt: string; statusDetail: string | null; remoteOrderId: string | null
 }
 export interface PointSettings {
+  availableEnvironment?: PointEnvironment | null
+  sandbox?: { available: boolean; official: boolean; testBusiness: boolean }
   actorId: string; enabled: boolean; connection: PointConnection | null; terminals: PointTerminal[]; pending: PointCheckout[]
   permissions: { manage: boolean; charge: boolean; refund: boolean; reports: boolean; admin: boolean }
   commission: { rateBps: number; vatBps: number; version: string }; asOf: string
@@ -44,6 +52,8 @@ export interface PointAdminReport extends PointReport {
 }
 export type PointCommand =
   | { command: 'settings' | 'recover' | 'verify_connection' | 'resources' | 'disconnect' }
+  | { command: 'connect_sandbox'; operationId: string }
+  | { command: 'simulate'; checkoutId: string; status: PointSimulationStatus }
   | { command: 'oauth_start'; operationId: string; environment?: PointEnvironment }
   | { command: 'oauth_callback'; code: string; state: string; error?: never }
   | { command: 'oauth_callback'; error: 'access_denied'; state: string; code?: never }
@@ -65,9 +75,10 @@ export type PointCommand =
   | { command: 'mark_statement_invoiced'; operationId: string; statementId: string; evidence: string }
   | { command: 'record_commission_payment'; operationId: string; statementId: string; amountCents: number; paidAt: string; evidence: string }
 export interface PointResponses {
+  connect_sandbox: PointSettings; simulate: { accepted: true }
   settings: PointSettings; recover: { checkouts: PointCheckout[] }; oauth_start: { authorizationUrl: string; expiresAt: string }; oauth_callback: PointSettings
   create_branch: { id: string; name: string }; create_register: { id: string; branchId: string; name: string }
-  verify_connection: PointSettings; resources: { branches: { id: string; name: string }[]; registers: { id: string; branchId: string; name: string }[]; terminals: PointTerminal[] }
+  verify_connection: PointSettings; resources: { branches: { id: string; name: string }[]; registers: { id: string; branchId: string; name: string }[]; terminals: PointAvailableTerminal[] }
   link_terminal: PointSettings; test_terminal: PointSettings; activate: PointSettings; disconnect: PointSettings
   prepare: PointCheckout; start: PointCheckout; status: PointCheckout; cancel: PointCheckout; incident: PointCheckout; refund: PointCheckout; refund_context: PointCheckout
   merchant_report: PointReport; admin_report: PointAdminReport; statements: { statements: CommissionStatement[] }

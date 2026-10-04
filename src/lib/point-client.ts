@@ -24,9 +24,9 @@ export async function pointRequest<C extends PointCommand['command']>(access: Po
 }
 
 export const pointStateLabels: Record<PointPaymentState, string> = {
-  prepared: 'Listo para iniciar', pending: 'Pago pendiente', sent_to_terminal: 'Enviado a la terminal', processing: 'Procesando pago',
-  approved_verified: 'Pago aprobado y verificado', rejected: 'Pago rechazado', cancelled: 'Pago cancelado', expired: 'Pago expirado',
-  unknown_review: 'Resultado pendiente de revisión', partially_refunded: 'Devolución parcial confirmada', refunded: 'Devolución total confirmada',
+  prepared: 'Listo para enviar', pending: 'Esperando la terminal', sent_to_terminal: 'Esperando el pago', processing: 'Procesando pago',
+  approved_verified: 'Pago aprobado', rejected: 'Pago rechazado', cancelled: 'Pago cancelado', expired: 'Pago expirado',
+  unknown_review: 'Pago por confirmar', partially_refunded: 'Devolución parcial confirmada', refunded: 'Devolución total confirmada',
 }
 export const pointResolved = (state: PointPaymentState) => ['approved_verified', 'rejected', 'cancelled', 'expired', 'partially_refunded', 'refunded'].includes(state)
 export const pointFailed = (state: PointPaymentState) => ['rejected', 'cancelled', 'expired'].includes(state)

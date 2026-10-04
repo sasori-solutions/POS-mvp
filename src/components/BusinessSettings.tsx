@@ -29,7 +29,7 @@ const timezones = [
 const paymentOptions: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Efectivo" },
   { value: "card_external", label: "Tarjeta externa" },
-  { value: "card_integrated", label: "Tarjeta integrada (Mercado Pago Point)" },
+  { value: "card_integrated", label: "Mercado Pago" },
   { value: "transfer", label: "Transferencia" },
 ];
 const emptyProfile: BusinessProfile = {
@@ -378,9 +378,9 @@ export default function BusinessSettings({
               </label>
             ))}
             <p className="field-help text-sm text-muted">
-              Tarjeta externa: registro manual. Mercado Pago Point: cobro desde el POS.
+              Mercado Pago envía el cobro a la terminal. Tarjeta externa lo registra manualmente.
             </p>
-            <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Configurar Mercado Pago Point</button>
+            <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Vincular una terminal</button>
           </fieldset>
           <div className="management-actions mt-1 flex flex-wrap gap-3 max-compact:flex-col">
             <button
