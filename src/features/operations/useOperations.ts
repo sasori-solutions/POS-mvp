@@ -19,51 +19,102 @@ export function readOperation(key: string): Mutation | null {
   return command as Mutation
 }
 
+type MutationState = {
+  scope: string
+  pending: Mutation | null
+  busy: boolean
+  error: string
+  notice: string
+  lastResult: { command: Mutation['command']; result: unknown } | null
+}
+const mutationState = (scope: string): MutationState => ({ scope, pending: null, busy: false, error: '', notice: '', lastResult: null })
+const uncertainErrorCodes = new Set(['NETWORK_ERROR', 'SERVER_ERROR', 'OPERATION_CONFLICT', ...accessErrorCodes])
+
 export function useOperationalMutation(access: PosAccess, employeeId: string, onSessionError?: (error: AccountClientError) => void) {
   const key = `pos-operations:${access.businessId}:${employeeId}`
-  const [pending, setPending] = useState<Mutation | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const [lastResult, setLastResult] = useState<{ command: Mutation['command']; result: unknown } | null>(null)
-  const alive = useRef(true)
-  const submitting = useRef(false)
+  const scope = JSON.stringify([key, access.operatorToken, access.deviceToken ?? null])
+  const [state, setState] = useState<MutationState>(() => mutationState(scope))
+  const generation = useRef(0)
+  const alive = useRef(false)
+  const currentScope = useRef(scope); currentScope.current = scope
+  const submitting = useRef<{ scope: string; generation: number } | null>(null)
+  const errorHandler = useRef(onSessionError); errorHandler.current = onSessionError
+  const visible = state.scope === scope ? state : mutationState(scope)
+  const isCurrent = (run: { scope: string; generation: number }) => alive.current && currentScope.current === run.scope && generation.current === run.generation
   useEffect(() => {
     alive.current = true
-    try { setPending(readOperation(key)) } catch { setError('No pudimos leer el reintento guardado. Conserva este dispositivo y pide ayuda.') }
-    const stored = (event: StorageEvent) => { if (event.key === key && !submitting.current) { try { setPending(readOperation(key)) } catch { setError('No pudimos leer el reintento guardado.') } } }
+    const run = { scope, generation: ++generation.current }
+    const initial = mutationState(scope)
+    try { initial.pending = readOperation(key) } catch { initial.error = 'No pudimos leer el reintento guardado. Conserva este dispositivo y pide ayuda.' }
+    setState(initial)
+    const stored = (event: StorageEvent) => {
+      if (event.key !== key || !isCurrent(run) || submitting.current?.generation === run.generation) return
+      try {
+        const pending = readOperation(key)
+        setState(previous => previous.scope === scope ? { ...previous, pending } : previous)
+      } catch { setState(previous => previous.scope === scope ? { ...previous, error: 'No pudimos leer el reintento guardado.' } : previous) }
+    }
     window.addEventListener('storage', stored)
-    return () => { alive.current = false; window.removeEventListener('storage', stored) }
-  }, [key])
-  async function execute<C extends Mutation['command']>(command: Extract<Mutation, { command: C }>): Promise<OperationsResponses[C]> {
-    if (submitting.current) throw new Error('Espera a que termine la solicitud actual.')
-    submitting.current = true; setBusy(true); setError(''); setNotice('')
+    return () => { alive.current = false; generation.current++; window.removeEventListener('storage', stored) }
+  }, [key, scope])
+  async function execute<C extends Mutation['command']>(input: Extract<Mutation, { command: C }>): Promise<OperationsResponses[C]> {
+    // Capture the exact JSON payload before a queued browser lock or caller edit can change it.
+    const command = JSON.parse(JSON.stringify(input)) as Extract<Mutation, { command: C }>
+    const run = { scope, generation: generation.current }
+    const active = () => isCurrent(run)
+    const assertCurrent = () => { if (!active()) throw new Error('La sesión cambió. Reabre la cuenta para revisar la solicitud guardada.') }
+    const update = (patch: Partial<MutationState>) => { if (active()) setState(previous => previous.scope === scope ? { ...previous, ...patch } : previous) }
+    assertCurrent()
+    if (submitting.current?.scope === run.scope && submitting.current.generation === run.generation) throw new Error('Espera a que termine la solicitud actual.')
+    submitting.current = run
+    update({ busy: true, error: '', notice: '' })
     try {
       if (!navigator.onLine) throw new AccountClientError('NETWORK_ERROR', 'Sin conexión. Vuelve a conectar antes de continuar.')
       if (!navigator.locks) throw new Error('Abre el POS en un navegador actualizado para proteger los reintentos entre pestañas.')
       await navigator.locks.request(key, () => {
+        assertCurrent()
         const stored = readOperation(key)
         if (stored && JSON.stringify(stored) !== JSON.stringify(command)) throw new Error('Resuelve el reintento pendiente antes de iniciar otra acción.')
         localStorage.setItem(key, JSON.stringify(command))
       })
-      if (alive.current) setPending(command)
+      assertCurrent()
+      update({ pending: command })
       const result = await posRequest(access, command)
-      await navigator.locks.request(key, () => { if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key) })
-      if (alive.current) { setPending(null); setNotice(''); setLastResult({ command: command.command, result }) }
+      // A closed scope cannot deliver money results or remove the recovery record it can no longer show.
+      assertCurrent()
+      const pending = await navigator.locks.request(key, () => {
+        assertCurrent()
+        if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key)
+        return readOperation(key)
+      })
+      assertCurrent()
+      update({ pending, notice: '', lastResult: { command: command.command, result } })
       return result as OperationsResponses[C]
     } catch (caught) {
-      if (alive.current) {
-        setError(caught instanceof Error ? caught.message : 'No pudimos confirmar la solicitud.')
-        if (caught instanceof AccountClientError && !['NETWORK_ERROR', 'SERVER_ERROR', 'OPERATION_CONFLICT'].includes(caught.code)) {
-          // A definite server refusal has no effects. Uncertain responses keep the exact request.
-          try { await navigator.locks?.request(key, () => { if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key) }); setPending(readOperation(key)) } catch { /* Preserve recovery on storage failure. */ }
+      if (active()) {
+        update({ error: caught instanceof Error ? caught.message : 'No pudimos confirmar la solicitud.' })
+        if (caught instanceof AccountClientError && !uncertainErrorCodes.has(caught.code)) {
+          // Only a current transactional refusal proves no effects. Auth is checked before replay,
+          // so an expired/revoked session must retain the original uncertain payment UUID.
+          try {
+            const pending = await navigator.locks?.request(key, () => {
+              assertCurrent()
+              if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key)
+              return readOperation(key)
+            })
+            assertCurrent()
+            if (pending !== undefined) update({ pending })
+          } catch { /* Preserve recovery on storage failure or scope change. */ }
         }
-        if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) onSessionError?.(caught)
+        if (active() && caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) errorHandler.current?.(caught)
       }
       throw caught
-    } finally { submitting.current = false; if (alive.current) setBusy(false) }
+    } finally {
+      if (submitting.current === run) submitting.current = null
+      update({ busy: false })
+    }
   }
-  return { execute, pending, busy, error, notice, lastResult, clearNotice: () => setNotice('') }
+  return { execute, pending: visible.pending, busy: visible.busy, error: visible.error, notice: visible.notice, lastResult: visible.lastResult, clearNotice: () => setState(previous => previous.scope === scope ? { ...previous, notice: '' } : previous) }
 }
 export type OperationalMutation = ReturnType<typeof useOperationalMutation>
 

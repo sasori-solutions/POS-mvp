@@ -1,3 +1,7 @@
+## Financial integrity
+
+`npm run test:integrity` runs the exact money kernel, payload/retry tests, checkout components and financial PostgreSQL invariants without a browser. `npm run test:integrity:integration` exercises real loopback Auth/Edge/Postgres, including separate-session races; start this checkout with `npm run dev` first. A skipped integration suite is not evidence of a working backend. No database reset is required. See [contract, findings and current evidence](../docs/financial-integrity-2026-10-03.md).
+
 ## Lean POS MVP — current candidate, 2 October 2026
 
 Codex for the current human implementation request. The complete candidate through migration 0023 passed **44/44 unit**, **53/53 PostgreSQL migration/transaction**, **24/24 component** and **23/23 Deno** cases, lint, the production build and both Edge source/standalone typechecks. These totals belong to this source candidate, not the older dated releases below.

@@ -84,8 +84,8 @@ export default function SaleAccountPanel({ open, onClose, canClose, returnFocus,
     {open && canClose && <button type="button" aria-label="Cerrar venta actual" onClick={event => { event.stopPropagation(); onClose() }}
       className="fixed inset-0 z-35 cursor-default border-0 bg-transparent tablet:hidden" />}
     <aside ref={panel} id="current-sale-account" aria-label="Venta actual" data-open={open}
-    className="current-sale sticky top-6 flex h-[calc(100dvh-240px)] min-w-0 flex-col border-l border-line pt-3 pl-8 max-desktop:pl-6 [@media(min-width:47.5rem)_and_(max-height:759px)]:h-auto max-tablet:fixed max-tablet:top-auto max-tablet:right-0 max-tablet:bottom-[calc(76px+env(safe-area-inset-bottom))] max-tablet:left-0 max-tablet:z-40 max-tablet:h-auto max-tablet:max-h-[min(60dvh,calc(100dvh-220px-env(safe-area-inset-bottom)))] max-tablet:rounded-t-2xl max-tablet:border max-tablet:bg-white max-tablet:px-4 max-tablet:pt-2 max-tablet:pb-4 max-tablet:shadow-[0_-8px_28px_rgba(0,0,0,0.10)]"
-    onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={event => endDrag(event)} onPointerCancel={event => endDrag(event, true)}
+    className="current-sale sale-account sticky top-6 flex h-[calc(100dvh-240px)] min-w-0 flex-col border-l border-line pt-3 pl-8 max-desktop:pl-6 [@media(min-width:47.5rem)_and_(max-height:759px)]:h-auto max-tablet:fixed max-tablet:top-auto max-tablet:right-0 max-tablet:bottom-[calc(76px+env(safe-area-inset-bottom))] max-tablet:left-0 max-tablet:z-40 max-tablet:h-auto max-tablet:max-h-[min(60dvh,calc(100dvh-220px-env(safe-area-inset-bottom)))] max-tablet:rounded-t-2xl max-tablet:border max-tablet:bg-white max-tablet:px-4 max-tablet:pt-2 max-tablet:pb-4 max-tablet:shadow-[0_-8px_28px_rgba(0,0,0,0.10)]"
+    onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={event => endDrag(event)} onPointerCancel={event => endDrag(event, true)} onLostPointerCapture={event => endDrag(event, true)}
     onKeyDown={event => { if (event.key === 'Escape' && canClose && motion.current) { event.stopPropagation(); onClose() } }}>
     {children}
   </aside>

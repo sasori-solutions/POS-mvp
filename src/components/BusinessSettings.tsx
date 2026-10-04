@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
 import type {
   BusinessContext,
@@ -43,7 +43,6 @@ export default function BusinessSettings({
   business,
   operatorToken,
   onSaved,
-  onBack,
   onSessionError,
 }: BusinessSettingsProps) {
   const [name, setName] = useState(business.name);
@@ -164,16 +163,7 @@ export default function BusinessSettings({
       JSON.stringify({ ...emptyProfile, ...business.profile });
 
   return (
-    <div className="management-shell w-full max-w-160 pb-16 max-compact:pb-10">
-      <button
-        type="button"
-        className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-        disabled={busy}
-        onClick={onBack}
-      >
-        <ArrowLeft size={18} aria-hidden="true" />
-        Volver
-      </button>
+    <div className="management-shell management-polish settings-polish">
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1>Datos del negocio</h1>
       </div>
@@ -256,9 +246,7 @@ export default function BusinessSettings({
                 ))}
               </select>
             </div>
-            <p className="field-help text-sm text-muted">
-              Moneda: peso mexicano (MXN).
-            </p>
+            <span className="access-info-label">MXN · Peso mexicano</span>
           </fieldset>
           <fieldset className="settings-group">
             <legend>Sucursal y caja</legend>
@@ -383,8 +371,7 @@ export default function BusinessSettings({
               </label>
             ))}
             <p className="field-help text-sm text-muted">
-              Selecciona las formas de pago que aceptas. La tarjeta se cobra en
-              tu terminal. Esta selección no conecta la terminal a la app.
+              La tarjeta se cobra en tu terminal externa.
             </p>
           </fieldset>
           <div className="management-actions mt-1 flex flex-wrap gap-3 max-compact:flex-col">
@@ -393,7 +380,7 @@ export default function BusinessSettings({
               disabled={busy || !dirty}
               aria-busy={busy}
             >
-              {busy ? "Guardando…" : "Guardar cambios"}
+              <AccessButtonContent busy={busy}>Guardar cambios</AccessButtonContent>
             </button>
           </div>
         </form>

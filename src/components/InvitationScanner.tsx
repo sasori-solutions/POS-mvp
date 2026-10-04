@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Camera } from 'lucide-react'
 import { invitationFromLink } from '../lib/business-access'
+import { Skeleton } from './LoadingPlaceholder'
 
 export default function InvitationScanner({ onInvitation, disabled = false }: {
   onInvitation: (link: string) => void; disabled?: boolean;
@@ -99,8 +100,11 @@ export default function InvitationScanner({ onInvitation, disabled = false }: {
       {open && <section aria-label="Escanear invitación" className="flex flex-col gap-3" onKeyDown={event => {
         if (event.key === 'Escape') { event.preventDefault(); close() }
       }}>
-        <video ref={video} muted playsInline aria-label="Vista de la cámara" className="aspect-square w-full rounded-lg bg-ink object-cover" />
-        {!error && <p role="status" className="text-sm">{ready ? 'Apunta al QR de la invitación.' : 'Esperando acceso a la cámara…'}</p>}
+        <div className="access-camera-preview">
+          <video ref={video} muted playsInline aria-label="Vista de la cámara" className="aspect-square w-full rounded-lg bg-ink object-cover" />
+          {!ready && !error && <div className="access-camera-loading" role="status" aria-label="Abriendo cámara"><Skeleton height="100%" /></div>}
+        </div>
+        {!error && ready && <p role="status" className="text-sm">Apunta al QR.</p>}
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
         <button ref={cancel} className="button secondary" type="button" onClick={close}>Cancelar escaneo</button>
       </section>}

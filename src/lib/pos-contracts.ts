@@ -61,6 +61,7 @@ export interface SaleItem {
   quantity: number
   unitPriceCents: number
   totalCents: number
+  discountCents?: number
   selectionLabel?: string
   taxCents?: number
   taxBps?: number | null

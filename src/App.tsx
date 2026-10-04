@@ -45,6 +45,9 @@ const InvitationScanner = lazy(() => import("./components/InvitationScanner"));
 import type { Destination } from "./components/HomeScreen";
 const HomeScreen = lazy(() => import("./components/HomeScreen"));
 import PinField from "./components/PinField";
+import LoadingPlaceholder, { Skeleton } from "./components/LoadingPlaceholder";
+import { AccessButtonContent } from "./components/AccessBusy";
+import "./access-polish.css";
 import RequestPinRecovery from "./components/RequestPinRecovery";
 const TeamPanel = lazy(() => import("./components/TeamPanel"));
 const BusinessSettings = lazy(() => import("./components/BusinessSettings"));
@@ -53,18 +56,24 @@ const NotificationsPanel = lazy(
 );
 const DeviceLogin = lazy(() => import("./components/DeviceLogin"));
 const PinUnlockScreen = lazy(() => import("./components/PinUnlockScreen"));
-function LoadingScreen() {
+function LoadingScreen({ dark = false }: { dark?: boolean }) {
   return (
     <section
-      className="loading-screen"
+      className={`loading-screen access-loading${dark ? " access-loading-dark" : ""}`}
       role="status"
+      aria-label="Preparando acceso"
+      aria-busy="true"
     >
-      <span className="loader" aria-hidden="true" />
-      <p>Preparando tu acceso…</p>
+      <div className={dark ? "ui-placeholder-dark access-loading-content" : "access-loading-content"}>
+        <Skeleton width="42%" height={18} />
+        <Skeleton width="68%" height={30} />
+        <div className="access-loading-dots">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} width={12} height={12} />)}</div>
+        <div className="access-loading-keypad">{Array.from({ length: 12 }, (_, index) => <Skeleton key={index} width={44} height={44} />)}</div>
+      </div>
     </section>
   );
 }
-const loadingView = <LoadingScreen />;
+const loadingView = <LoadingScreen dark />;
 const DevelopmentLogin =
   import.meta.env.DEV && developmentLoginEnabled
     ? lazy(() => import("./development/DevelopmentLogin"))
@@ -1281,24 +1290,8 @@ function AccountApp() {
     ? identityName.trim()
     : session?.user.email ?? 'Mi cuenta';
   const managementContent = screen === 'change-pin' && operator ? (
-    <section className="screen flex flex-col max-compact:flex-1">
-      <button
-        type="button"
-        className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-        disabled={busy}
-        onClick={() => {
-          setCurrentPin("");
-          setPin("");
-          setConfirmation("");
-          setError("");
-          navigate("home");
-        }}
-      >
-        <ArrowLeft size={18} aria-hidden="true" />
-        Volver
-      </button>
-      <h1>Cambiar mi PIN</h1>
-      <p>Verifica tu PIN actual y elige el nuevo.</p>
+    <section className="screen management-polish access-pin-change">
+      <h1 className="sr-only">Cambiar mi PIN</h1>
       <form onSubmit={(event) => void saveChangedPin(event)}>
         <div className="field">
           <label htmlFor="current-pin">PIN actual</label>
@@ -1351,8 +1344,9 @@ function AccountApp() {
           <button
             className="button primary"
             disabled={busy || secondsLeft > 0}
+            aria-busy={busy}
           >
-            Guardar nuevo PIN
+            <AccessButtonContent busy={busy}>Guardar nuevo PIN</AccessButtonContent>
           </button>
         </div>
       </form>
@@ -1375,7 +1369,7 @@ function AccountApp() {
 
   if (intent.device || screen === "employee")
     return (
-      <Suspense fallback={loadingView}>
+      <Suspense fallback={<LoadingScreen />}>
         <DeviceLogin onExit={() => window.location.assign("/login")} />
       </Suspense>
     );
@@ -1447,13 +1441,13 @@ function AccountApp() {
                   ? "loading-main flex w-full flex-1"
                   : screen === "unlock"
                     ? "pin-unlock-main flex w-full flex-1"
-                    : "auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10"
+                    : `auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10${screen === "business" ? " access-auth-wide" : ""}`
         }
       >
-        <Suspense fallback={loadingView}>
+        <Suspense fallback={screen === "unlock" || screen === "loading" ? loadingView : <LoadingPlaceholder variant={isManagement ? "list" : "form"} rows={3} label="Cargando módulo" />}>
           {!supabase ? (
-            <section className="screen flex flex-col max-compact:flex-1">
-              <div className="screen-icon mb-8 grid size-16 place-items-center rounded-2xl border border-line max-compact:mb-7">
+            <section className="access-flow screen">
+              <div className="access-symbol">
                 <Store aria-hidden="true" />
               </div>
               <h1>La app está en preparación</h1>
@@ -1465,27 +1459,23 @@ function AccountApp() {
           ) : screen === "loading" ? (
             loadingView
           ) : screen === "login" ? (
-            <section className="screen flex flex-col max-compact:flex-1 login-screen [&_h1]:text-[40px] [&_h1]:leading-[1.12] [&_h1]:tracking-tight [&>p]:mt-5 [&>p]:max-w-90 max-compact:[&_h1]:text-4xl">
-              <div className="screen-icon mb-8 grid size-16 place-items-center rounded-2xl border border-line max-compact:mb-7">
+            <section className="access-flow screen login-screen">
+              <div className="access-symbol">
                 <Store size={28} strokeWidth={1.5} aria-hidden="true" />
               </div>
               <h1>
                 {invitationCode ? (
                   "Acepta tu invitación"
                 ) : (
-                  <>
-                    Tu negocio,
-                    <br />
-                    en orden.
-                  </>
+                  "Inicia sesión"
                 )}
               </h1>
               <p>
                 {developmentLoginEnabled
-                  ? "Usa una cuenta de prueba para trabajar con datos locales, sin Google."
+                  ? "Trabaja con una cuenta de prueba y datos locales."
                   : invitationCode
-                    ? "Entra con tu cuenta de Google. Usarás un PIN personal para acceder al negocio."
-                    : "Entra con Google para crear tu negocio o continuar donde lo dejaste."}
+                    ? "Continúa con Google y elige tu PIN personal."
+                    : "Continúa con Google para entrar a tu negocio."}
               </p>
               {error && (
                 <p
@@ -1507,8 +1497,7 @@ function AccountApp() {
                     disabled={busy}
                     aria-busy={busy}
                   >
-                    <GoogleMark />
-                    <span>Continuar con Google</span>
+                      <AccessButtonContent busy={busy}><GoogleMark /><span>Continuar con Google</span></AccessButtonContent>
                   </button>
                 )}
                 {!invitationCode && (
@@ -1520,9 +1509,6 @@ function AccountApp() {
                     >
                       Entrar como empleado
                     </button>
-                    <p className="action-note text-center text-sm">
-                      Usa tu invitación o tu cuenta de empleado.
-                    </p>
                     <button
                       className="text-button min-h-12 cursor-pointer border-0 bg-transparent text-ink underline underline-offset-4 hover:text-brand"
                       disabled={busy}
@@ -1535,7 +1521,7 @@ function AccountApp() {
               </div>
             </section>
           ) : screen === "employee-entry" ? (
-            <section className="screen flex flex-col max-compact:flex-1">
+            <section className="access-flow screen">
               <button
                 className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
                 onClick={() => {
@@ -1549,8 +1535,8 @@ function AccountApp() {
               <h1>Acceso de empleado</h1>
               <p>
                 {developmentLoginEnabled
-                  ? "Usa la cuenta local de empleado para aceptar una invitación y elegir tu PIN."
-                  : "Entra con tu cuenta de Google y elige un negocio."}
+                  ? "Usa tu cuenta de prueba o una invitación."
+                  : "Continúa con tu cuenta de Google."}
               </p>
               {error && (
                 <p
@@ -1568,10 +1554,10 @@ function AccountApp() {
                 <button
                   className="button primary google-button"
                   disabled={busy}
+                  aria-busy={busy}
                   onClick={() => void googleLogin()}
                 >
-                  <GoogleMark />
-                  <span>Continuar con Google</span>
+                  <AccessButtonContent busy={busy}><GoogleMark /><span>Continuar con Google</span></AccessButtonContent>
                 </button>
               )}
               <form
@@ -1580,8 +1566,7 @@ function AccountApp() {
                   useInvitationLink();
                 }}
               >
-                <h2>Unirme como empleado</h2>
-                <p>Escanea el QR o pega el enlace de invitación.</p>
+                <h2>Tengo una invitación</h2>
                 <InvitationScanner
                   onInvitation={useInvitationLink}
                   disabled={busy}
@@ -1615,9 +1600,8 @@ function AccountApp() {
               </button>
             </section>
           ) : screen === "choice" ? (
-            <section className="screen flex flex-col max-compact:flex-1">
-              <h1>¿Qué quieres hacer?</h1>
-              <p>Crea tu negocio o entra con una invitación.</p>
+            <section className="access-flow screen">
+              <h1>Tu negocio</h1>
               {error && (
                 <p
                   className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
@@ -1628,14 +1612,14 @@ function AccountApp() {
               )}
               <div className="screen-actions mt-10 flex flex-col gap-3">
                 <button
-                  className="button primary"
+                  className="button primary access-choice-button"
                   onClick={() => {
                     setError("");
                     setDraft(initialDraft);
                     navigate("business");
                   }}
                 >
-                  Crear mi negocio
+                  <Store size={20} aria-hidden="true" />Crear mi negocio
                   <ArrowRight size={20} />
                 </button>
                 <button
@@ -1650,7 +1634,7 @@ function AccountApp() {
               </div>
             </section>
           ) : screen === "join" ? (
-            <section className="screen flex flex-col max-compact:flex-1">
+            <section className="access-flow screen">
               <button
                 className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
                 disabled={busy}
@@ -1665,14 +1649,14 @@ function AccountApp() {
               </button>
               <h1>Unirme a un negocio</h1>
               <p>
-                {invitationConflict
+                {joinLoading ? <Skeleton width="75%" height={18} /> : invitationConflict
                   ? "Tu invitación sigue disponible. Puedes continuar con otra cuenta de Google."
                   : joinDetails
                     ? `Invitación para ${joinDetails.employee.name} en ${joinDetails.business.name}.`
                     : "Escanea el QR o pega el enlace de invitación."}
               </p>
               <form onSubmit={(event) => void joinBusiness(event)}>
-                {!joinDetails && !invitationConflict && (
+                {!joinDetails && !invitationConflict && !joinLoading && (
                   <>
                     <InvitationScanner
                       onInvitation={useInvitationLink}
@@ -1703,12 +1687,11 @@ function AccountApp() {
                     </div>
                   </>
                 )}
-                {joinLoading && <p role="status">Revisando invitación…</p>}
+                {joinLoading && <LoadingPlaceholder variant="form" rows={2} label="Revisando invitación" />}
                 {joinDetails && (
                   <>
                     <p>
-                      Vincularemos tu cuenta a este navegador. Para cambiar de
-                      dispositivo necesitarás autorización del dueño.
+                      Este será tu dispositivo de acceso. El dueño debe autorizar cualquier cambio.
                     </p>
                     <div className="field">
                       <label htmlFor="join-device-name">
@@ -1725,7 +1708,7 @@ function AccountApp() {
                     </div>
                     <p id="pin-help" className="field-help text-sm text-muted">
                       {joinDetails.employee.pinReady
-                        ? "Verifica el PIN que ya usas en la caja. Conservarás el mismo."
+                        ? "Usa el PIN que ya tienes en la caja."
                         : "Elige tu PIN personal de seis dígitos."}
                     </p>
                     <PinField
@@ -1769,8 +1752,9 @@ function AccountApp() {
                     <button
                       className="button primary"
                       disabled={busy || !joinDetails}
+                      aria-busy={busy}
                     >
-                      Unirme
+                      <AccessButtonContent busy={busy}>Unirme</AccessButtonContent>
                     </button>
                   )}
                 </div>
@@ -1793,10 +1777,8 @@ function AccountApp() {
               onSessionError={showFailure}
             />
           ) : screen === "business" ? (
-            <section className="screen flex flex-col max-compact:flex-1">
-              <p className="step-label mb-3 text-sm text-muted">Tu negocio</p>
-              <h1>Vamos a empezar</h1>
-              <p>Cuéntanos lo esencial.</p>
+            <section className="access-flow screen access-business-screen">
+              <h1>Crea tu negocio</h1>
               <form onSubmit={nextBusiness}>
                 <div className="field">
                   <label htmlFor="business-name">Nombre del negocio</label>
@@ -1862,7 +1844,7 @@ function AccountApp() {
                   {(
                     [
                       ["cash", "Efectivo"],
-                      ["card_external", "Tarjeta en terminal externa"],
+                      ["card_external", "Tarjeta en terminal"],
                       ["transfer", "Transferencia"],
                     ] as const
                   ).map(([method, label]) => (
@@ -1920,7 +1902,7 @@ function AccountApp() {
               onLogout={() => void logout()}
             />
           ) : createPin ? (
-            <section className="screen flex flex-col max-compact:flex-1">
+            <section className="access-flow screen">
               <button
                 className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
                 onClick={back}
@@ -1929,7 +1911,7 @@ function AccountApp() {
                 <ArrowLeft size={20} aria-hidden="true" />
                 Volver
               </button>
-              <div className="screen-icon small mb-6 grid size-12 place-items-center rounded-xl border border-line">
+              <div className="access-symbol">
                 <LockKeyhole size={24} strokeWidth={1.5} aria-hidden="true" />
               </div>
               <h1>Crea tu PIN</h1>
@@ -1959,16 +1941,14 @@ function AccountApp() {
                 )}
                 <div className="screen-actions mt-10 flex flex-col gap-3">
                   <button className="button primary" type="submit" disabled={busy || secondsLeft > 0} aria-busy={busy}>
-                    Crear PIN
-                    <ArrowRight size={20} aria-hidden="true" />
+                    <AccessButtonContent busy={busy}>Crear PIN<ArrowRight size={20} aria-hidden="true" /></AccessButtonContent>
                   </button>
                 </div>
               </form>
             </section>
           ) : screen === "choose" ? (
-            <section className="screen flex flex-col max-compact:flex-1">
+            <section className="access-flow screen">
               <h1>Tus negocios</h1>
-              <p>Elige dónde quieres entrar.</p>
               {error && (
                 <p
                   className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
@@ -2048,47 +2028,15 @@ function AccountApp() {
               </button>
             </section>
           ) : isReady && operator ? (
-            <section className="ready-screen max-w-130 [&_h1]:text-4xl [&_h1+p]:mt-4 [&_h1+p]:max-w-105 max-compact:flex max-compact:max-w-none max-compact:flex-1 max-compact:flex-col max-compact:[&_h1]:text-3xl">
-              <div className="ready-mark mb-8 grid size-14 place-items-center rounded-full bg-success-soft text-success">
+            <section className="access-flow ready-screen">
+              <div className="ready-mark access-symbol">
                 <Check size={28} strokeWidth={2} aria-hidden="true" />
               </div>
               <p className="business-name mb-3 font-medium text-ink">
                 {operator.business.name}
               </p>
               <h1>Cuenta creada</h1>
-              <p>
-                Tu acceso está listo. Puedes configurar el negocio y añadir a tu
-                equipo desde el inicio.
-              </p>
-              <dl className="business-details my-10 border-t border-line max-compact:my-8">
-                <div>
-                  <dt>Tipo de negocio</dt>
-                  <dd>
-                    {
-                      {
-                        cafe: "Cafetería",
-                        restaurant: "Restaurante",
-                        other: "Otro",
-                      }[operator.business.businessType]
-                    }
-                  </dd>
-                </div>
-                <div>
-                  <dt>Zona horaria</dt>
-                  <dd>
-                    {timezones.find(
-                      ([value]) => value === operator.business.timezone,
-                    )?.[1] ?? operator.business.timezone}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Sucursal / caja</dt>
-                  <dd>
-                    {operator.business.profile?.branchName} /{" "}
-                    {operator.business.profile?.registerName}
-                  </dd>
-                </div>
-              </dl>
+              <p>Tu negocio y tu acceso quedaron guardados.</p>
               {error && (
                 <p
                   className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
@@ -2103,7 +2051,7 @@ function AccountApp() {
                   onClick={() => navigate("home")}
                   disabled={busy}
                 >
-                  Ir al inicio
+                  Abrir Dashboard
                   <ArrowRight size={20} aria-hidden="true" />
                 </button>
                 <button
@@ -2111,8 +2059,7 @@ function AccountApp() {
                   onClick={() => void lock()}
                   disabled={busy}
                 >
-                  <LockKeyhole size={20} aria-hidden="true" />
-                  {busy ? "Un momento…" : "Bloquear"}
+                  <AccessButtonContent busy={busy}><LockKeyhole size={20} aria-hidden="true" />Bloquear</AccessButtonContent>
                 </button>
               </div>
             </section>
@@ -2150,7 +2097,7 @@ function AccountApp() {
               unreadCount={unreadCount}
             />
           ) : (
-            <section className="screen flex flex-col max-compact:flex-1">
+            <section className="access-flow screen">
               <h1>No pudimos cargar tu negocio</h1>
               {error && (
                 <p
@@ -2172,11 +2119,6 @@ function AccountApp() {
           )}
         </Suspense>
       </main>
-      {!isWorkspace && screen !== "unlock" && screen !== "loading" && (
-        <footer className="app-footer px-6 pt-4 pb-[calc(20px+env(safe-area-inset-bottom))] text-center text-xs text-muted">
-          POS México
-        </footer>
-      )}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, deviceRequest } from "../lib/account";
 import type {
   EmployeePinSetupDetails,
@@ -141,7 +142,7 @@ export default function EmployeePinSetup({
   }
 
   return (
-    <section className="screen flex flex-col max-compact:flex-1 employee-screen flex flex-1 flex-col [&_.screen-actions]:mt-8 [&>.error-message]:mt-5">
+    <section className="access-flow screen employee-screen">
       <button
         type="button"
         className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
@@ -150,11 +151,11 @@ export default function EmployeePinSetup({
         <ArrowLeft size={18} aria-hidden="true" />
         Volver
       </button>
-      <h1>{details ? "Elige tu PIN" : "Crear o restablecer mi PIN"}</h1>
+      <h1>{details ? "Elige tu PIN" : "Configura tu PIN"}</h1>
       <p>
         {details
           ? `${details.employee.name}, para ${details.business.name}.`
-          : "Pide al dueño un código de autorización. Tú eliges tu PIN; el dueño no lo necesita."}
+          : "Usa el código de autorización del dueño."}
       </p>
       <form onSubmit={(event) => void submit(event)}>
         {!details ? (
@@ -227,7 +228,7 @@ export default function EmployeePinSetup({
             disabled={busy}
             aria-busy={busy}
           >
-            {busy ? "Un momento…" : details ? "Guardar mi PIN" : "Continuar"}
+            <AccessButtonContent busy={busy}>{details ? "Guardar mi PIN" : "Continuar"}</AccessButtonContent>
           </button>
         </div>
       </form>

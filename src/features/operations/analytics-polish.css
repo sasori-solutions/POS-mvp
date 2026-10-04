@@ -1,0 +1,262 @@
+/* Analytics inherits the workspace tokens; chart colors identify payment methods. */
+.analytics-dashboard {
+  gap: 20px;
+  color: var(--color-ink);
+  padding-bottom: 8px;
+}
+.analytics-dashboard .analytics-body,
+.analytics-dashboard .analytics-skeleton {
+  gap: 20px;
+}
+.analytics-dashboard .analytics-card {
+  container-type: inline-size;
+  padding: 16px;
+  border-color: var(--color-line);
+  border-radius: 14px;
+  background: white;
+}
+.analytics-dashboard .analytics-card-heading {
+  min-height: 48px;
+  margin-bottom: 16px;
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+.analytics-dashboard .analytics-card-heading > div:first-child { gap: 8px; }
+.analytics-dashboard .analytics-card h2 {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+.analytics-dashboard.analytics-home .analytics-card-heading { flex-wrap: nowrap; }
+.analytics-dashboard .analytics-card-link {
+  flex: 0 0 48px;
+  margin: 0;
+  color: var(--color-muted);
+}
+.analytics-dashboard .analytics-card-link:active { background: var(--color-surface); }
+.analytics-card-count {
+  flex-shrink: 0;
+  display: inline-grid;
+  min-width: 28px;
+  height: 28px;
+  padding-inline: 8px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.analytics-dashboard .analytics-home-sales-summary {
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 28px;
+}
+.analytics-dashboard .analytics-home-sales-summary strong {
+  font-size: clamp(30px, 5cqi, 42px);
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+}
+.analytics-sales-count {
+  flex-shrink: 0;
+  color: var(--color-muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.analytics-dashboard .analytics-home-sales-chart {
+  margin: 0;
+  padding-top: 4px;
+}
+.analytics-dashboard .analytics-columns,
+.analytics-dashboard .analytics-home-columns {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 20px;
+}
+.analytics-dashboard .analytics-presence-list { gap: 0; }
+.analytics-dashboard .analytics-presence-list li {
+  min-height: 76px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.analytics-dashboard .analytics-presence-list li + li { border-top: 1px solid var(--color-line); }
+.analytics-dashboard .analytics-presence-avatar {
+  width: 44px;
+  height: 44px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.analytics-dashboard .analytics-presence-person { gap: 4px; }
+.analytics-dashboard .analytics-presence-person strong {
+  color: var(--color-ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.analytics-dashboard .analytics-presence-person small {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.2;
+}
+.analytics-dashboard .analytics-presence-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 9px;
+  background: var(--color-success-soft);
+  color: var(--color-success);
+  font-size: 12px;
+  font-weight: 500;
+}
+.analytics-presence-status i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.analytics-dashboard .analytics-presence-status.is-stale { color: var(--color-muted); background: var(--color-surface); }
+.analytics-presence-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; margin-bottom: 8px; font-size: 13px; color: var(--color-muted); }
+.analytics-presence-error p { margin: 0; }
+.analytics-presence-error button { flex-shrink: 0; min-height: 48px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--color-ink); font-weight: 500; }
+.analytics-presence-error button:hover { background: var(--color-surface); }
+.analytics-dashboard .analytics-daily-products { gap: 18px; padding: 4px 0 8px; }
+.analytics-dashboard .analytics-daily-products li { gap: 8px; }
+.analytics-dashboard .analytics-daily-product-label {
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  line-height: 1.3;
+}
+.analytics-dashboard .analytics-daily-product-label > span { color: var(--color-ink); }
+.analytics-dashboard .analytics-daily-product-label strong {
+  color: var(--color-ink);
+  font-size: 15px;
+}
+.analytics-daily-product-label strong small {
+  margin-left: 2px;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.analytics-dashboard .analytics-daily-product-track {
+  height: 28px;
+  border-radius: 7px;
+  background: var(--color-surface);
+}
+.analytics-dashboard .analytics-daily-product-track > span {
+  min-width: 0;
+  background: var(--color-ink);
+  transform-origin: left;
+  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.analytics-dashboard .analytics-toolbar { gap: 12px; }
+.analytics-dashboard .analytics-periods { border-radius: 10px; background: var(--color-surface); }
+.analytics-dashboard .analytics-periods button { min-width: 80px; padding-inline: 16px; }
+.analytics-dashboard .analytics-periods button[aria-pressed=true] { box-shadow: none; }
+.analytics-dashboard .analytics-context { margin-top: -8px; color: var(--color-muted); }
+.analytics-dashboard .analytics-date input {
+  border-color: var(--color-line);
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+.analytics-status-loading i {
+  display: block;
+  width: 20px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-line);
+  animation: analytics-pending 1s ease-in-out infinite alternate;
+}
+.analytics-status-loading::before { display: none; }
+.analytics-dashboard .analytics-tabs { gap: 24px; border-color: var(--color-line); }
+.analytics-dashboard .analytics-tabs button { font-size: 14px; }
+.analytics-dashboard .analytics-kpis-four { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.analytics-dashboard .analytics-kpi {
+  min-height: 152px;
+  padding: 12px 16px 16px;
+  border-color: var(--color-line);
+  border-radius: 14px;
+}
+.analytics-dashboard .analytics-kpi-label { min-height: 40px; color: var(--color-muted); }
+.analytics-dashboard .analytics-kpi-number { margin-top: 4px; }
+.analytics-dashboard .analytics-kpi-number strong {
+  font-size: clamp(22px, 3.4cqi, 34px);
+  letter-spacing: -0.03em;
+}
+.analytics-dashboard .analytics-delta { margin-top: 10px; color: var(--color-muted); }
+.analytics-dashboard .analytics-trend-caption { margin-bottom: 12px; }
+.analytics-dashboard .analytics-help summary { color: var(--color-muted); }
+.analytics-dashboard .analytics-metric-switch {
+  flex-shrink: 0;
+  border: 0;
+  background: var(--color-surface);
+  border-radius: 10px;
+}
+.analytics-dashboard .analytics-metric-switch button { min-height: 48px; padding-inline: 12px; }
+.analytics-dashboard .analytics-metric-switch button[aria-pressed=true] { background: white; }
+.analytics-dashboard .analytics-empty { padding-block: 16px; margin: 0; }
+.analytics-dashboard .analytics-error { border-color: transparent; background: var(--color-warning-soft); }
+.analytics-dashboard .analytics-desktop-table { display: none; }
+.analytics-dashboard .analytics-mobile-table { display: block; }
+.analytics-dashboard .analytics-table { font-size: 13px; }
+.analytics-dashboard .analytics-table th { font-weight: 500; }
+.analytics-dashboard .analytics-table thead th { font-size: 12px; font-weight: 400; }
+.analytics-dashboard .analytics-table td { color: var(--color-ink); }
+.analytics-dashboard .analytics-payment-values { gap: 16px; }
+.analytics-dashboard .analytics-payment-values > div { padding-top: 14px; border-top: 1px solid var(--color-line); }
+.analytics-dashboard .analytics-financial-values { gap: 16px; }
+.analytics-dashboard .analytics-financial-values strong { font-size: 17px; }
+.analytics-dashboard .analytics-single-number strong { letter-spacing: -0.03em; }
+.analytics-dashboard .analytics-chart-data { margin-top: 12px; }
+.analytics-dashboard .analytics-chart-data summary { width: fit-content; }
+.analytics-chart-loading { display: grid; align-items: stretch; }
+.analytics-chart-loading .ui-placeholder-chart { gap: 12px; padding: 0; border: 0; border-radius: 0; }
+.analytics-chart-loading .ui-placeholder-chart > .ui-skeleton:not(:last-child) { display: none; }
+.analytics-chart-loading .ui-placeholder-chart > .ui-skeleton:last-child { height: 100% !important; min-height: 200px; }
+.analytics-home-sales-placeholder { display: grid; gap: 24px; }
+.analytics-home-skeleton .analytics-card > .ui-skeleton { margin-bottom: 16px; }
+.analytics-home-presence .ui-placeholder-row { min-height: 76px; padding-block: 12px; }
+.analytics-home-presence .ui-placeholder-avatar { width: 44px; height: 44px; }
+@container (min-width: 640px) {
+  .analytics-dashboard .analytics-toolbar { flex-direction: row; }
+  .analytics-dashboard .analytics-card { padding: 20px 24px; }
+  .analytics-dashboard .analytics-columns,
+  .analytics-dashboard .analytics-home-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analytics-dashboard .analytics-desktop-table { display: block; }
+  .analytics-dashboard .analytics-mobile-table { display: none; }
+}
+@container (min-width: 800px) {
+  .analytics-dashboard .analytics-kpis-four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .analytics-dashboard .analytics-financial-values { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
+@container (max-width: 440px) {
+  .analytics-dashboard .analytics-card-heading { flex-wrap: wrap; }
+  .analytics-dashboard .analytics-home-sales-summary { gap: 12px; margin-bottom: 24px; }
+  .analytics-dashboard .analytics-presence-list li { gap: 10px; }
+  .analytics-dashboard .analytics-presence-status { padding-inline: 7px; }
+  .analytics-dashboard .analytics-metric-switch { width: 100%; }
+  .analytics-dashboard .analytics-periods button { min-width: 0; }
+  .analytics-sales-count { font-size: 13px; }
+  .analytics-dashboard .analytics-kpis-four { gap: 12px; }
+  .analytics-dashboard .analytics-kpi { padding-inline: 12px; }
+  .analytics-dashboard .analytics-kpi-number strong { font-size: 22px; }
+}
+@keyframes analytics-pending { from { opacity: 0.4; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .analytics-status-loading i { animation: none; }
+  .analytics-dashboard .analytics-daily-product-track > span { transition: none; }
+}

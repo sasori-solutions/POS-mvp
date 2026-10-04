@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { supabase } from "../lib/supabase";
+import { AccessButtonContent } from "../components/AccessBusy";
 
 // Synthetic credentials for the isolated local stack, never imported by a production build.
 export default function DevelopmentLogin() {
@@ -37,15 +38,13 @@ export default function DevelopmentLogin() {
         className="auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10"
         data-pos-development-login
       >
-        <section className="screen flex flex-col max-compact:flex-1">
-          <h1>Acceso de desarrollo</h1>
+        <section className="access-flow screen development-access">
+          <h1>Entorno de desarrollo</h1>
           <p>
-            Datos ficticios en Supabase local. No necesitas una cuenta de
-            Google.
+            Cuentas de prueba · datos locales.
           </p>
           <p>
-            El dueño inicial usa el PIN <strong>123456</strong>. Las cuentas
-            nueva y de empleado empiezan sin negocio.
+            PIN inicial del dueño: <strong>123456</strong>
           </p>
           <form onSubmit={(event) => void login(event)}>
             <div className="field">
@@ -88,7 +87,7 @@ export default function DevelopmentLogin() {
               </p>
             )}
             <button className="button primary" disabled={busy} aria-busy={busy}>
-              {busy ? "Entrando…" : "Entrar en desarrollo"}
+              <AccessButtonContent busy={busy}>Entrar en desarrollo</AccessButtonContent>
             </button>
           </form>
           <a

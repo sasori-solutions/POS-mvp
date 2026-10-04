@@ -1,4 +1,5 @@
 import { emptyDetails } from '../../src/lib/product-details'
+import { assertFinancialResponse } from '../../src/lib/financial-response'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
@@ -279,7 +280,11 @@ async function cashierFor(operator: Operator) {
 }
 async function save(operator: Operator) { return data(await pos<Product>(operator, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Café sintético', category: 'Café', priceCents: 1001 })) }
 function sale(product: Product, quantity = 1, paymentMethod: Sale['paymentMethod'] = 'card_external'): Extract<PosCommand, { command: 'complete_sale' }> { return { command: 'complete_sale', operationId: randomUUID(), items: [{ productId: product.id, quantity, unitPriceCents: product.priceCents, version: product.version }], totalCents: product.priceCents * quantity, paymentMethod } }
-function pos<T = unknown>(operator: Operator, command: PosCommand, identity = owner) { return call<T>(identity, { action: 'pos', ...args(operator), ...command }) }
+async function pos<T = unknown>(operator: Operator, command: PosCommand, identity = owner) {
+  const reply = await call<T>(identity, { action: 'pos', ...args(operator), ...command })
+  if (reply.status === 200) assertFinancialResponse(command, reply.body.data)
+  return reply
+}
 async function call<T = unknown>(identity: Identity | null, request: Record<string, unknown>, sign = true): Promise<Reply<T>> {
   const response = await fetch(`${config!.url}/functions/v1/account`, { method: 'POST', headers: { 'content-type': 'application/json', apikey: config!.anonKey, ...(identity ? { authorization: `Bearer ${identity.token}` } : {}) }, body: JSON.stringify(sign ? await signedRequest(identity?.userId, request) : request) })
   return { status: response.status, body: await response.json() }

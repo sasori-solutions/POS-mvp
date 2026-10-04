@@ -74,7 +74,7 @@ try {
   await owner.getByRole('button', { name: /^Agregar Café del smoke,/ }).click()
   await owner.getByRole('button', { name: 'Cobrar $12.34' }).click()
   const registration = response(owner, 'pos')
-  await owner.getByRole('button', { name: 'Confirmar venta', exact: true }).click()
+  await owner.getByRole('button', { name: 'Registrar pago', exact: true }).click()
   const sale = (await (await registration).json()).data
   assert.equal(sale.totalCents, 1234)
   await expect(owner.getByRole('heading', { name: 'Venta registrada' })).toBeVisible()

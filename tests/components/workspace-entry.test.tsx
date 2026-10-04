@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import HomeScreen from '../../src/components/HomeScreen'
 import { useCatalog } from '../../src/components/useCatalog'
@@ -7,10 +7,12 @@ import { useOperations } from '../../src/features/operations/useOperations'
 import ReportDashboard from '../../src/features/operations/ReportDashboard'
 import { useReportController } from '../../src/features/operations/usePeriodReport'
 import type { ReportController } from '../../src/features/operations/usePeriodReport'
-import type { BusinessContext } from '../../src/lib/contracts'
+import type { AccountContext, BusinessContext } from '../../src/lib/contracts'
+import { accountRequest } from '../../src/lib/account'
 
 vi.mock('gsap', () => ({ gsap: { registerPlugin: vi.fn(), fromTo: vi.fn() } }))
 vi.mock('@gsap/react', () => ({ useGSAP: vi.fn() }))
+vi.mock('../../src/lib/account', async original => ({ ...await original<object>(), accountRequest: vi.fn() }))
 
 vi.mock('../../src/components/useCatalog', () => ({ accessErrorCodes: [], useCatalog: vi.fn(() => ({ products: [], paymentMethods: ['cash'] })) }))
 vi.mock('../../src/features/operations/useOperations', () => ({
@@ -27,12 +29,13 @@ const props = { business: owner, operatorToken: 'memory-only', busy: false, erro
 const originalDialogClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'close')
 const controller = { report: null, date: '2026-10-03', period: 'week', requestedQuery: { date: '2026-10-03', period: 'week' }, displayedQuery: null, loading: false, initialLoading: false, error: '', stale: false, setDate: vi.fn(), setPeriod: vi.fn(), refresh: vi.fn(async () => {}), retry: vi.fn(async () => {}) } satisfies ReportController
 beforeEach(() => {
+  vi.mocked(accountRequest).mockReset().mockResolvedValue({ business: { ...owner, connectedEmployees: [] }, expiresAt: '2026-10-04T00:00:00Z' })
   vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: query.includes('64rem') || query.includes('reduced-motion'), media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
   Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: vi.fn() })
   vi.mocked(useReportController).mockReturnValue(controller)
 })
 afterEach(() => {
-  cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals()
+  cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()
   if (originalDialogClose) Object.defineProperty(HTMLDialogElement.prototype, 'close', originalDialogClose)
   else Reflect.deleteProperty(HTMLDialogElement.prototype, 'close')
 })
@@ -42,7 +45,7 @@ test('owner enters Inicio without loading the catalog or operational snapshots, 
   expect(screen.getByRole('heading', { name: 'Inicio' })).toBeTruthy()
   expect(vi.mocked(useCatalog).mock.lastCall?.[1]).toBe(false)
   expect(vi.mocked(useOperations).mock.lastCall?.[1]).toBe(false)
-  expect(vi.mocked(useReportController).mock.lastCall?.[3]).toBe(true)
+  expect(vi.mocked(useReportController).mock.calls.slice(-2).map(call => call[3])).toEqual([true, false])
   expect(vi.mocked(useReportController).mock.lastCall?.[4]).toBe(true)
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Navegación del dueño' })).getByRole('button', { name: 'Ventas' }))
   expect(vi.mocked(useOperations).mock.lastCall?.[1]).toBe(true)
@@ -109,4 +112,63 @@ test('owner management content suspends analytics while keeping the controller m
   expect(vi.mocked(useReportController).mock.lastCall?.[3]).toBe(false)
   expect(vi.mocked(useReportController).mock.lastCall?.[4]).toBe(true)
   expect(screen.queryByText('Resumen real autorizado')).toBeNull()
+})
+
+function deferredContext() {
+  let resolve!: (context: AccountContext) => void
+  let reject!: (reason: Error) => void
+  const promise = new Promise<AccountContext>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+const connected = (id: string): NonNullable<BusinessContext['connectedEmployees']> => [{ id, name: `Persona ${id}`, role: 'cashier', lastSeenAt: '2026-10-03T18:00:00Z' }]
+const context = (id: string): AccountContext => ({ business: { ...owner, connectedEmployees: connected(id) }, expiresAt: '2026-10-04T00:00:00Z' })
+const lastHome = () => vi.mocked(ReportDashboard).mock.lastCall?.[0]
+
+test('fresh connected employees replace the entry context and focus requests are coalesced', async () => {
+  const first = deferredContext(), second = deferredContext()
+  vi.mocked(accountRequest).mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+  render(<HomeScreen {...props} business={{ ...owner, connectedEmployees: connected('previous') }} />)
+  expect(lastHome()?.presence?.[0].id).toBe('previous')
+  await act(async () => first.resolve(context('current')))
+  expect(lastHome()?.presence?.[0].id).toBe('current')
+  fireEvent(window, new Event('focus'))
+  fireEvent(window, new Event('online'))
+  expect(accountRequest).toHaveBeenCalledTimes(2)
+  await act(async () => second.resolve(context('latest')))
+  expect(lastHome()?.presence?.[0].id).toBe('latest')
+})
+
+test('presence errors keep the last valid people and stay marked stale until retry succeeds', async () => {
+  const failure = deferredContext(), retry = deferredContext()
+  vi.mocked(accountRequest).mockReturnValueOnce(failure.promise).mockReturnValueOnce(retry.promise)
+  render(<HomeScreen {...props} business={{ ...owner, connectedEmployees: connected('previous') }} />)
+  await act(async () => failure.reject(new Error('Sin conexión')))
+  expect(lastHome()?.presence?.[0].id).toBe('previous')
+  expect(lastHome()?.presenceError).toBe('No pudimos actualizar los empleados.')
+  act(() => lastHome()?.onPresenceRetry?.())
+  expect(lastHome()?.presenceError).toBe('No pudimos actualizar los empleados.')
+  await act(async () => retry.resolve(context('current')))
+  expect(lastHome()?.presence?.[0].id).toBe('current')
+  expect(lastHome()?.presenceError).toBe('')
+})
+
+test('connected employees update every thirty seconds while Inicio is visible', async () => {
+  vi.useFakeTimers()
+  vi.mocked(accountRequest).mockResolvedValueOnce(context('first')).mockResolvedValueOnce(context('second'))
+  render(<HomeScreen {...props} />)
+  await act(async () => {})
+  expect(lastHome()?.presence?.[0].id).toBe('first')
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+  expect(lastHome()?.presence?.[0].id).toBe('second')
+  expect(accountRequest).toHaveBeenCalledTimes(2)
+})
+
+test('a late presence response from an earlier operator cannot overwrite the new session', async () => {
+  const old = deferredContext(), current = deferredContext()
+  vi.mocked(accountRequest).mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise)
+  const view = render(<HomeScreen {...props} />)
+  view.rerender(<HomeScreen {...props} operatorToken="new-synthetic-session" />)
+  await act(async () => current.resolve(context('new-session')))
+  await act(async () => old.resolve(context('old-session')))
+  expect(lastHome()?.presence?.[0].id).toBe('new-session')
 })

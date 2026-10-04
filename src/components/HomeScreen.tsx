@@ -1,3 +1,4 @@
+import LoadingPlaceholder from "./LoadingPlaceholder";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ChevronRight,
@@ -94,11 +95,8 @@ export default function HomeScreen({
     initialDestination(business),
   );
   const [selectedOrder, setSelectedOrder] = useState<OperationalOrder | null>(null);
-  const [confirmUnpaid, setConfirmUnpaid] = useState(false);
-  const unpaidDecision = useRef<((confirmed: boolean) => void) | null>(null);
   const sessionErrorHandler = useRef(onSessionError);
   sessionErrorHandler.current = onSessionError;
-  useEffect(() => () => { unpaidDecision.current?.(false); }, []);
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder } | null>(null);
   const [savedCounter, setSavedCounter] = useState<OperationalOrder | null>(null);
@@ -126,8 +124,10 @@ export default function HomeScreen({
   const [datePulse, setDatePulse] = useState(0);
   const today = businessDate(business.timezone);
   const presenceScope = `${business.id}:${operatorToken}:${deviceToken ?? ''}`;
-  const [presenceSnapshot, setPresenceSnapshot] = useState<{ scope: string; employees: BusinessContext['connectedEmployees'] } | null>(null);
-  const presence = business.connectedEmployees ?? (presenceSnapshot?.scope === presenceScope ? presenceSnapshot.employees : undefined);
+  const [presenceSnapshot, setPresenceSnapshot] = useState<{ scope: string; employees: BusinessContext['connectedEmployees']; error: string } | null>(null);
+  const [presenceRefresh, setPresenceRefresh] = useState(0);
+  const scopedPresence = presenceSnapshot?.scope === presenceScope ? presenceSnapshot : null;
+  const presence = scopedPresence ? scopedPresence.employees : business.connectedEmployees;
   const homeAnalytics = useReportController(access, business.timezone, onSessionError,
     !managementContent && active === 'Inicio', hasPermission(business, 'reports.read'));
   const analytics = useReportController(access, business.timezone, onSessionError,
@@ -139,18 +139,37 @@ export default function HomeScreen({
   useEffect(() => {
     if (business.role !== 'owner' || managementContent || active !== 'Inicio') return;
     let alive = true;
-    const request = deviceToken
-      ? deviceRequest({ action: 'device_context', deviceToken, operatorToken })
-      : accountRequest({ action: 'context', businessId: business.id, operatorToken });
-    void request
-      .then(context => {
-        if (alive && context.business.id === business.id) setPresenceSnapshot({ scope: presenceScope, employees: context.business.connectedEmployees });
-      })
-      .catch(caught => {
-        if (alive && caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) sessionErrorHandler.current?.(caught);
-      });
-    return () => { alive = false; };
-  }, [business.id, business.role, managementContent, active, operatorToken, deviceToken, presenceScope]);
+    let inFlight = false;
+    async function refreshPresence() {
+      if (!alive || inFlight || document.visibilityState === 'hidden') return;
+      inFlight = true;
+      try {
+        const context = deviceToken
+          ? await deviceRequest({ action: 'device_context', deviceToken, operatorToken })
+          : await accountRequest({ action: 'context', businessId: business.id, operatorToken });
+        if (!alive || context.business.id !== business.id) return;
+        if (!context.business.connectedEmployees) throw new Error('Presencia sin confirmar');
+        setPresenceSnapshot({ scope: presenceScope, employees: context.business.connectedEmployees, error: '' });
+      } catch (caught) {
+        if (!alive) return;
+        if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) sessionErrorHandler.current?.(caught);
+        else setPresenceSnapshot(previous => ({ scope: presenceScope, employees: previous?.scope === presenceScope ? previous.employees : business.connectedEmployees, error: 'No pudimos actualizar los empleados.' }));
+      } finally { inFlight = false; }
+    }
+    const resume = () => { void refreshPresence(); };
+    resume();
+    const timer = window.setInterval(resume, 30_000);
+    window.addEventListener('focus', resume);
+    window.addEventListener('online', resume);
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', resume);
+      window.removeEventListener('online', resume);
+      document.removeEventListener('visibilitychange', resume);
+    };
+  }, [business.id, business.role, managementContent, active, operatorToken, deviceToken, presenceScope, presenceRefresh]);
   useEffect(() => {
     if (homeAnalytics.date !== today || homeAnalytics.period !== 'day') {
       homeAnalytics.setDate(today);
@@ -200,7 +219,7 @@ export default function HomeScreen({
   }
   function paymentRecorded(saved: OperationalOrder) {
     if (currentOperator.current !== operatorScope) return;
-    const settled = saved.balanceCents <= 0 || ['paid', 'closed', 'waived', 'cancelled'].includes(saved.status);
+    const settled = ['paid', 'closed', 'waived', 'cancelled'].includes(saved.status);
     if (settled && checkoutDraft.current?.value.orderId === saved.id) checkoutDraft.current = null;
     if (saved.id === counterOrderId.current) setSavedCounter(saved);
     setSelectedOrder(saved);
@@ -273,10 +292,7 @@ export default function HomeScreen({
         if (['completed', 'aborted'].includes(attempt.status)) await operation.refresh();
       }
       if (attempt?.status === 'prepared') {
-        setConfirmUnpaid(true);
-        const unpaid = await new Promise<boolean>(resolve => { unpaidDecision.current = resolve; });
-        if (!unpaid || currentOperator.current !== operatorScope) return false;
-        await mutation.execute({ command: 'resolve_checkout', operationId: crypto.randomUUID(), attemptId: attempt.id, expectedRevision: attempt.revision, resolution: 'abort', confirmed: true, reason: 'Operador confirma que no recibió pago al volver a editar' });
+        await mutation.execute({ command: 'resolve_checkout', operationId: crypto.randomUUID(), attemptId: attempt.id, expectedRevision: attempt.revision, resolution: 'abort', confirmed: true, reason: 'Reserva cancelada al volver a la cuenta' });
         await operation.refresh();
       } else if (!attempt && order.status === 'open' && order.phase === 'checkout' && !order.frozen) {
         const saved = await mutation.execute({ command: 'resume_order_service', operationId: crypto.randomUUID(), orderId: order.id, expectedRevision: order.revision });
@@ -353,7 +369,7 @@ export default function HomeScreen({
         <Icon className="pos-menu-icon" size={21} strokeWidth={1.6} aria-hidden="true" />
         <span className="pos-menu-copy flex min-w-0 flex-1 flex-col gap-1 [&>span]:font-medium [&_small]:text-sm [&_small]:text-muted">
           <span>{label}</span>
-          {description && <small id={`more-${id}-help`}>{description}</small>}
+          {description && <small className="sr-only" id={`more-${id}-help`}>{description}</small>}
         </span>
         {navigates && (
           <ChevronRight className="pos-menu-chevron" size={18} strokeWidth={1.6} aria-hidden="true" />
@@ -420,11 +436,11 @@ export default function HomeScreen({
           </div>
         )}
         {active === "Inicio" && !managementContent ? (
-          <ReportDashboard controller={homeAnalytics} presence={business.role === 'owner' ? presence : undefined} onOpenReport={openReport} onOpenTeam={onTeam} />
+          <ReportDashboard controller={homeAnalytics} presence={business.role === 'owner' ? presence : undefined} presenceError={scopedPresence?.error} onPresenceRetry={() => setPresenceRefresh(value => value + 1)} onOpenReport={openReport} onOpenTeam={onTeam} />
         ) : active === "Reportes" && !managementContent ? (
           <ReportsScreen controller={analytics} tab={reportTab} onTabChange={setReportTab} />
         ) : active === "Caja" ? (
-          snapshot ? <CashScreen business={business} access={access} snapshot={snapshot} mutation={mutation} refresh={operation.refresh} onSessionError={onSessionError} /> : <p role="status">Cargando caja…</p>
+          snapshot ? <CashScreen business={business} access={access} snapshot={snapshot} mutation={mutation} refresh={operation.refresh} onSessionError={onSessionError} /> : !operation.error && <LoadingPlaceholder variant="cards" rows={3} label="Cargando caja" />
         ) : active === "Productos" ? (
           <ProductsScreen
             access={access}
@@ -446,10 +462,10 @@ export default function HomeScreen({
             onSessionError={onSessionError}
           />
         ) : active === "Comandas" ? (
-          snapshot ? <OrdersScreen business={business} access={access} snapshot={snapshot} mutation={mutation} onOrder={setSelectedOrder} onNew={() => setEditingOrder({})} refresh={operation.refresh} onSessionError={onSessionError} /> : <p role="status">Cargando comandas…</p>
+          snapshot ? <OrdersScreen business={business} access={access} snapshot={snapshot} mutation={mutation} onOrder={setSelectedOrder} onNew={() => setEditingOrder({})} refresh={operation.refresh} onSessionError={onSessionError} /> : !operation.error && <LoadingPlaceholder variant="cards" rows={4} label="Cargando comandas" />
         ) : active === "Más" && !isOwner ? (
           <div className="pos-more mt-6 w-full max-w-160 tablet:max-w-280" ref={more}>
-            {!isOwner && hasPermission(business, 'catalog.read') && <section className="pos-menu-group"><h2>Productos</h2>{row('products','Productos',Package,()=>setActive('Productos'),'Catálogo y disponibilidad autorizada')}</section>}
+            {!isOwner && hasPermission(business, 'catalog.read') && <section className="pos-menu-group"><h2 className="sr-only">Productos</h2>{row('products','Productos',Package,()=>setActive('Productos'),'Catálogo y disponibilidad autorizada')}</section>}
             {!isOwner && allowed.length === 1 && <p>Tu cuenta no tiene permisos de operación. Pide al dueño que revise tu acceso.</p>}
             {(hasPermission(business, 'cash.read') || hasPermission(business, 'reports.read')) && <section className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"><h2>Operación</h2>{hasPermission(business, 'cash.read') && row('cash', 'Caja', Wallet, () => setActive('Caja'), 'Turnos, efectivo y cierre')}{hasPermission(business, 'reports.read') && row('reports', 'Reportes', ChartNoAxesCombined, () => setActive('Reportes'), 'Ventas del día y diferencias de caja')}</section>}
             {onChangePin && (
@@ -498,12 +514,12 @@ export default function HomeScreen({
           </div>
         ) : null}
       </section>
-      {(editingOrder || order) && <OrderPanel {...(checkoutView ? { completed: paymentComplete } : {})} title={editingOrder ? editingOrder.order ? 'Editar cuenta' : 'Abrir cuenta' : checkoutView ? 'Cobrar' : order!.name} busy={mutation.busy} beforeClose={checkoutView ? prepareBackToOrder : undefined} onClose={closeOrderPanel}>
+      {(editingOrder || order) && <OrderPanel {...(checkoutView ? { completed: paymentComplete } : editingOrder ? { className: 'order-editor-dialog' } : {})} title={editingOrder ? editingOrder.order ? 'Editar cuenta' : 'Abrir cuenta' : checkoutView ? 'Cobrar' : order!.name} busy={mutation.busy} beforeClose={checkoutView ? prepareBackToOrder : undefined} onClose={closeOrderPanel}>
         <div className="ops-section">
           {backError && !mutation.error && <p role="alert">{backError}</p>}
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh}
             draft={checkoutDraft.current?.scope === operatorScope ? checkoutDraft.current.value : undefined}
             onDraftChange={value => { if (!paymentComplete && currentOperator.current === operatorScope) checkoutDraft.current = { scope: operatorScope, value }; }}
             onOpenCash={hasPermission(business, 'cash.read') ? () => { void prepareBackToOrder().then(canClose => {
@@ -515,12 +531,6 @@ export default function HomeScreen({
           />}
         </div>
       </OrderPanel>}
-      {confirmUnpaid && <PosDialog title="¿Volver a la cuenta?" busy={false} onClose={() => { setConfirmUnpaid(false); unpaidDecision.current?.(false); }}>
-        <p>Confirma que aún no recibiste el pago. Si ya recibiste dinero, registra o recupera ese pago antes de editar.</p>
-        <div className="dialog-actions"><button className="pos-button pos-primary" onClick={() => { setConfirmUnpaid(false); unpaidDecision.current?.(true); }}>Volver sin haber recibido pago</button><button className="pos-button pos-secondary" onClick={() => { setConfirmUnpaid(false); unpaidDecision.current?.(false); }}>Continuar cobrando</button></div>
-      </PosDialog>}
-
-
     </WorkspaceShell>
   );
 }
