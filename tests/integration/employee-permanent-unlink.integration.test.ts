@@ -157,7 +157,7 @@ async function business() {
   businesses.push(session.business.id)
   return session
 }
-async function invitePerson(session: Session) { return data(await call(owner, { action: 'create_employee', ...ownerArgs(session), name: 'Persona nueva', role: 'cashier', pin: null, inviteWithGoogle: true, operationId: randomUUID() })) as Person }
+async function invitePerson(session: Session) { return data(await call(owner, { action: 'create_employee', ...ownerArgs(session), name: 'Persona nueva', role: 'cashier', permissions: ['catalog.read','sales.create','sales.read_own'], pin: null, inviteWithGoogle: true, operationId: randomUUID() })) as Person }
 
 async function deletedEmployee(options: { inviteBeforeDelete?: boolean; person?: Identity } = {}) {
   const person = options.person ?? employee

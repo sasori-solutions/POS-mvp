@@ -1,4 +1,5 @@
 import VatSummary from "./VatSummary";
+import LoadingPlaceholder, { PendingIndicator, Skeleton } from "./LoadingPlaceholder";
 import { productVat } from "../lib/vat";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -77,7 +78,14 @@ function saleCommand(
   };
 }
 
-export default function SaleScreen({
+/** Legacy checkout state and late responses belong to exactly one unlocked actor. */
+export default function SaleScreen(props: Parameters<typeof SaleScreenSession>[0]) {
+  const { access, employeeId } = props;
+  const scope = JSON.stringify([access.businessId, employeeId, access.operatorToken, access.deviceToken ?? null]);
+  return <SaleScreenSession key={scope} {...props} />;
+}
+
+function SaleScreenSession({
   access,
   employeeId,
   catalog,
@@ -160,6 +168,7 @@ export default function SaleScreen({
   const remainingAccountTotals = account ? remainingAccountLines.map(line => ({ ...line, ...checkoutTotals(account, [{ lineId: line.lineId, quantity: line.quantity - line.paidQuantity }]) })) : [];
   const accountEditable = Boolean(account && account.phase === 'service' && !account.frozen && onAccountAdd && onAccountQuantity);
   const frozen = busy || Boolean(pending) || storageError || Boolean(account && (!accountEditable || !collectionReady));
+  const manualMethods = catalog.paymentMethods.filter(method => method !== 'card_integrated');
   useEffect(() => {
     if (savedCounter && savedCounter.status !== 'open') {
       setCart([]);
@@ -171,11 +180,14 @@ export default function SaleScreen({
   }, [savedCounter?.id, savedCounter?.status]);
 
   async function clearStoredOperation(operationId: string) {
+    const clear = () => {
+      if (!mounted.current) throw new Error("La sesión cambió. Reabre la cuenta para revisar el registro guardado.");
+      clearPendingSale(storageKey, operationId);
+      return readPendingSale(storageKey);
+    };
     if (navigator.locks)
-      await navigator.locks.request(storageKey, () =>
-        clearPendingSale(storageKey, operationId),
-      );
-    else clearPendingSale(storageKey, operationId);
+      return navigator.locks.request(storageKey, clear);
+    return clear();
   }
 
   function restorePending() {
@@ -527,10 +539,12 @@ export default function SaleScreen({
   }
 
   async function register() {
+    if (payment === 'card_integrated') return;
     if (submitting.current || storageError || !online) return;
     let command = pendingRef.current;
     if (!command && (!collectionAllowed || !canCheckout || !catalog.paymentMethods.includes(payment)))
       return;
+    const draft = command ? null : JSON.parse(JSON.stringify(saleCommand(cart, payment, total, crypto.randomUUID()))) as PendingSale;
     submitting.current = true;
     setBusy(true);
     setError("");
@@ -546,12 +560,13 @@ export default function SaleScreen({
         let alreadyPending = false;
         try {
           command = await navigator.locks.request(storageKey, () => {
+            if (!mounted.current) throw new Error("La sesión cambió. Reabre la cuenta para revisar el registro guardado.");
             const stored = readPendingSale(storageKey);
             if (stored) {
               alreadyPending = true;
               return stored;
             }
-            const next = saleCommand(cart, payment, total, crypto.randomUUID());
+            const next = draft!;
             writePendingSale(storageKey, next);
             return next;
           });
@@ -585,9 +600,9 @@ export default function SaleScreen({
       setCheckout(false);
       setShowCart(false);
       try {
-        await clearStoredOperation(command.operationId);
-        pendingRef.current = null;
-        setPending(null);
+        const remaining = await clearStoredOperation(command.operationId);
+        pendingRef.current = remaining;
+        setPending(remaining);
       } catch {
         setStorageError(true);
         setError(
@@ -612,9 +627,9 @@ export default function SaleScreen({
       ) {
         // The server definitively refused the transaction; review the draft with current catalog.
         try {
-          if (command) await clearStoredOperation(command.operationId);
-          pendingRef.current = null;
-          setPending(null);
+          const remaining = command ? await clearStoredOperation(command.operationId) : readPendingSale(storageKey);
+          pendingRef.current = remaining;
+          setPending(remaining);
         } catch {
           setStorageError(true);
         }
@@ -719,10 +734,11 @@ export default function SaleScreen({
             onClick={() => {
               void (async () => {
                 try {
-                  if (completedOperation.current)
-                    await clearStoredOperation(completedOperation.current);
-                  pendingRef.current = null;
-                  setPending(null);
+                  const remaining = completedOperation.current
+                    ? await clearStoredOperation(completedOperation.current)
+                    : readPendingSale(storageKey);
+                  pendingRef.current = remaining;
+                  setPending(remaining);
                   setStorageError(false);
                   setError("");
                 } catch {
@@ -807,9 +823,7 @@ export default function SaleScreen({
           </div>
         )}
         {catalog.loading && !catalog.loaded && (
-          <p className="pos-status my-4 text-sm text-muted" role="status">
-            Cargando productos…
-          </p>
+          <LoadingPlaceholder variant="catalog" rows={6} filters={false} label="Cargando productos" />
         )}
         {catalog.loaded && !activeProducts.length ? (
           <EmptyCatalog description="Agrega productos activos para empezar a vender.">
@@ -933,14 +947,13 @@ export default function SaleScreen({
       <SaleAccountPanel open={showCart} canClose returnFocus={cartButton} onClose={() => { setShowCart(false); if (!pending) setCheckout(false); }}>
         <div data-account-drag className="mx-auto mb-1 h-1.5 w-14 shrink-0 touch-pan-x rounded-full bg-line tablet:hidden" aria-hidden="true" />
         <div className="current-sale-heading mb-1 flex min-h-12 shrink-0 items-center justify-between gap-3 [&_h2]:font-medium [&_span]:text-[13px] [&_span]:text-muted">
-          <h2 className="sr-only" data-account-focus tabIndex={-1}>{checkout ? "Registrar pago" : "Venta actual"}</h2>
-          {displayCart.length > 0 && (!account || accountEditable && onAccountClear) && (
-            <button type="button" className="min-h-12 p-0 text-left text-sm font-normal text-black no-underline disabled:opacity-100" disabled={frozen} onClick={() => setConfirmClearAccount(true)}>Borrar cuenta</button>
-          )}
-          <span>
-            {displayCart.reduce((sum, line) => sum + line.quantity, 0)}{" "}
-            artículos
-          </span>
+          <h2 data-account-focus tabIndex={-1}>Cuenta</h2>
+          <div className="account-heading-actions">
+            <span>{displayCart.reduce((sum, line) => sum + line.quantity, 0)} artículos</span>
+            {displayCart.length > 0 && (!account || accountEditable && onAccountClear) && (
+              <button type="button" className="pos-icon-button" aria-label="Borrar cuenta" disabled={frozen} onClick={() => setConfirmClearAccount(true)}><Trash2 size={18} aria-hidden="true" /></button>
+            )}
+          </div>
         </div>
         <div className="current-sale-body min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [@media(min-width:47.5rem)_and_(max-height:759px)]:max-h-75 max-tablet:flex-auto max-tablet:max-h-[20dvh] max-tablet:p-0 max-tablet:[scrollbar-gutter:auto]">
           {notice && (
@@ -967,7 +980,7 @@ export default function SaleScreen({
           {!displayCart.length && !storageError && (
             <div className="empty-cart flex min-h-65 flex-col items-center justify-center gap-3 px-4 py-10 text-center [&>svg]:text-muted [&_h3]:mt-2 [&_h3]:text-lg [&_h3]:font-medium">
               <ShoppingBag size={40} strokeWidth={1.2} aria-hidden="true" />
-              <h3>Tu cuenta está vacía</h3>
+              <h3>Cuenta vacía</h3>
             </div>
           )}
           <ul className="cart-lines m-0 list-none p-0 [&_li]:py-2 [&_li>p]:mt-1 [&_li>p]:text-sm">
@@ -1025,20 +1038,13 @@ export default function SaleScreen({
                         <Trash2 size={18} aria-hidden="true" />
                       </button>
                     </div>
-                  ) : (
-                    <p>Cantidad: {amount}</p>
-                  )}
+                  ) : null}
                 </li>
               );
             })}
           </ul>
           {outdated && (
-            <p
-              className="pos-warning my-4 rounded-lg border border-line bg-warning-soft p-4 text-sm text-warning [&_p]:text-inherit [&_button]:mt-3"
-              role="status"
-            >
-              Revisando disponibilidad y precios…
-            </p>
+            <div className="ui-placeholder my-4" role="status" aria-label="Revisando disponibilidad y precios" aria-busy="true"><Skeleton width="80%" height={16} /></div>
           )}
           {totalError && (
             <p
@@ -1117,22 +1123,13 @@ export default function SaleScreen({
             {notice && <p role="status">{notice}</p>}
             {error && <p className="checkout-error" role="alert">{error}</p>}
 
-              <PaymentMethodPicker name="sale-payment" methods={pending ? [pending.paymentMethod] : catalog.paymentMethods}
+              <PaymentMethodPicker name="sale-payment" methods={pending ? [pending.paymentMethod] : manualMethods}
                 value={payment} onChange={setPayment} disabled={frozen} />
               {payment === "card_external" ? (
                 <p className="payment-instructions py-2 text-sm">
                   Cobra en tu terminal y registra el pago.
                 </p>
-              ) : payment === "transfer" ? (
-                <p className="payment-instructions py-2 text-sm">
-                  Verifica que recibiste la transferencia antes de registrar el
-                  pago.
-                </p>
-              ) : (
-                <p className="payment-instructions py-2 text-sm">
-                  Recibe el efectivo antes de confirmar la venta.
-                </p>
-              )}
+              ) : null}
               <button
                 className="pos-button pos-primary checkout-confirm"
                 disabled={
@@ -1145,13 +1142,8 @@ export default function SaleScreen({
                 aria-busy={busy}
                 onClick={() => void register()}
               >
-                {busy
-                  ? "Registrando…"
-                  : pending
-                    ? "Reintentar registro"
-                    : payment === "cash"
-                      ? "Confirmar venta"
-                      : "Registrar pago"}
+                {busy && <PendingIndicator label="Registrando pago" />}
+                {pending ? "Reintentar registro" : "Registrar pago"}
               </button>
           </div>
         </div>
@@ -1159,8 +1151,7 @@ export default function SaleScreen({
 
       {confirmClearAccount && displayCart.length > 0 && (!account || accountEditable && onAccountClear) && (
         <PosDialog title="Borrar cuenta" onClose={() => setConfirmClearAccount(false)} busy={busy}>
-          <p className="text-ink">¿Eliminar todos los artículos de esta cuenta?</p>
-          <p className="mt-2 text-sm">Se eliminarán {displayCart.reduce((sum, line) => sum + line.quantity, 0)} artículos. Esta acción no se puede deshacer.</p>
+          <p className="text-ink">Se eliminarán {displayCart.reduce((sum, line) => sum + line.quantity, 0)} artículos. No se puede deshacer.</p>
           {error && <p className="mt-4 text-sm text-danger" role="alert">{error}</p>}
           <div className="mt-6 flex gap-3 max-tablet:flex-col">
             <button className="pos-button pos-secondary" disabled={busy} onClick={() => setConfirmClearAccount(false)} data-dialog-autofocus>Cancelar</button>
@@ -1202,7 +1193,7 @@ export default function SaleScreen({
           )}
           {favoriteError && (
             <p
-              className="pos-error mt-6 border-l-3 border-danger pl-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
+              className="pos-error mt-6 bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
               role="alert"
             >
               {favoriteError}
@@ -1222,11 +1213,8 @@ export default function SaleScreen({
                   size={18}
                   fill={productDetails(availability).favorite ? "currentColor" : "none"}
                 />
-                {favoriteBusy
-                  ? "Guardando…"
-                  : productDetails(availability).favorite
-                    ? "Quitar de favoritos"
-                    : "Añadir a favoritos"}
+                {favoriteBusy && <PendingIndicator label="Guardando favorito" />}
+                {productDetails(availability).favorite ? "Quitar de favoritos" : "Añadir a favoritos"}
               </button>
             )}
             <button
@@ -1234,11 +1222,8 @@ export default function SaleScreen({
               disabled={availabilityBusy || favoriteBusy}
               onClick={() => void toggleAvailability(availability)}
             >
-              {availabilityBusy
-                ? "Guardando…"
-                : productDetails(availability).soldOut
-                  ? "Marcar disponible"
-                  : "Marcar agotado"}
+              {availabilityBusy && <PendingIndicator label="Guardando disponibilidad" />}
+              {productDetails(availability).soldOut ? "Marcar disponible" : "Marcar agotado"}
             </button>
           </div>
         </PosDialog>

@@ -10,7 +10,7 @@ function exact(value: Record<string, unknown>, keys: string[]) { if (Object.keys
 function uuid(value: unknown): string { if (!isUuid(value)) invalid(); return value }
 function integer(value: unknown, max = 2_147_483_647, min = 1): number { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) invalid(); return value }
 function text(value: unknown, max: number, min = 0): string { if (typeof value !== 'string' || /[\u0000-\u001f\u007f]/.test(value)) invalid(); const clean=value.trim().replace(/\s+/g,' '); if (Array.from(clean).length < min || Array.from(clean).length > max) invalid(); return clean }
-function payment(value: unknown): PaymentMethod { if (!['cash','card_external','transfer'].includes(value as string)) invalid(); return value as PaymentMethod }
+function payment(value: unknown): PaymentMethod { if (!['cash','card_external','transfer','card_integrated'].includes(value as string)) invalid(); return value as PaymentMethod }
 
 function reportDate(value: unknown): string {
   if (typeof value !== 'string' || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || !Number.isFinite(Date.parse(`${value}T00:00:00Z`)) || new Date(`${value}T00:00:00Z`).toISOString().slice(0,10) !== value || value < '2000-01-01' || value > '2100-12-31') invalid()
@@ -60,6 +60,7 @@ export function parseOperationsCommand(input: Record<string, unknown>, accessKey
     case 'prepare_checkout': case 'record_payment': case 'update_checkout': {
       keys(['operationId',command==='update_checkout'?'attemptId':'orderId','expectedRevision','items','paymentMethod',...(command==='record_payment'?['confirmed']:[])])
       if (command==='record_payment' && input.confirmed!==true) invalid()
+      if (command==='record_payment' && input.paymentMethod==='card_integrated') invalid()
       if (!Array.isArray(input.items) || input.items.length<1 || input.items.length>40) invalid()
       const items=input.items.map(value=>{const line=object(value);exact(line,['lineId','quantity']);return {lineId:uuid(line.lineId),quantity:integer(line.quantity,999)}}).sort((a,b)=>a.lineId.localeCompare(b.lineId))
       if (new Set(items.map(i=>i.lineId)).size!==items.length) invalid()

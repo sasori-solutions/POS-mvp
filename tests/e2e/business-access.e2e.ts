@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOperationalMore } from './workspace-flow'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QRCodeSVG } from 'qrcode.react'
@@ -25,14 +27,14 @@ test('employee entry chooses employment even when the same identity owns a busin
   })
   await page.goto('/employee')
   await expect(page.getByRole('heading', { name: 'Ingresa tu PIN', exact: true })).toBeVisible()
-  await expect(page.getByText(employment.name, { exact: true })).toBeVisible()
+  await expect(page.getByText(employment.name, { exact: true }).filter({visible:true}).first()).toBeVisible()
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOperationalMore(page);
   await page.getByRole('button', { name: 'Cambiar negocio', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Mis negocios', exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Como empleado', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Café del equipo.*Cajero/ })).toBeVisible()
+  await expect(page.getByRole('region',{name:'Como empleado'}).getByRole('button', { name: 'Café del equipo',exact:true })).toBeVisible()
 })
 
 test('joining exposes a working camera option without opening it automatically', async ({ page }) => {
@@ -47,21 +49,22 @@ test('an employee sees newly created products automatically and can refresh imme
   await mockOnboarding(page, { existingBusiness: true, role: 'cashier' })
   let products: Record<string, unknown>[] = []
   await page.route('**/functions/v1/account', async route => {
-    if (route.request().postDataJSON().action !== 'pos') return route.fallback()
+    if (route.request().postDataJSON().action !== 'pos' || route.request().postDataJSON().command !== 'catalog') return route.fallback()
     return route.fulfill({ json: { data: { products, paymentMethods: ['cash'] } } })
   })
   await page.clock.install()
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Aún no hay productos', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Actualizar productos', exact: true })).toBeVisible()
+  await expect(page.getByRole('searchbox', { name: 'Buscar producto', exact: true })).toBeVisible()
   products = [{ id: '51921edf-8e9e-4a26-b661-31dc5c231c0f', name: 'Café nuevo del dueño', category: 'Bebidas', priceCents: 4000, active: true, version: 1 }]
   await page.clock.fastForward(15_000)
   await expect(page.getByRole('button', { name: /^Agregar Café nuevo del dueño,/ })).toBeVisible()
-  await page.getByRole('button', { name: 'Productos', exact: true }).click()
+  await openOperationalMore(page)
+  await page.getByRole('button', { name: 'Productos', exact: true }).filter({visible:true}).first().click()
   products[0] = { ...products[0], name: 'Café actualizado por el dueño', version: 2 }
-  await page.getByRole('button', { name: 'Actualizar productos', exact: true }).click()
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(page.getByRole('list', { name: 'Catálogo de productos' }).getByText('Café actualizado por el dueño', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Agregar producto', exact: true })).toHaveCount(0)
 })
@@ -88,13 +91,13 @@ test('Google return and logout/relogin retain employee access for an account wit
     await authorize
     await page.goto('/auth/callback?code=fixture-code')
     await expect(page.getByRole('heading', { name: 'Ingresa tu PIN', exact: true })).toBeVisible()
-    await expect(page.getByText(employment.name, { exact: true })).toBeVisible()
+    await expect(page.getByText(employment.name, { exact: true }).filter({visible:true}).first()).toBeVisible()
     await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toHaveCount(0)
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-    await page.getByRole('button', { name: 'Más', exact: true }).click()
+    await submitPinIfPresent(page);
+    await openOperationalMore(page);
     await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: 'Cerrar sesión', exact: true }).click()
+    await page.getByRole('region',{name:'Más',exact:true}).getByRole('button', { name: 'Cerrar sesión', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeEnabled()
     expect(await page.evaluate(key => localStorage.getItem(key), fixtureAuthKey)).toBeNull()
   }

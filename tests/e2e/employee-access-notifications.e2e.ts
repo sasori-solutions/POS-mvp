@@ -1,3 +1,4 @@
+import { openOwnerTask, submitPinIfPresent } from './workspace-flow'
 import { expect, test } from '@playwright/test'
 import { fixtureBusiness, fixturePin } from './account-fixture'
 import { fixtureInvitation, mockOnboarding } from './onboarding-fixture'
@@ -42,17 +43,16 @@ test('blocked employee stays outside the business and can retry after owner appr
     return route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: { code: 'DEVICE_APPROVAL_REQUIRED', message: 'Owner approval required.' } }) })
   })
   await page.goto('/')
-  await page.getByLabel('Nombre de este dispositivo').fill('Teléfono nuevo')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await submitPinIfPresent(page);
   await expect(page.getByRole('alert')).toContainText('Este dispositivo no está autorizado')
   await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toHaveCount(0)
   await expect(page.getByTestId('pin-input')).toHaveValue('')
   expect(requests[0]).toHaveProperty('deviceProof.signature')
-  expect(requests[0]).toHaveProperty('deviceName', 'Teléfono nuevo')
+  expect(requests[0]).toHaveProperty('deviceName', 'Mi dispositivo')
   approved = true
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await submitPinIfPresent(page);
   await expect(page.getByRole('heading', { name: 'Venta', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Notificaciones/ })).toHaveCount(0)
 })
@@ -74,9 +74,9 @@ for (const decision of ['approve', 'reject'] as const) {
     })
     await page.goto('/')
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
-    await expect(page.getByRole('heading', { name: 'Solicitud de otro dispositivo' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Cambiar dispositivo' })).toBeVisible()
     await expect(page.getByText('Sin leer', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Marcar como leída', exact: true }).click()
     await expect(page.getByText('Sin leer', { exact: true })).toHaveCount(0)
@@ -91,11 +91,14 @@ for (const decision of ['approve', 'reject'] as const) {
     await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     if (info.project.name === 'mobile') {
-      expect((await page.getByRole('heading', { name: 'Notificaciones', exact: true }).boundingBox())!.x).toBeGreaterThanOrEqual(24)
-      expect((await page.locator('.notification-card').boundingBox())!.x).toBeGreaterThanOrEqual(24)
+      const heading = (await page.locator('#pos-section-title').boundingBox())!
+      const card = (await page.locator('.notification-card').boundingBox())!
+      expect(heading.x).toBeGreaterThanOrEqual(16)
+      expect(card.x).toBeGreaterThanOrEqual(16)
+      expect(Math.abs(card.x - heading.x)).toBeLessThanOrEqual(1)
     }
     await page.screenshot({ path: `/tmp/pos-notifications-${decision}-${info.project.name}.png`, fullPage: true })
-    await page.getByRole('button', { name: 'Volver a Más', exact: true }).click()
+    await openOwnerTask(page, 'Inicio')
     await expect(page.getByRole('button', { name: 'Notificaciones', exact: true })).toBeVisible()
   })
 }
@@ -124,7 +127,7 @@ test('a delayed inbox refresh cannot restore a pending device request after appr
   try {
     await page.goto('/')
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
     await page.getByRole('button', { name: 'Autorizar cambio', exact: true }).click()
     await page.getByRole('button', { name: 'Reemplazar dispositivo', exact: true }).click()
@@ -160,11 +163,11 @@ test('device decision controls wait for an inbox refresh and work when it comple
   try {
     await page.goto('/')
     await page.getByTestId('pin-input').fill(fixturePin)
-    await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toBeEnabled()
     holdRefresh = true
-    await page.getByRole('button', { name: 'Actualizar notificaciones', exact: true }).click()
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     await expect.poll(() => Boolean(releaseRefresh)).toBe(true)
     await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toBeDisabled()

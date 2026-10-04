@@ -1,0 +1,30 @@
+import { createClient } from 'npm:@supabase/supabase-js@2.117.2'
+import { boundedBody, HttpError, json, serviceKey } from '../point/http.ts'
+import { serviceRpc } from '../point/service.ts'
+import { SignatureError, verifySignature } from '../point/webhook.ts'
+export async function handleWebhook(request: Request): Promise<Response> {
+  if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED' } }, 405)
+  try {
+    const secrets = [Deno.env.get('MP_WEBHOOK_SECRET'), Deno.env.get('MP_WEBHOOK_PREVIOUS_SECRET')].filter((secret): secret is string => !!secret)
+    if (secrets.length === 0) return json({ error: { code: 'SERVER_ERROR' } }, 503)
+    const evidence = await verifySignature(request, secrets)
+    const payload = await boundedBody(request)
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new HttpError(400)
+    const body = payload as Record<string, unknown>, data = body.data as Record<string, unknown> | undefined
+    if (body.type !== 'order' || typeof data?.id !== 'string' || data.id.toLowerCase() !== evidence.remoteOrderId.toLowerCase()) throw new HttpError(400)
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey(), { auth: { persistSession: false, autoRefreshToken: false } })
+    // ONLY authenticated locator is stored. Unsigned financial/account fields cannot establish a tenant or payment.
+    await serviceRpc(admin, 'webhook_enqueue', evidence)
+    return json({ received: true }, 200)
+  } catch (error) {
+    if (error instanceof SignatureError) {
+      const admin = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey(), { auth: { persistSession: false, autoRefreshToken: false } })
+      try { await serviceRpc(admin, 'webhook_invalid_signature', {}) } catch { return json({ error: { code: 'SERVER_ERROR' } }, 503) }
+      return json({ error: { code: 'SIGNATURE_INVALID' } }, 401)
+    }
+    if (error instanceof HttpError) return json({ error: { code: 'VALIDATION_ERROR' } }, error.status)
+    // Durable write failure is deliberately not acknowledged; provider will retry.
+    return json({ error: { code: 'SERVER_ERROR' } }, 503)
+  }
+}
+Deno.serve(handleWebhook)

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, LockKeyhole } from "lucide-react";
 import { recoveryRequest, AccountClientError } from "../lib/account";
 import PinField from "./PinField";
+import LoadingPlaceholder from "./LoadingPlaceholder";
+import { AccessButtonContent } from "./AccessBusy";
 
 export default function EmailRecovery() {
   const [token, setToken] = useState(() => {
@@ -120,21 +122,20 @@ export default function EmailRecovery() {
         </span>
       </header>
       <main className="auth-panel mx-auto mt-8 w-full max-w-117 flex-1 px-6 pt-8 pb-12 max-compact:mt-4 max-compact:flex max-compact:flex-col max-compact:pt-6 max-compact:pb-10">
-        <section className="screen flex flex-col max-compact:flex-1">
+        <section className="access-flow screen">
           {loading ? (
-            <p role="status">Revisando enlace…</p>
+            <LoadingPlaceholder variant="form" rows={2} label="Revisando enlace de recuperación" />
           ) : done ? (
             <>
-              <div className="screen-icon mb-8 grid size-16 place-items-center rounded-2xl border border-line max-compact:mb-7 small size-12 rounded-xl mb-6">
+              <div className="access-symbol">
                 <Check aria-hidden="true" />
               </div>
               <h1>PIN actualizado</h1>
               <p>
-                Ya puedes volver a {details?.businessName} y entrar con tu nuevo
-                PIN.
+                Entra a {details?.businessName} con tu nuevo PIN.
               </p>
               <p className="field-help text-sm text-muted">
-                Los accesos que estaban abiertos quedaron bloqueados.
+                Las sesiones anteriores quedaron bloqueadas.
               </p>
               <a className="button primary" href="/unlock">
                 Volver al negocio
@@ -142,11 +143,10 @@ export default function EmailRecovery() {
             </>
           ) : invalid ? (
             <>
-              <h1>Necesitas un nuevo enlace</h1>
+              <h1>Enlace no disponible</h1>
               <p>Este enlace venció, ya se utilizó o está incompleto.</p>
               <p>
-                Vuelve a «Olvidé mi PIN» para pedir otro correo. Si recargaste
-                esta página, abre de nuevo el enlace del correo.
+                Pide otro desde «Olvidé mi PIN». Si recargaste, vuelve a abrir el correo.
               </p>
               <a className="button primary" href="/unlock">
                 Volver al PIN
@@ -154,14 +154,14 @@ export default function EmailRecovery() {
             </>
           ) : details ? (
             <>
-              <div className="screen-icon mb-8 grid size-16 place-items-center rounded-2xl border border-line max-compact:mb-7 small size-12 rounded-xl mb-6">
+              <div className="access-symbol">
                 <LockKeyhole aria-hidden="true" />
               </div>
               <h1>Crea un nuevo PIN</h1>
               <p>Para entrar a {details.businessName}.</p>
               <form onSubmit={(event) => void save(event)}>
                 <p id="pin-help" className="field-help text-sm text-muted">
-                  Elige seis dígitos que puedas recordar.
+                  Usa 6 dígitos.
                 </p>
                 <PinField
                   label="Nuevo PIN"
@@ -197,7 +197,7 @@ export default function EmailRecovery() {
                     disabled={busy}
                     aria-busy={busy}
                   >
-                    {busy ? "Guardando…" : "Guardar nuevo PIN"}
+                    <AccessButtonContent busy={busy}>Guardar nuevo PIN</AccessButtonContent>
                   </button>
                   <a className="button secondary" href="/unlock">
                     Cancelar
@@ -221,9 +221,6 @@ export default function EmailRecovery() {
           )}
         </section>
       </main>
-      <footer className="app-footer px-6 pt-4 pb-[calc(20px+env(safe-area-inset-bottom))] text-center text-xs text-muted">
-        POS México
-      </footer>
     </div>
   );
 }

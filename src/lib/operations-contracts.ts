@@ -42,6 +42,8 @@ export interface BalanceWaiver { id: string; orderId: string; revision: number; 
 export interface BusinessDayReport {
   date: string; timezone: string; grossCents: number; discountCents: number; salesCents: number; taxCents: number
   reversalCents: number; reversalTaxCents: number; netCents: number; waivedCents: number; saleCount: number
+  /** Provider amount-only refunds have no recorded item or tax allocation. */
+  unallocatedRefundCents?: number; unknownReversalTaxCents?: number
   payments: { paymentMethod: PaymentMethod; salesCents: number; reversalCents: number; netCents: number }[]
   operators: { name: string; salesCents: number; reversalCents: number; netCents: number }[]
   products: { productId: string; name: string; quantity: number; salesCents: number; taxCents: number; reversalQuantity: number; reversalCents: number; reversalTaxCents: number; netCents: number; netTaxCents: number }[]

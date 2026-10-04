@@ -1,3 +1,4 @@
+import { submitPinIfPresent } from './workspace-flow'
 import { expect, test } from '@playwright/test'
 import { fixtureAuthKey, fixtureAuthSession, fixtureBusiness, fixtureOperatorToken, fixturePin } from './account-fixture'
 import { fixtureInvitation, fixtureKitchen, mockOnboarding } from './onboarding-fixture'
@@ -97,7 +98,7 @@ for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable'
     let approved = false
     let acceptanceCount = 0
     const operationIds: string[] = []
-    const employeeBusiness = { ...fixtureBusiness, role: 'kitchen', employee: { id: newEmployeeId, name: 'Persona reinvitada', role: 'kitchen' } }
+    const employeeBusiness = { ...fixtureBusiness, role: 'kitchen', permissions: fixtureKitchen.permissions, employee: { id: newEmployeeId, name: 'Persona reinvitada', role: 'kitchen', permissions: fixtureKitchen.permissions } }
     const businessSummary = { id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType, canRecoverPin: true, recoveryReady: true }
     await page.route(accountEndpoint, (route) => {
       const body = route.request().postDataJSON()
@@ -149,15 +150,15 @@ for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable'
       expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBeNull()
       if (statusUnavailable) {
         await expect.poll(() => failedStatusRequests).toBe(1)
-        await expect(page.getByRole('button', { name: 'Entrar', exact: true })).toBeEnabled()
+        await expect(page.getByTestId('pin-input')).toBeEnabled()
         statusUnavailable = false
       }
       await page.reload()
       await expect(page.getByRole('heading', { name: 'Ingresa tu PIN', exact: true })).toBeVisible()
       await expect(page.getByRole('heading', { name: 'Unirme a un negocio', exact: true })).toHaveCount(0)
       approved = true
-      await page.getByLabel('Tu PIN', { exact: true }).fill(newPin)
-      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await page.getByLabel('PIN de 6 dígitos', { exact: true }).fill(newPin)
+      await submitPinIfPresent(page);
     }
     await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
     expect(acceptanceCount).toBe(needsApproval ? 2 : 1)
@@ -165,11 +166,11 @@ for (const scenario of ['fresh-invitation', 'accepted-replay-status-unavailable'
     expect(await page.evaluate((key) => sessionStorage.getItem(key), invitationKey)).toBeNull()
     if (!needsApproval) {
       await page.reload()
-      await page.getByLabel('Tu PIN', { exact: true }).fill(fixturePin)
-      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await page.getByLabel('PIN de 6 dígitos', { exact: true }).fill(fixturePin)
+      await submitPinIfPresent(page);
       await expect(page.getByRole('alert')).toContainText('PIN incorrecto.')
-      await page.getByLabel('Tu PIN', { exact: true }).fill(newPin)
-      await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+      await page.getByLabel('PIN de 6 dígitos', { exact: true }).fill(newPin)
+      await submitPinIfPresent(page);
       await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible()
     }
   })

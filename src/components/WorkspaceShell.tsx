@@ -53,10 +53,11 @@ function AccountSwitcher({ name, busy, onChangePin, onLogout, logoutLabel }: {
   </div>
 }
 
-export default function WorkspaceShell({ business, accountName, active, operating, title, busy, onSelect, onLock, onLogout, logoutLabel, onSwitchBusiness, onTeam, onDevices, onSettings, onChangePin, onNotifications, unreadCount, pendingCount, managementKey, headingAside, children }: {
+export default function WorkspaceShell({ business, accountName, active, operating, title, busy, onSelect, onLock, onLogout, logoutLabel, onSwitchBusiness, onTeam, onDevices, onSettings, onChangePin, onNotifications, unreadCount, pendingCount, managementKey, headingAside, onPointSetup, onPointAdmin, children }: {
   business: BusinessContext; accountName?: string; active: Destination; operating: boolean; title: string; busy: boolean
   onSelect: (destination: Destination) => void; onLock: () => void; onLogout: () => void; logoutLabel: string
   onSwitchBusiness?: () => void; onTeam?: () => void; onDevices?: () => void; onSettings?: () => void; onChangePin?: () => void; onNotifications?: () => void; unreadCount: number; pendingCount: number
+  onPointSetup?: () => void; onPointAdmin?: () => void
   managementKey?: string; headingAside?: ReactNode; children: ReactNode
 }) {
   const owner = business.role === 'owner'
@@ -107,6 +108,10 @@ export default function WorkspaceShell({ business, accountName, active, operatin
   function select(action: () => void) {
     setNavigationOpen(false)
     action()
+    requestAnimationFrame(() => {
+      const heading = root.current?.querySelector<HTMLElement>('.workspace-management h2[tabindex="-1"]')
+      heading?.focus()
+    })
   }
   function item(d: Destination, mobile = false) {
     const Icon = icons[d]
@@ -133,6 +138,8 @@ export default function WorkspaceShell({ business, accountName, active, operatin
         {onTeam && <button type="button" className="workspace-nav-item" disabled={busy} aria-label="Empleados" title={navigationCollapsed ? 'Empleados' : undefined} aria-current={managementKey === 'team' ? 'page' : undefined} data-workspace-action="employees" onClick={() => select(onTeam)}><Users size={21} aria-hidden="true"/><span>Empleados</span></button>}
         {onDevices && <button type="button" className="workspace-nav-item" disabled={busy} aria-label="Dispositivos" title={navigationCollapsed ? 'Dispositivos' : undefined} aria-current={managementKey === 'devices' ? 'page' : undefined} data-workspace-action="devices" onClick={() => select(onDevices)}><Tablet size={21} aria-hidden="true"/><span>Dispositivos</span></button>}
         {onSettings && <button type="button" className="workspace-nav-item" disabled={busy} aria-label="Configuración" title={navigationCollapsed ? 'Configuración' : undefined} aria-current={managementKey === 'settings' ? 'page' : undefined} data-workspace-action="settings" onClick={() => select(onSettings)}><Settings size={21} aria-hidden="true"/><span>Configuración</span></button>}
+        {onPointSetup && <button type="button" className="workspace-nav-item" disabled={busy} aria-current={managementKey === 'setup' ? 'page' : undefined} data-workspace-action="point" onClick={() => select(onPointSetup)}><Wallet size={21} aria-hidden="true"/><span>Vincular una terminal</span></button>}
+        {onPointAdmin && <button type="button" className="workspace-nav-item" disabled={busy} aria-current={managementKey === 'admin' ? 'page' : undefined} onClick={() => select(onPointAdmin)}><ChartNoAxesCombined size={21} aria-hidden="true"/><span>Panel privado SASORI</span></button>}
       </nav>
       <div className="workspace-sidebar-bottom">
         <button type="button" className="workspace-nav-item workspace-mode" disabled={busy} title={navigationCollapsed ? 'Punto de Venta' : undefined} aria-label="Punto de Venta" onClick={() => select(() => onSelect('Venta'))}><LayoutGrid size={21}/><span>Punto de Venta</span><ArrowRight className="workspace-mode-arrow" size={18}/></button>
@@ -153,7 +160,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
       </>}
     </aside>
     {ownerDashboard && <dialog ref={drawer} id={drawerId} className="workspace-drawer" aria-label="Menú del negocio"
-      onCancel={() => setNavigationOpen(false)} onClose={() => { setNavigationOpen(false); menuTrigger.current?.focus() }}
+      onCancel={() => setNavigationOpen(false)} onClose={() => { setNavigationOpen(false); if (!root.current?.querySelector('.workspace-management h2[tabindex="-1"]')) menuTrigger.current?.focus() }}
       onClick={event => { if (event.target === event.currentTarget) setNavigationOpen(false) }}>
       {navigationOpen && ownerPanel(true)}
     </dialog>}
@@ -163,6 +170,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
         <span className="workspace-mobile-business" title={business.name}>{business.name}</span>
         {owner && !operating && <button type="button" className="workspace-mobile-mode" disabled={busy} onClick={() => onSelect('Venta')}>Punto de Venta<ArrowRight size={17}/></button>}
         <div className="workspace-header-actions">
+          {!owner && onPointAdmin && <button type="button" className="pos-icon-button" aria-label="Panel privado SASORI" disabled={busy} onClick={onPointAdmin}><ChartNoAxesCombined size={21}/></button>}
           {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
           {owner && onNotifications && <button type="button" className="pos-icon-button" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} disabled={busy} data-workspace-action="notifications" onClick={onNotifications}><span className="workspace-icon"><Bell size={21} aria-hidden="true"/>{unreadCount > 0 && <span className="workspace-badge workspace-notification-badge" aria-hidden="true">{unreadCount > 99 ? '99+' : unreadCount}</span>}</span></button>}
           <button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><LockKeyhole size={21}/></button>

@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { BusinessDayReport, BusinessPeriodReport, ReportSeriesPoint } from '../../src/lib/operations-contracts'
-import { buildFinancialWaterfallData, buildTemporalChartData } from '../../src/features/operations/analytics-model'
+import { buildDailySalesChartData, buildFinancialWaterfallData, buildTemporalChartData, temporalTicks } from '../../src/features/operations/analytics-model'
 
 const totals: BusinessDayReport = {
   date: '2026-02-01', timezone: 'America/Chicago', grossCents: 0, discountCents: 0, salesCents: 0,
@@ -87,4 +87,30 @@ test('financial waterfall keeps exact cents and includes refunds crossing below 
   expect(data.map(item => item.value)).toEqual([900, -200, 700, -1000, -300])
   expect(data.find(item => item.key === 'refunds')?.range).toEqual([-300, 700])
   expect(data.find(item => item.key === 'net')?.range).toEqual([-300, 0])
+})
+
+test('today shows observed hours, exact negative net and zero without future or previous-only slots', () => {
+  const data = buildDailySalesChartData(report({
+    period: 'day', cutoff: '2026-02-01T07:30:00Z',
+    series: [
+      point('hour:00:00:0', '2026-02-01T06:00:00Z', { netCents: -400 }),
+      point('hour:01:00:0', '2026-02-01T07:00:00Z'),
+      point('hour:02:00:0', '2026-02-01T08:00:00Z', { future: true }),
+    ],
+    previousSeries: [point('hour:03:00:0', '2026-01-01T09:00:00Z', { netCents: 800 })],
+  }))
+  expect(data.map(item => [item.slot, item.current])).toEqual([['hour:00:00:0', -400], ['hour:01:00:0', 0]])
+  expect(data[1].currentPartial).toBe(true)
+})
+
+test('axis ticks adapt to available width and preserve the first and last real intervals', () => {
+  const data = buildDailySalesChartData(report({ period: 'day', series: Array.from({ length: 12 }, (_, hour) => point(`hour:${String(hour).padStart(2, '0')}:00:0`, `2026-02-01T${String(hour + 6).padStart(2, '0')}:00:00Z`)) }))
+  const small = temporalTicks(data, 240), large = temporalTicks(data, 900)
+  expect(small).toEqual([data[0].slot, data[data.length - 1].slot])
+  expect(large).toHaveLength(6)
+  expect(new Set(large).size).toBe(6)
+  expect(large[0]).toBe(data[0].slot)
+  expect(large.at(-1)).toBe(data.at(-1)?.slot)
+  expect(temporalTicks([], 400)).toEqual([])
+  expect(temporalTicks(data.slice(0, 1), 400)).toEqual([data[0].slot])
 })

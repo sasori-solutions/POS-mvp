@@ -416,3 +416,12 @@ enabled = true
 
 [functions.account]
 verify_jwt = false
+
+# Each handler retains its own authentication: signed POS/account, provider
+# signature, or independent worker secret. The gateway must not reject webhooks.
+[functions.point]
+verify_jwt = false
+[functions.point-webhook]
+verify_jwt = false
+[functions.point-worker]
+verify_jwt = false

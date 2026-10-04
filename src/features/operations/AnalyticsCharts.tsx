@@ -5,20 +5,21 @@ import {
 } from 'recharts'
 import type { BusinessDayReport, BusinessPeriodReport } from '../../lib/operations-contracts'
 import { money as formatMoney, number as formatNumber } from '../../lib/format'
-import { buildFinancialWaterfallData, buildTemporalChartData, type TemporalDatum, type TemporalMetric, type WaterfallDatum } from './analytics-model'
+import { Skeleton } from '../../components/LoadingPlaceholder'
+import { buildDailySalesChartData, buildFinancialWaterfallData, buildTemporalChartData, temporalTicks, type TemporalDatum, type TemporalMetric, type WaterfallDatum } from './analytics-model'
 
 type Payment = BusinessDayReport['payments'][number]
 type CashDifference = BusinessDayReport['cashDifferences'][number]
 type TooltipPayload = { active?: boolean; payload?: readonly { payload?: unknown }[] }
 
-const colors = { cash: '#0F766E', card_external: '#2563EB', transfer: '#7C3AED', tax: '#B45309', refund: '#DC2626', ink: '#111111', previous: '#8B8B8B' }
-const paymentLabels: Record<Payment['paymentMethod'], string> = { cash: 'Efectivo', card_external: 'Tarjeta', transfer: 'Transferencia' }
+const colors = { cash: '#0F766E', card_external: '#2563EB', card_integrated: '#111111', transfer: '#7C3AED', tax: '#B45309', refund: '#DC2626', ink: '#111111', previous: '#8B8B8B' }
+const paymentLabels: Record<Payment['paymentMethod'], string> = { cash: 'Efectivo', card_external: 'Tarjeta externa', card_integrated: 'Tarjeta integrada', transfer: 'Transferencia' }
 const metricLabels: Record<TemporalMetric, string> = { netCents: 'Ventas netas', salesCents: 'Cobrado', saleCount: 'Cobros' }
 const compactCurrency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', currencyDisplay: 'narrowSymbol', notation: 'compact', maximumFractionDigits: 1 })
 const compactNumber = new Intl.NumberFormat('es-MX', { notation: 'compact', maximumFractionDigits: 1 })
 const percentage = new Intl.NumberFormat('es-MX', { style: 'percent', maximumFractionDigits: 1 })
-const animation = { animationDuration: 400, animationEasing: 'ease-out' as const }
-const axisTick = { fill: '#626262', fontSize: 11, fontFamily: 'IBM Plex Sans, sans-serif' }
+const animation = { animationDuration: 300, animationEasing: 'ease-out' as const }
+const axisTick = { fill: 'var(--color-muted)', fontSize: 12, fontFamily: 'IBM Plex Sans, sans-serif' }
 
 function moneyTick(value: number): string { return compactCurrency.format(value / 100) }
 function countTick(value: number): string { return compactNumber.format(value) }
@@ -70,7 +71,7 @@ function ChartFrame({ fingerprint, revision, identity = '', animateInitial = fal
   else if (motion.current.width !== width || motion.current.height !== height) motion.current = { fingerprint, revision, identity, width, height, animate: motion.current.width === 0 && animateInitial }
   else if (motion.current.revision !== revision) motion.current = { fingerprint, revision, identity, width, height, animate: false }
   return <div ref={element} className="analytics-chart" style={{ width: '100%', minWidth: 0, height }} aria-label={label}>
-    {width > 0 && children(width, height, motion.current.animate && !reducedMotion)}
+    {width > 0 ? children(width, height, motion.current.animate && !reducedMotion) : <Skeleton width="100%" height={height} />}
   </div>
 }
 
@@ -101,14 +102,13 @@ export const TemporalChart = memo(function TemporalChart({ report, metric, anima
   const hasPrevious = report.comparisonComparable && data.some(point => point.previous !== null)
   const currentDot = isolatedPointDot(data, 'current', colors.card_external)
   const previousDot = isolatedPointDot(data, 'previous', colors.previous)
-  const ticks = useMemo(() => data.filter((_, index) => index === 0 || index === data.length - 1 || index % Math.max(1, Math.ceil(data.length / 6)) === 0).map(point => point.slot), [data])
   const labels = useMemo(() => new Map(data.map(point => [point.slot, point.label])), [data])
   const identity = `${report.period}:${report.startDate}:${report.endDate}:${report.timezone}:${monetary ? 'money' : 'count'}`
   return <>
     <ChartFrame fingerprint={fingerprint} revision={data} identity={identity} animateInitial={animateInitial} label={`${metricLabels[metric]} ${report.period === 'day' ? 'por hora' : 'por día'}`}>
       {(width, height, animate) => <AreaChart key={identity} width={width} height={height} data={data} accessibilityLayer margin={{ top: 16, right: 8, bottom: 8, left: 0 }}>
         <CartesianGrid vertical={false} stroke="#E4E4E4" strokeDasharray="3 5" />
-        <XAxis dataKey="slot" ticks={ticks} tickFormatter={(slot: string) => labels.get(slot) ?? slot} tick={axisTick} axisLine={false} tickLine={false} minTickGap={12} />
+        <XAxis dataKey="slot" ticks={temporalTicks(data, width - 68)} tickFormatter={(slot: string) => labels.get(slot) ?? slot} tick={axisTick} axisLine={false} tickLine={false} minTickGap={12} tickMargin={12} />
         <YAxis tickFormatter={monetary ? moneyTick : countTick} tick={axisTick} axisLine={false} tickLine={false} width={58} domain={[(minimum: number) => Math.min(0, minimum), (maximum: number) => Math.max(maximum, 1)]} allowDecimals={monetary} />
         <ReferenceLine y={0} stroke="#C9C9C9" />
         <Tooltip content={props => <TemporalTooltip active={props.active} payload={props.payload} metric={metric} timezone={report.timezone} />} trigger={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 'click' : 'hover'} isAnimationActive={false} cursor={{ stroke: '#B8B8B8', strokeDasharray: '4 4' }} />
@@ -125,27 +125,23 @@ function DailySalesTooltip({ active, payload, timezone }: TooltipPayload & { tim
   const datum = payload?.[0]?.payload as TemporalDatum | undefined
   if (!active || !datum) return null
   return <TooltipBox title={intervalLabel(datum.currentPoint, timezone)}>
-    <TooltipLine label="Neto" value={metricValue(datum.current, 'netCents')} color={colors.card_external} />
+    <TooltipLine label="Ventas" value={metricValue(datum.current, 'netCents')} color={colors.card_external} />
   </TooltipBox>
 }
 
 export const DailySalesChart = memo(function DailySalesChart({ report }: { report: BusinessPeriodReport }) {
-  const data = useMemo(() => buildTemporalChartData(report, 'netCents'), [report])
+  const data = useMemo(() => buildDailySalesChartData(report), [report])
   const fingerprint = JSON.stringify(data.map(point => [point.slot, point.current]))
-  const ticks = useMemo(() => {
-    const step = Math.max(1, Math.ceil((data.length - 1) / 4))
-    return data.filter((_, index) => index === 0 || index === data.length - 1 || index % step === 0).map(point => point.slot)
-  }, [data])
   const labels = useMemo(() => new Map(data.map(point => [point.slot, point.label])), [data])
   const dot = isolatedPointDot(data, 'current', colors.card_external)
-  return <ChartFrame height={216} fingerprint={fingerprint} revision={data} identity={`${report.startDate}:${report.timezone}:net`} label="Ventas por hora de hoy">
-    {(width, height, animate) => <AreaChart width={width} height={height} data={data} accessibilityLayer margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+  return <ChartFrame height={232} fingerprint={fingerprint} revision={data} identity={`${report.startDate}:${report.timezone}:net`} label="Ventas por hora de hoy">
+    {(width, height, animate) => <AreaChart width={width} height={height} data={data} accessibilityLayer margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
       <CartesianGrid vertical={false} stroke="#E4E4E4" strokeDasharray="3 5" />
-      <XAxis dataKey="slot" ticks={ticks} tickFormatter={(slot: string) => labels.get(slot) ?? slot} tick={axisTick} axisLine={false} tickLine={false} minTickGap={0} />
-      <YAxis tickFormatter={moneyTick} tick={axisTick} axisLine={false} tickLine={false} width={52} domain={[(minimum: number) => Math.min(0, minimum), (maximum: number) => Math.max(maximum, 100)]} />
+      <XAxis dataKey="slot" ticks={temporalTicks(data, width - 64)} tickFormatter={(slot: string) => labels.get(slot) ?? slot} tick={axisTick} axisLine={false} tickLine={false} minTickGap={16} tickMargin={12} />
+      <YAxis tickFormatter={moneyTick} tick={axisTick} axisLine={false} tickLine={false} width={48} tickCount={4} tickMargin={8} domain={[(minimum: number) => Math.min(0, minimum), (maximum: number) => Math.max(maximum, 100)]} />
       <ReferenceLine y={0} stroke="#C9C9C9" />
       <Tooltip content={props => <DailySalesTooltip active={props.active} payload={props.payload} timezone={report.timezone} />} trigger={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 'click' : 'hover'} isAnimationActive={false} cursor={{ stroke: '#B8B8B8', strokeDasharray: '4 4' }} />
-      <Area<TemporalDatum, number | null> dataKey="current" name="Ventas netas" type="linear" stroke={colors.card_external} strokeWidth={2.5} fill={colors.card_external} fillOpacity={0.08} connectNulls={false} dot={dot} activeDot={{ r: 5, stroke: '#FFFFFF', strokeWidth: 2 }} {...animation} animationMatchBy={matchByDataKey('slot')} isAnimationActive={animate} />
+      <Area<TemporalDatum, number | null> dataKey="current" name="Ventas" type="linear" stroke={colors.card_external} strokeWidth={2.5} fill={colors.card_external} fillOpacity={0.08} connectNulls={false} dot={dot} activeDot={{ r: 5, stroke: '#FFFFFF', strokeWidth: 2 }} {...animation} animationMatchBy={matchByDataKey('slot')} isAnimationActive={animate} />
     </AreaChart>}
   </ChartFrame>
 })
@@ -186,7 +182,7 @@ export const PaymentNetChart = memo(function PaymentNetChart({ payments }: { pay
       <YAxis type="category" dataKey="label" width={100} tick={axisTick} axisLine={false} tickLine={false} />
       <ReferenceLine x={0} stroke="#C9C9C9" />
       <Tooltip content={props => <PaymentTooltip active={props.active} payload={props.payload} net />} trigger={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 'click' : 'hover'} isAnimationActive={false} cursor={{ fill: '#F6F6F6' }} />
-      <Bar dataKey="netCents" name="Neto" maxBarSize={24} radius={3} {...animation} animationMatchBy={matchByDataKey('paymentMethod')} isAnimationActive={animate}>{data.map(payment => <Cell key={payment.paymentMethod} fill={colors[payment.paymentMethod]} />)}</Bar>
+      <Bar dataKey="netCents" name="Neto" maxBarSize={28} radius={4} {...animation} animationMatchBy={matchByDataKey('paymentMethod')} isAnimationActive={animate}>{data.map(payment => <Cell key={payment.paymentMethod} fill={colors[payment.paymentMethod]} />)}</Bar>
     </BarChart>}
   </ChartFrame>
 })
@@ -201,13 +197,13 @@ function RankTooltip({ active, payload, monetary }: TooltipPayload & { monetary:
 export const RankedBars = memo(function RankedBars({ items, money = false }: { items: RankedBarItem[]; money?: boolean }) {
   if (!items.length) return <p className="analytics-chart-empty">Sin datos</p>
   const identity = money ? 'money' : 'count'
-  return <ChartFrame height={Math.max(180, items.length * 42 + 38)} fingerprint={JSON.stringify(items)} revision={items} identity={identity} label={money ? 'Ranking por importe' : 'Ranking por cantidad'}>
+  return <ChartFrame height={Math.max(180, items.length * 48 + 38)} fingerprint={JSON.stringify(items)} revision={items} identity={identity} label={money ? 'Ranking por importe' : 'Ranking por cantidad'}>
     {(width, height, animate) => <BarChart key={identity} width={width} height={height} data={items} layout="vertical" accessibilityLayer margin={{ top: 8, right: money ? 84 : 48, left: 0, bottom: 8 }}>
       <XAxis type="number" hide domain={[(minimum: number) => Math.min(0, minimum), (maximum: number) => Math.max(maximum, 1)]} />
       <YAxis type="category" dataKey="label" width={Math.min(140, Math.round(width * 0.36))} tickFormatter={(label: string) => label.length > 22 ? `${label.slice(0, 21)}…` : label} tick={axisTick} axisLine={false} tickLine={false} />
       <ReferenceLine x={0} stroke="#E4E4E4" />
       <Tooltip content={props => <RankTooltip active={props.active} payload={props.payload} monetary={money} />} trigger={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 'click' : 'hover'} isAnimationActive={false} cursor={{ fill: '#F6F6F6' }} />
-      <Bar dataKey="value" name={money ? 'Importe' : 'Cantidad'} maxBarSize={18} radius={3} {...animation} animationMatchBy={matchByDataKey('key')} isAnimationActive={animate}>
+      <Bar dataKey="value" name={money ? 'Importe' : 'Cantidad'} maxBarSize={26} radius={4} {...animation} animationMatchBy={matchByDataKey('key')} isAnimationActive={animate}>
         {items.map(item => <Cell key={item.key} fill={item.value < 0 ? colors.refund : colors.ink} />)}
         <LabelList dataKey="value" position="right" formatter={(value: unknown) => money ? moneyTick(Number(value)) : countTick(Number(value))} style={{ ...axisTick, fill: colors.ink }} />
       </Bar>
@@ -230,7 +226,7 @@ export const FinancialWaterfall = memo(function FinancialWaterfall({ totals }: {
       <YAxis tickFormatter={moneyTick} tick={axisTick} width={58} axisLine={false} tickLine={false} domain={[(minimum: number) => Math.min(0, minimum), (maximum: number) => Math.max(maximum, 1)]} />
       <ReferenceLine y={0} stroke="#C9C9C9" />
       <Tooltip content={props => <FinancialTooltip active={props.active} payload={props.payload} />} trigger={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? 'click' : 'hover'} isAnimationActive={false} cursor={{ fill: '#F6F6F6' }} />
-      <Bar dataKey="range" name="Importe" maxBarSize={56} radius={3} {...animation} animationMatchBy={matchByDataKey('key')} isAnimationActive={animate}>{data.map(item => <Cell key={item.key} fill={item.subtotal ? item.key === 'net' ? colors.cash : colors.ink : colors.refund} />)}</Bar>
+      <Bar dataKey="range" name="Importe" maxBarSize={56} radius={4} {...animation} animationMatchBy={matchByDataKey('key')} isAnimationActive={animate}>{data.map(item => <Cell key={item.key} fill={item.subtotal ? item.key === 'net' ? item.value < 0 ? colors.refund : colors.cash : colors.ink : colors.refund} />)}</Bar>
     </BarChart>}
   </ChartFrame>
 })

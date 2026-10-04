@@ -1,3 +1,5 @@
+import { submitPinIfPresent } from './workspace-flow'
+import { openOwnerTask } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import jsQR from 'jsqr'
 import { fixturePin } from './account-fixture'
@@ -6,9 +8,8 @@ import { fixtureInvitation, fixturePairingCode, mockOnboarding } from './onboard
 async function openCreation(page: Page) {
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
-  await page.getByRole('button', { name: 'Empleados', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOwnerTask(page, 'Empleados')
   await page.getByRole('button', { name: 'Agregar empleado', exact: true }).click()
 }
 
@@ -42,7 +43,7 @@ test('grouped permissions start empty and work by keyboard with prerequisites', 
   await expect(permissions.getByRole('checkbox')).toHaveCount(19)
   await expect(permissions.getByRole('checkbox', { checked: true })).toHaveCount(0)
   await expect(page.getByRole('radio')).toHaveCount(0)
-  for (const name of ['Catálogo', 'Ventas', 'Comandas y mesas', 'Cocina', 'Caja', 'Reportes']) {
+  for (const name of ['Catálogo', 'Ventas', 'Órdenes', 'Comandas', 'Caja', 'Reportes']) {
     await expect(permissions.getByRole('group', { name, exact: true })).toBeVisible()
   }
   await expect(permissions.getByText('Administrar empleados y el negocio corresponde al dueño.', { exact: false })).toBeVisible()
@@ -64,7 +65,7 @@ test('grouped permissions start empty and work by keyboard with prerequisites', 
   await expect(catalogRead).toBeChecked()
   await permissions.getByRole('checkbox', { name: 'Actualizar preparación', exact: true }).focus()
   await page.keyboard.press('Space')
-  await expect(permissions.getByRole('checkbox', { name: 'Consultar cocina', exact: true })).toBeChecked()
+  await expect(permissions.getByRole('checkbox', { name: 'Consultar comandas', exact: true })).toBeChecked()
   await expect(permissions.getByRole('checkbox', { checked: true })).toHaveCount(4)
   await page.getByLabel('Nombre del empleado', { exact: true }).fill('Ana de prueba')
   await page.screenshot({ path: `/tmp/pos-employee-${info.project.name}-form.png`, fullPage: true })
@@ -157,9 +158,8 @@ test('shared-register QR opens pairing and stops being shown when it expires', a
   })
   await page.goto('/')
   await page.getByTestId('pin-input').fill(fixturePin)
-  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  await page.getByRole('button', { name: 'Más', exact: true }).click()
-  await page.getByRole('button', { name: 'Dispositivos de caja', exact: true }).click()
+  await submitPinIfPresent(page);
+  await openOwnerTask(page, 'Dispositivos de caja')
   await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
   await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()
   expect(await readQr(page, 'QR para vincular la caja')).toBe(`http://127.0.0.1:5174/register#pair=${fixturePairingCode}`)

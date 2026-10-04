@@ -1,5 +1,6 @@
 import { businessPermissions, permissionPrerequisites, type AccountRequest, type BusinessPermission, type BusinessProfile, type BusinessType, type EmployeeRole, type PaymentMethod } from '../../../src/lib/contracts.ts'
 import { parsePosCommand } from './pos-validation.ts'
+import { parsePointCommand } from './point-validation.ts'
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const pinPattern = /^[0-9]{6}$/
 const tokenPattern = /^[0-9a-f]{64}$/
@@ -49,6 +50,11 @@ export function parseAccountRequest(value: unknown): AccountRequest {
   const owner = ['action', 'businessId', 'operatorToken']
   const ownerArgs = () => ({ businessId: uuid(input, 'businessId'), operatorToken: token(input, 'operatorToken') })
   switch (input.action) {
+    case 'point':
+      return { action: 'point', ...ownerArgs(), ...parsePointCommand(input, owner) }
+    case 'device_point':
+      return { action: 'device_point', deviceToken: token(input, 'deviceToken'), operatorToken: token(input, 'operatorToken'),
+        ...parsePointCommand(input, ['action', 'deviceToken', 'operatorToken']) }
     case 'pos':
       return { action: 'pos', ...ownerArgs(), ...parsePosCommand(input, owner) }
     case 'device_pos':

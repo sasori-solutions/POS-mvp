@@ -1,0 +1,294 @@
+/* Access and owner management use the workspace's existing tokens. */
+.access-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  animation: access-enter 160ms ease-out both;
+}
+.access-flow > h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -.035em;
+  font-weight: 500;
+  text-wrap: balance;
+}
+.access-flow > p {
+  margin: 12px 0 0;
+  max-width: 42ch;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--color-muted);
+}
+.access-flow .access-symbol {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 28px;
+  border: 1px solid var(--color-line);
+  border-radius: 16px;
+  color: var(--color-ink);
+  background: var(--color-surface);
+}
+.access-flow form {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 20px;
+  margin-top: 28px;
+}
+.access-flow :is(.screen-actions, .home-actions) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+  padding-top: 0;
+  max-width: none;
+}
+.access-flow form .screen-actions { margin-top: 4px; padding-top: 0; }
+.access-flow :is(.button, .text-button),
+.management-polish :is(.button, .management-text-button) {
+  min-height: 48px;
+  border-radius: 12px;
+  transition: background-color 120ms, border-color 120ms, color 120ms;
+}
+.access-flow .button { min-height: 52px; }
+.access-flow > .button { margin-top: 24px; }
+.access-flow > .button + .button { margin-top: 12px; }
+.access-flow > .text-button { margin-top: 12px; font-size: 14px; }
+.access-flow .back-button {
+  margin: -12px 0 24px;
+  padding: 0;
+  min-height: 48px;
+  font-size: 14px;
+}
+.access-flow .field :is(input, select, textarea),
+.management-polish .field :is(input, select, textarea) {
+  border-radius: 12px;
+  min-height: 52px;
+}
+.access-flow .field-help,
+.management-polish .field-help {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.access-flow .field-help + .pin-field { margin-top: -8px; }
+.access-flow .action-note { margin-top: 8px; font-size: 13px; }
+:is(.access-flow, .management-polish) .error-message {
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+  font-size: 14px;
+  color: var(--color-danger);
+}
+.access-flow form .error-message { margin-top: 0; }
+.access-flow :is(.business-list, .employee-roster .business-list) {
+  gap: 10px;
+  margin-block: 24px;
+  border: 0;
+}
+.access-flow .business-choice {
+  min-height: 80px;
+  padding: 16px;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  gap: 16px;
+  transition: border-color 120ms, background-color 120ms;
+}
+.access-flow .business-choice:hover:not(:disabled) {
+  border-color: var(--color-ink);
+  background: var(--color-surface);
+}
+.access-flow .business-choice > svg { flex-shrink: 0; margin-left: auto; }
+.access-person-avatar, .management-person-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.access-person-info { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; }
+.access-person-info > span { overflow-wrap: anywhere; }
+.access-person-info small { color: var(--color-muted); font-size: 13px; font-weight: 400; }
+.access-flow .employee-summary { margin-bottom: 12px; font-size: 13px; }
+.access-flow .employee-selected { margin: 0 0 12px; color: var(--color-ink); font-weight: 500; }
+.access-flow .employee-pin { text-align: center; }
+.access-flow .management-actions { margin-top: 16px; padding-top: 0; }
+.access-flow .employee-forget-confirm { padding: 20px; border-radius: 12px; }
+.access-flow .employee-forget-confirm p { margin: 0 0 16px; font-size: 14px; }
+.access-flow .pin-control { height: 56px; }
+.access-flow .pin-slots { gap: 8px; }
+.access-flow .pin-slots span,
+.access-pin-change .pin-slots span { border-radius: 10px; transition: border-color 100ms, background-color 100ms; }
+.access-flow .pin-slots span.current,
+.access-pin-change .pin-slots span.current { border-color: var(--color-ink); }
+.access-flow .pin-slots span.filled,
+.access-pin-change .pin-slots span.filled { background: var(--color-surface); border-color: var(--color-ink); }
+.access-auth-wide { max-width: 640px; }
+.access-business-screen form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.access-business-screen form > :is(.field:first-child, details, fieldset, .error-message, .screen-actions) { grid-column: 1 / -1; }
+.access-business-screen details { padding-block: 12px; border-block: 1px solid var(--color-line); }
+.access-business-screen summary,
+.employee-invitation-next summary { display: flex; align-items: center; min-height: 48px; cursor: pointer; font-size: 14px; color: var(--color-ink); }
+.access-business-screen details .profile-extra { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding-block: 12px; }
+.access-business-screen details .profile-extra .field:first-child { grid-column: 1 / -1; }
+.access-business-screen .payment-options { border-radius: 12px; padding: 16px; gap: 4px; }
+.access-business-screen .payment-options legend { font-size: 14px; font-weight: 500; padding-inline: 4px; }
+.access-business-screen .payment-options label { display: flex; align-items: center; gap: 12px; min-height: 48px; font-size: 14px; }
+.access-business-screen input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--color-ink); }
+.access-flow .access-choice-button { justify-content: space-between; gap: 12px; }
+.ready-screen { max-width: 420px; margin: 0 auto; }
+.ready-screen .ready-mark { color: var(--color-success); border-color: transparent; background: var(--color-success-soft); }
+.ready-screen .business-name { margin: 0 0 8px; font-size: 14px; font-weight: 500; color: var(--color-ink); }
+.development-access > p + p { font-size: 13px; margin-top: 8px; }
+
+.access-button-content {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+}
+.access-button-label { display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+.access-button-content.is-pending .access-button-label { opacity: 0; }
+.access-button-spinner { position: absolute; inset: 0; margin: auto; animation: access-spin .8s linear infinite; }
+.access-busy { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; }
+.access-busy > svg { animation: access-spin .8s linear infinite; }
+.access-camera-preview { position: relative; overflow: hidden; border-radius: 12px; }
+.access-camera-loading { position: absolute; inset: 0; }
+.access-camera-loading .ui-skeleton { width: 100%; border-radius: inherit; }
+.access-loading { min-height: 100dvh; padding: 24px; }
+.access-loading-dark { background: #000; color: white; }
+.pin-unlock-main .access-loading-dark { background: #000; color: white; }
+.access-loading-content { display: flex; flex-direction: column; align-items: center; gap: 16px; width: min(100%, 320px); }
+.access-loading-dots { display: flex; justify-content: center; gap: 16px; margin-block: 18px 12px; }
+.access-loading-dots .ui-skeleton { border-radius: 50%; }
+.access-loading-keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px 36px; width: 100%; justify-items: center; }
+.access-loading-keypad .ui-skeleton { border-radius: 50%; }
+.pin-unlock-screen .pin-business-name { white-space: normal; text-wrap: balance; overflow-wrap: anywhere; line-height: 1.5; color: #ffffffa6; }
+.pin-unlock-screen .pin-keypad button { transition: background-color 100ms; }
+
+.management-polish { width: 100%; max-width: 800px; min-width: 0; padding-bottom: 32px; }
+.management-polish .management-heading { margin-bottom: 20px; }
+.management-polish .management-heading > p { margin: 0; }
+.management-polish .management-form { max-width: none; margin: 0; gap: 20px; }
+.management-polish .settings-group { display: flex; flex-direction: column; gap: 20px; padding: 24px; border: 1px solid var(--color-line); border-radius: 14px; }
+.management-polish .settings-group legend { margin: 0; padding-inline: 6px; font-size: 15px; font-weight: 500; }
+.settings-polish .management-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.settings-polish .settings-group:first-child { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings-polish .settings-group:first-child > :is(.field:first-of-type, .access-info-label) { grid-column: 1 / -1; }
+.settings-polish .settings-group { grid-column: 1 / -1; }
+.settings-polish .settings-group:nth-child(4) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.settings-polish .settings-group:nth-child(4) > p { grid-column: 1 / -1; }
+.settings-polish .management-actions { grid-column: 1 / -1; justify-content: flex-end; }
+.settings-polish .management-actions .button { flex: 0 1 auto; min-width: 180px; }
+.access-info-label { font-size: 12px; color: var(--color-muted); }
+.management-polish .management-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+.management-polish .management-actions .button { flex-basis: auto; }
+.management-polish .management-list { display: grid; gap: 12px; margin: 24px 0; border: 0; padding: 0; }
+.management-polish .management-list li { display: flex; align-items: center; gap: 16px; min-height: 92px; padding: 16px; border: 1px solid var(--color-line); border-radius: 14px; }
+.management-polish .management-person-info { min-width: 0; flex: 1; }
+.management-polish .management-list li > div:not(.management-person-info) { flex: 1; }
+.management-polish .management-list p { margin: 4px 0 0; color: var(--color-muted); font-size: 13px; line-height: 1.5; }
+.management-polish .management-list .button { min-width: auto; min-height: 48px; padding-inline: 16px; font-size: 14px; }
+.management-polish .management-section { margin-top: 0; }
+.management-polish .management-section > .button { margin-top: 0; max-width: none; width: auto; }
+.management-polish .management-section > p { font-size: 14px; line-height: 1.5; }
+.management-polish .management-detail { margin-top: 28px; padding-top: 24px; }
+.management-polish .management-detail > h2 { margin-bottom: 8px; font-size: 18px; font-weight: 500; }
+.management-polish .management-detail > .button { margin-top: 16px; width: auto; }
+.management-polish .employee-invite-explanation { margin-top: 4px; padding-top: 20px; }
+.team-polish .employee-permission-fields > p { font-size: 13px; line-height: 1.5; }
+.team-polish .employee-permission-fields > div { gap: 20px; }
+.team-polish .employee-permission-fields fieldset { border: 1px solid var(--color-line); border-radius: 12px; padding: 12px 16px; }
+.team-polish .employee-permission-fields fieldset legend { padding-inline: 6px; }
+.team-polish .employee-permission-fields input { accent-color: var(--color-ink); }
+.management-polish .employee-invitation-ready { max-width: 560px; }
+.management-polish .employee-invitation-next { margin-block: 20px; padding-block: 8px; border-block: 1px solid var(--color-line); }
+.management-polish .employee-invitation-next p { margin: 0 0 16px; font-size: 14px; line-height: 1.5; }
+.management-polish .employee-invitation-link { margin-top: 20px; }
+.management-polish .management-code { padding: 20px; border-radius: 14px; }
+.management-polish .invitation-qr { margin: 0 0 20px; }
+.management-polish .management-confirmation p { font-size: 14px; line-height: 1.6; }
+.management-polish .management-danger .management-text-button { color: var(--color-danger); }
+.management-polish .management-success { margin: 0 0 20px; padding-block: 12px; font-size: 14px; }
+.team-polish:has(form) .management-heading h1,
+.team-polish:has(.management-confirmation) .management-heading h1 {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+  font-size: 24px;
+  line-height: 1.25;
+  letter-spacing: -.025em;
+}
+.team-polish .back-button { margin: 0 0 12px; padding: 0; min-height: 48px; }
+.access-pin-change { max-width: 460px; }
+.access-pin-change form { margin-top: 0; gap: 20px; }
+.access-pin-change .screen-actions { margin-top: 4px; padding-top: 0; }
+.access-error-retry { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.access-error-retry .error-message { margin: 0; }
+.access-error-retry .button { width: auto; flex-shrink: 0; font-size: 14px; }
+
+.notifications-screen .notification-list { gap: 16px; margin-top: 0; }
+.notifications-screen .notification-card { border: 1px solid var(--color-line); border-radius: 14px; padding: 24px; overflow-wrap: anywhere; }
+.notifications-screen .notification-card.unread { border-color: var(--color-ink); }
+.notifications-screen .notification-meta { align-items: center; gap: 12px; font-size: 12px; }
+.notifications-screen .notification-status { display: inline-flex; align-items: center; min-height: 28px; padding: 4px 10px; border-radius: 7px; background: var(--color-surface); color: var(--color-ink); font-size: 12px; font-weight: 500; }
+.notifications-screen .notification-status-approved { background: var(--color-success-soft); color: var(--color-success); }
+.notifications-screen .notification-card h2 { margin: 16px 0 8px; font-size: 20px; font-weight: 500; line-height: 1.3; letter-spacing: -.02em; }
+.notifications-screen .notification-card p { margin: 8px 0 0; font-size: 14px; line-height: 1.5; }
+.notifications-screen .notification-unread { margin: 12px 0 0; font-size: 12px; color: var(--color-muted); }
+.notifications-screen .notification-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.notifications-screen .notification-actions .button { flex: 1; min-width: 140px; }
+.notifications-screen .notification-confirm { margin-top: 20px; gap: 12px; border-radius: 12px; padding: 16px; background: var(--color-surface); }
+.notifications-screen .notification-empty { border-radius: 14px; }
+.notifications-screen .notifications-empty { display: grid; justify-items: center; gap: 12px; margin-top: 0; border-radius: 14px; padding: 56px 24px; }
+.notifications-screen .notifications-empty > h2 { margin: 0; font-size: 20px; font-weight: 500; }
+.notifications-screen .notifications-empty > p { margin: 0; font-size: 14px; }
+.notifications-screen .notice-success { margin-bottom: 20px; border-radius: 12px; font-size: 14px; }
+.notifications-screen .notice-success > svg { flex-shrink: 0; }
+
+@keyframes access-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes access-spin { to { transform: rotate(360deg); } }
+
+@media (width < 640px) {
+  .access-flow { flex: 1; }
+  .access-flow .access-symbol { margin-bottom: 24px; }
+  .access-flow .screen-actions { margin-top: 24px; padding-top: 0; }
+  .access-flow form { gap: 20px; flex: 0 0 auto; }
+  .access-business-screen form { grid-template-columns: minmax(0, 1fr); }
+  .access-flow .business-choice { padding: 14px; gap: 12px; }
+  .access-flow .pin-slots { gap: 6px; }
+  .ready-screen .home-actions { margin-top: 28px; }
+  .management-polish { padding-bottom: 24px; }
+  .settings-polish .management-form { grid-template-columns: minmax(0, 1fr); }
+  .management-polish .settings-group { padding: 20px; }
+  .settings-polish .settings-group:first-child { grid-template-columns: minmax(0, 1fr); }
+  .settings-polish .settings-group:nth-child(4) { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .management-polish .management-actions .button { flex: 1; width: 100%; }
+  .management-polish .management-list li { flex-wrap: wrap; gap: 12px; padding: 16px; }
+  .management-polish .management-list .button { margin-left: auto; }
+  .management-polish .management-list .management-person-info { flex-basis: calc(100% - 60px); }
+  .management-polish .management-list .management-person-info + .button { width: auto; margin-top: 0; margin-left: 60px; }
+  .access-error-retry { align-items: flex-start; flex-direction: column; }
+  .notifications-screen .notification-card { padding: 20px; }
+  .notifications-screen .notification-actions .button { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .access-flow, .access-busy > svg, .access-button-spinner { animation: none; }
+  .access-flow .button, .access-flow .business-choice, .management-polish .button { transition: none; }
+}

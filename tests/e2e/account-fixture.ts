@@ -67,6 +67,7 @@ export function fixtureAuthSession(overrides: Record<string, unknown> = {}, sess
 /** This harness mocks network state only; production contains no test login route. */
 export async function mockAccount(page: Page, options: {
   existingBusiness?: boolean;
+  business?: typeof fixtureBusiness;
   authenticated?: boolean;
   createResponseLosses?: number;
   sessionOverrides?: Record<string, unknown>;
@@ -79,6 +80,7 @@ export async function mockAccount(page: Page, options: {
   const calls: Record<string, unknown>[] = [];
   const authCalls: { url: string; authorization: string | undefined }[] = [];
   let hasBusiness = options.existingBusiness ?? false;
+  const business = options.business ?? fixtureBusiness;
   let locked = true;
   let wrongAttempts = 0;
   let createResponseLosses = options.createResponseLosses ?? 0;
@@ -145,7 +147,7 @@ export async function mockAccount(page: Page, options: {
       body: JSON.stringify({ error: { code, message, retryAfterSeconds } }),
     });
     const unlocked = {
-      business: fixtureBusiness,
+      business,
       operatorToken: fixtureOperatorToken,
       expiresAt: new Date(Date.now() + 8 * 3_600_000).toISOString(),
     };
@@ -158,7 +160,7 @@ export async function mockAccount(page: Page, options: {
         return reject(400, 'VALIDATION_ERROR', 'Acción inválida.');
       case 'notifications': return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { notifications: [], unreadCount: 0 } }) });
       case 'status':
-        return reply({ businesses: hasBusiness ? [{ id: fixtureBusiness.id, name: fixtureBusiness.name, businessType: fixtureBusiness.businessType, role: fixtureBusiness.role }] : [] });
+        return reply({ businesses: hasBusiness ? [{ id: business.id, name: business.name, businessType: business.businessType, role: business.role }] : [] });
       case 'create_business':
         hasBusiness = true;
         locked = false;
@@ -179,7 +181,7 @@ export async function mockAccount(page: Page, options: {
       case 'context':
         return locked
           ? reject(401, 'SESSION_INVALID', 'La sesión está bloqueada.')
-          : reply({ business: fixtureBusiness, expiresAt: unlocked.expiresAt });
+          : reply({ business, expiresAt: unlocked.expiresAt });
       case 'lock':
         locked = true;
         return reply({ locked: true });

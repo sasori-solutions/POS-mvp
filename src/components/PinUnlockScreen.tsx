@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Delete } from "lucide-react";
 import PinScreenEntrance from "./PinScreenEntrance";
+import AccessBusy from "./AccessBusy";
 
 interface Props {
   businessName: string;
@@ -93,7 +94,7 @@ export default function PinUnlockScreen({
 
         <div id="pin-status" className="pin-unlock-status" aria-busy={busy || submitting}>
           {busy || submitting ? (
-            <p role="status">Verificando…</p>
+            <AccessBusy label="Verificando PIN" />
           ) : secondsLeft > 0 ? (
             <p role="timer" aria-live="off">
               Intenta de nuevo en {Math.floor(secondsLeft / 60)}:

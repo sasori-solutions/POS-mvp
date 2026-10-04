@@ -1,7 +1,8 @@
-name: Full checks (manual)
+name: Full checks
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 concurrency:
   group: full-checks-${{ github.ref }}
@@ -26,6 +27,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:domain
       - run: npm run test:sql
+      - run: npm run test:provider
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
@@ -44,12 +46,17 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: deno test supabase/functions/account/*.deno.ts
+      - run: deno test --allow-net=127.0.0.1,localhost supabase/functions/account/*.deno.ts tests/provider/adapter.deno.ts
       - run: deno check supabase/functions/account/index.ts
+      - run: deno check supabase/functions/point/index.ts supabase/functions/point-webhook/index.ts supabase/functions/point-worker/index.ts
       - name: Verify standalone account packaging
         run: |
           node scripts/build-account-source.mjs /tmp/pos-account-cloud.ts
           deno check /tmp/pos-account-cloud.ts
+          for endpoint in point point-webhook point-worker; do
+            node scripts/build-point-source.mjs "$endpoint" "/tmp/pos-${endpoint}.ts"
+            deno check "/tmp/pos-${endpoint}.ts"
+          done
 
   integration:
     name: Supabase integration
@@ -74,17 +81,39 @@ jobs:
           APP_ORIGIN=http://127.0.0.1:5175
           PIN_RECOVERY_FROM=access@example.test
           TEST_MAILPIT_URL=http://supabase_inbucket_pos-mexico-pwa:8025
+          MP_CLIENT_ID=sim-client
+          MP_CLIENT_SECRET=sim-secret
+          MP_REDIRECT_URI=http://127.0.0.1:5174/point/callback
+          MP_ENVIRONMENT=sandbox
+          MP_TOKEN_KEYS={"ci":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"}
+          MP_TOKEN_ACTIVE_KEY=ci
+          MP_WEBHOOK_SECRET=simulator-webhook-secret
+          POINT_WORKER_SECRET=point-worker-local-synthetic-secret-2026
+          MP_ALLOW_LOCAL_SIMULATOR=true
+          MP_API_BASE_URL=http://host.docker.internal:8187
+          POINT_CHARGES_ENABLED=true
           ENV
           npx supabase status -o json > /tmp/pos-local-status.json
           node --input-type=module <<'JS'
           import fs from 'node:fs';
           const status = JSON.parse(fs.readFileSync('/tmp/pos-local-status.json', 'utf8'));
           if (!['127.0.0.1', 'localhost'].includes(new URL(status.API_URL).hostname) || !status.ANON_KEY || !status.SERVICE_ROLE_KEY) throw new Error('Local test services unavailable');
-          fs.appendFileSync(process.env.GITHUB_ENV, `TEST_SUPABASE_URL=${status.API_URL}\nTEST_SUPABASE_ANON_KEY=${status.ANON_KEY}\nTEST_SUPABASE_SERVICE_ROLE_KEY=${status.SERVICE_ROLE_KEY}\nTEST_LOCAL_DB_CONTAINER=supabase_db_pos-mexico-pwa\nTEST_MAILPIT_URL=http://127.0.0.1:54324\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `TEST_SUPABASE_URL=${status.API_URL}\nTEST_SUPABASE_ANON_KEY=${status.ANON_KEY}\nTEST_SUPABASE_SERVICE_ROLE_KEY=${status.SERVICE_ROLE_KEY}\nTEST_LOCAL_DB_CONTAINER=supabase_db_pos-mexico-pwa\nTEST_MAILPIT_URL=http://127.0.0.1:54324\nTEST_POINT_SIMULATOR_URL=http://127.0.0.1:8187\n`);
+          JS
+      - name: Start deterministic HTTP provider
+        run: |
+          POINT_SIMULATOR_HOST=0.0.0.0 node tests/provider/simulator.mjs > /tmp/pos-point-simulator.log 2>&1 &
+          node --input-type=module <<'JS'
+          let ready=false;
+          for(let attempt=0;attempt<30;attempt++) {
+            try { if((await fetch('http://127.0.0.1:8187/__control')).ok) { ready=true; break; } } catch {}
+            await new Promise(resolve=>setTimeout(resolve,250));
+          }
+          if(!ready) throw new Error('HTTP provider simulator unavailable');
           JS
       - name: Serve and verify local account API
         run: |
-          npx supabase functions serve account --env-file .env.functions > /tmp/pos-account-edge.log 2>&1 &
+          npx supabase functions serve --env-file .env.functions > /tmp/pos-account-edge.log 2>&1 &
           node --input-type=module <<'JS'
           let ready = false;
           let lastStatus = null;
@@ -100,6 +129,10 @@ jobs:
             await new Promise(resolve => setTimeout(resolve, 1000));
           }
           if (!ready) throw new Error(`Local account API did not become ready (status=${lastStatus}, code=${lastCode})`);
+          for (const endpoint of ['point','point-webhook','point-worker']) {
+            const response=await fetch(`${process.env.TEST_SUPABASE_URL}/functions/v1/${endpoint}`,{method:'POST',headers:{'content-type':'application/json',apikey:process.env.TEST_SUPABASE_ANON_KEY},body:'{}',signal:AbortSignal.timeout(10000)});
+            if (![400,401].includes(response.status)) throw new Error(`Point endpoint ${endpoint} not served/authenticated (${response.status})`);
+          }
           JS
       - name: Diagnose local service failures
         if: failure()

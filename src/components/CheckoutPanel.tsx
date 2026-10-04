@@ -6,6 +6,7 @@ import { useGSAP } from '@gsap/react'
 gsap.registerPlugin(useGSAP)
 
 export const CheckoutClosingContext = createContext(false)
+export const CheckoutInteractionContext = createContext<((busy: boolean) => void) | null>(null)
 
 /** A separate, modal payment surface; the account underneath remains mounted. */
 export default function CheckoutPanel({ title = 'Cobrar', busy = false, completed = false, beforeClose, onClose, children }: {
@@ -21,12 +22,14 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
   const panel = useRef<HTMLDialogElement>(null)
   const closing = useRef(false)
   const [isClosing, setIsClosing] = useState(false)
+  const [interactionBusy, setInteractionBusy] = useState(false)
+  const blocked = busy || interactionBusy
   const titleId = useId()
   const { contextSafe } = useGSAP(() => {
     if (!window.matchMedia) return
     const media = gsap.matchMedia()
     media.add('(prefers-reduced-motion: no-preference)', () => {
-      gsap.fromTo(panel.current, { yPercent: 100 }, { yPercent: 0, duration: 0.28, ease: 'power2.out' })
+      gsap.fromTo(panel.current, { yPercent: 100 }, { yPercent: 0, duration: 0.22, ease: 'power2.out' })
     })
     return () => media.revert()
   }, { scope: panel })
@@ -61,7 +64,7 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
   }, [completed, finishClose])
 
   async function close() {
-    if (busy || closing.current) return
+    if (blocked || closing.current) return
     closing.current = true
     setIsClosing(true)
     if (panel.current) panel.current.inert = true
@@ -79,11 +82,11 @@ export default function CheckoutPanel({ title = 'Cobrar', busy = false, complete
   return <dialog ref={panel} className="checkout-screen" aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); void close() }}>
     <header className="checkout-header">
-      <button type="button" className="checkout-back" aria-label="Cerrar" disabled={busy} onClick={() => void close()}>
-        <ArrowLeft size={22} aria-hidden="true" /><span>Volver a la cuenta</span>
+      <button type="button" className="checkout-back" aria-label="Cerrar" disabled={blocked} onClick={() => void close()}>
+        <ArrowLeft size={22} aria-hidden="true" /><span>Cuenta</span>
       </button>
       <h2 id={titleId} tabIndex={-1} data-checkout-focus>{title}</h2>
     </header>
-    <div className="checkout-body"><CheckoutClosingContext.Provider value={isClosing}>{displayedChildren.current}</CheckoutClosingContext.Provider></div>
+    <div className="checkout-body"><CheckoutInteractionContext.Provider value={setInteractionBusy}><CheckoutClosingContext.Provider value={isClosing}>{displayedChildren.current}</CheckoutClosingContext.Provider></CheckoutInteractionContext.Provider></div>
   </dialog>
 }

@@ -1,5 +1,6 @@
 import { accountRequest, deviceRequest } from './account'
 import { selectedPrice } from './product-details'
+import { assertFinancialResponse } from './financial-response'
 export { money, saleDate } from './format'
 import type { PosCommand, PosResponses, CartLine, Product } from './pos-contracts'
 
@@ -55,5 +56,6 @@ export async function posRequest<C extends PosCommand['command']>(
   const result = access.deviceToken
     ? await deviceRequest({ action: 'device_pos', deviceToken: access.deviceToken, operatorToken: access.operatorToken, ...command })
     : await accountRequest({ action: 'pos', businessId: access.businessId, operatorToken: access.operatorToken, ...command })
+  assertFinancialResponse(command, result)
   return result as PosResponses[C]
 }

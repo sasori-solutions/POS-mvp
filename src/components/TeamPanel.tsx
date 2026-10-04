@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Link, Share2, UserRound } from "lucide-react";
 import EmployeeRoleFields from "./EmployeeRoleFields";
 import InvitationQr from "./InvitationQr";
+import LoadingPlaceholder from "./LoadingPlaceholder";
+import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
 import type {
   BusinessContext,
@@ -46,7 +48,6 @@ export default function TeamPanel({
   business,
   operatorToken,
   section,
-  onBack,
   onSessionError,
 }: TeamPanelProps) {
   const [team, setTeam] = useState<AccountResponses["team"] | null>(null);
@@ -766,7 +767,7 @@ export default function TeamPanel({
           <InvitationQr
             link={codeLink(currentCode)}
             label="QR de la invitación"
-            instruction="El empleado puede escanearlo con la cámara del dispositivo que usará para trabajar."
+            instruction="Escanéalo desde el dispositivo del empleado."
           />
           <label htmlFor="invitation-link">Enlace de invitación</label>
           <input
@@ -798,7 +799,7 @@ export default function TeamPanel({
             )}
           </div>
           <p>
-            Vence el {date(currentCode.expiresAt)}. Sólo se puede usar una vez.
+            Un uso · vence el {date(currentCode.expiresAt)}
           </p>
         </div>
       );
@@ -808,7 +809,7 @@ export default function TeamPanel({
           <InvitationQr
             link={codeLink(currentCode)}
             label="QR para vincular la caja"
-            instruction="Escanea este QR desde el dispositivo de caja, o abre allí el enlace que copies."
+            instruction="Escanéalo desde la caja que vas a vincular."
           />
         )}
         <label htmlFor="management-code">{currentCode.label}</label>
@@ -819,13 +820,7 @@ export default function TeamPanel({
           onFocus={(event) => event.target.select()}
         />
         {currentCode.parameter === "pair" && (
-          <ol className="management-steps list-decimal pl-5 text-sm text-muted [&_li+li]:mt-3">
-            <li>Abre el enlace o escanea el QR en el dispositivo de caja.</li>
-            <li>
-              Si prefieres ingresar el código, elige «Vincular caja compartida».
-            </li>
-            <li>Asigna un nombre para identificar el dispositivo.</li>
-          </ol>
+          <p className="field-help">Abre el enlace en la caja y asígnale un nombre.</p>
         )}
         {currentCode.parameter === "setup" && (
           <p>
@@ -855,7 +850,7 @@ export default function TeamPanel({
 
   return (
     <div
-      className="management-shell w-full max-w-160 pb-16 max-compact:pb-10"
+      className="management-shell management-polish team-polish"
       onKeyDown={(event) => {
         if (event.key === "Escape" && form && !busy) {
           event.preventDefault();
@@ -864,15 +859,16 @@ export default function TeamPanel({
         }
       }}
     >
-      <button
+      {form && <button
         type="button"
         className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
+        aria-label="Volver a empleados"
         disabled={busy}
-        onClick={form ? closeForm : onBack}
+        onClick={closeForm}
       >
         <ArrowLeft size={18} aria-hidden="true" />
-        {form ? "Volver a empleados" : "Volver"}
-      </button>
+        Empleados
+      </button>}
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1 ref={heading} tabIndex={-1}>
           {confirmDelete && editing
@@ -883,13 +879,12 @@ export default function TeamPanel({
                 : "Invitación del empleado"
               : form
                 ? editing
-                  ? "Administrar empleado"
+                  ? editing.name
                   : "Agregar empleado"
                 : tab === "devices"
                   ? "Dispositivos de caja"
                   : "Empleados"}
         </h1>
-        {!form && <p>{business.name}</p>}
       </div>
       {error && (
         <p
@@ -913,19 +908,8 @@ export default function TeamPanel({
         </p>
       ) : (
         <>
-          {loading && (
-            <div
-              className="management-loading my-6 flex items-center gap-3"
-              role="status"
-            >
-              <span
-                className="loader size-6 animate-spin rounded-full border-2 border-line border-t-brand motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              {section === "devices"
-                ? "Cargando dispositivos…"
-                : "Cargando empleados…"}
-            </div>
+          {loading && !team && (
+            <LoadingPlaceholder variant="list" rows={4} label={section === "devices" ? "Cargando dispositivos" : "Cargando empleados"} />
           )}
           {!loading && !team && (
             <button
@@ -988,26 +972,13 @@ export default function TeamPanel({
                       Pendiente de aceptar
                     </p>
                     <p>
-                      Comparte el enlace con {editing.name} o pídele que escanee
-                      el QR desde su dispositivo.
+                      Comparte el enlace o el QR con {editing.name}.
                     </p>
                     {codeCard()}
-                    <div className="employee-invitation-next my-7 border-t border-line pt-6">
-                      <h2>¿Qué hará el empleado?</h2>
-                      <ol>
-                        <li>
-                          Abrir la invitación en el dispositivo que usará y
-                          entrar con su cuenta de Google.
-                        </li>
-                        <li>
-                          Crear su PIN de 6 dígitos y vincular ese dispositivo.
-                        </li>
-                        <li>
-                          Necesitará tu autorización para cambiar de
-                          dispositivo.
-                        </li>
-                      </ol>
-                    </div>
+                    <details className="employee-invitation-next">
+                      <summary>Cómo se activa el acceso</summary>
+                      <p>El empleado entra con Google y crea su PIN en su dispositivo. Necesita tu autorización para cambiarlo.</p>
+                    </details>
                   </>
                 ) : (
                   <>
@@ -1077,9 +1048,7 @@ export default function TeamPanel({
                     <div className="employee-invite-explanation flex items-start gap-3 border-t border-line pt-6 [&_svg]:mt-0.5 [&_svg]:shrink-0 [&_p]:max-w-105 [&_p]:text-sm">
                       <Link size={20} aria-hidden="true" />
                       <p>
-                        Recibirás un enlace y un QR para compartir. El empleado
-                        entrará con Google, creará su PIN y vinculará su
-                        dispositivo.
+                        Comparte la invitación. El empleado elige su PIN y vincula su dispositivo.
                       </p>
                     </div>
                   )}
@@ -1089,13 +1058,7 @@ export default function TeamPanel({
                       disabled={busy || Boolean(editing && !employeeDirty)}
                       aria-busy={busy}
                     >
-                      {busy
-                        ? editing
-                          ? "Guardando…"
-                          : "Creando invitación…"
-                        : editing
-                          ? "Guardar cambios"
-                          : "Crear invitación"}
+                      <AccessButtonContent busy={busy}>{editing ? "Guardar cambios" : "Crear invitación"}</AccessButtonContent>
                     </button>
                     {!editing && (
                       <button
@@ -1119,7 +1082,7 @@ export default function TeamPanel({
                       <p className="field-help text-sm text-muted">
                         {!editing.pinReady && invitation?.status === "pending"
                           ? "Lo creará al aceptar la invitación."
-                          : "El empleado elige su PIN. Si necesita uno nuevo, crea un código y compártelo con él."}
+                          : "Genera un código para que el empleado elija su PIN."}
                       </p>
                       {editing.active &&
                         (editing.pinReady ||
@@ -1270,10 +1233,11 @@ export default function TeamPanel({
                   >
                     {employees.map((employee) => (
                       <li key={employee.id}>
-                        <div>
+                        <span className="management-person-avatar" aria-hidden="true">{employee.name.trim().split(/\s+/).slice(0, 2).map(part => part[0]).join("").toUpperCase()}</span>
+                        <div className="management-person-info">
                           <strong>{employee.name}</strong>
                           <p>
-                            {(employee.permissions ?? []).length} permisos. {accessLabel(employee)}
+                            {(employee.permissions ?? []).length} permisos · {accessLabel(employee)}
                           </p>
                         </div>
                         <button
@@ -1301,9 +1265,7 @@ export default function TeamPanel({
                   className="management-section mt-10 [&_h2]:mb-2 [&_h2]:text-[21px] [&_h2]:font-medium [&[role=tabpanel]]:mt-6"
                 >
                   <p>
-                    Vincula una tablet o computadora para empleados que tienen
-                    acceso de caja con PIN. Quienes usan Google deben entrar
-                    desde su dispositivo vinculado.
+                    Cajas compartidas para acceso con PIN. Google usa el dispositivo personal vinculado.
                   </p>
                   {codeCard()}
                   {deviceToRemove && (

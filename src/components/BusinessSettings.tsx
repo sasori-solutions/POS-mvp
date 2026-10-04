@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
+import PointSetup from './PointSetup';
+import { usePoint } from './usePoint';
 import type {
   BusinessContext,
   BusinessProfile,
@@ -11,6 +13,7 @@ import type {
 interface BusinessSettingsProps {
   business: BusinessContext;
   operatorToken: string;
+  focusPaymentMethods?: boolean;
   onSaved: (business: BusinessContext) => void;
   onBack: () => void;
   onSessionError?: (error: AccountClientError) => void;
@@ -26,7 +29,8 @@ const timezones = [
 ];
 const paymentOptions: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Efectivo" },
-  { value: "card_external", label: "Tarjeta en terminal" },
+  { value: "card_external", label: "Tarjeta externa" },
+  { value: "card_integrated", label: "Mercado Pago" },
   { value: "transfer", label: "Transferencia" },
 ];
 const emptyProfile: BusinessProfile = {
@@ -42,8 +46,8 @@ const emptyProfile: BusinessProfile = {
 export default function BusinessSettings({
   business,
   operatorToken,
+  focusPaymentMethods = false,
   onSaved,
-  onBack,
   onSessionError,
 }: BusinessSettingsProps) {
   const [name, setName] = useState(business.name);
@@ -59,6 +63,11 @@ export default function BusinessSettings({
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [denied, setDenied] = useState(business.role !== "owner");
+  const [pointSetup, setPointSetup] = useState(false);
+  const paymentMethodInput = useRef<HTMLInputElement>(null);
+  const paymentFocusPending = useRef(false);
+  const pointAccess = { businessId: business.id, operatorToken };
+  const point = usePoint(pointAccess, business.role === 'owner', onSessionError);
   const saving = useRef(false);
   const mounted = useRef(true);
 
@@ -68,6 +77,14 @@ export default function BusinessSettings({
       mounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!pointSetup && (focusPaymentMethods || paymentFocusPending.current)) {
+      paymentMethodInput.current?.focus();
+      paymentMethodInput.current?.scrollIntoView?.({ block: 'center' });
+      paymentFocusPending.current = false;
+    }
+  }, [pointSetup, focusPaymentMethods]);
 
   function changeProfile<K extends keyof BusinessProfile>(
     key: K,
@@ -163,17 +180,9 @@ export default function BusinessSettings({
     JSON.stringify(profile) !==
       JSON.stringify({ ...emptyProfile, ...business.profile });
 
+  if (pointSetup) return <PointSetup access={pointAccess} controller={point} paymentMethodEnabled={business.profile.paymentMethods.includes('card_integrated')} onOpenPaymentMethods={() => { paymentFocusPending.current = true; setPointSetup(false); }} onBack={() => setPointSetup(false)} onSessionError={onSessionError} />;
   return (
-    <div className="management-shell w-full max-w-160 pb-16 max-compact:pb-10">
-      <button
-        type="button"
-        className="back-button -mt-4 mb-4 flex min-h-12 items-center gap-2 self-start border-0 bg-transparent pt-0 pb-4 text-sm text-muted hover:text-ink"
-        disabled={busy}
-        onClick={onBack}
-      >
-        <ArrowLeft size={18} aria-hidden="true" />
-        Volver
-      </button>
+    <div className="management-shell management-polish settings-polish">
       <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
         <h1>Datos del negocio</h1>
       </div>
@@ -256,9 +265,7 @@ export default function BusinessSettings({
                 ))}
               </select>
             </div>
-            <p className="field-help text-sm text-muted">
-              Moneda: peso mexicano (MXN).
-            </p>
+            <span className="access-info-label">MXN · Peso mexicano</span>
           </fieldset>
           <fieldset className="settings-group">
             <legend>Sucursal y caja</legend>
@@ -366,6 +373,7 @@ export default function BusinessSettings({
               >
                 <input
                   type="checkbox"
+                  ref={value === "card_integrated" ? paymentMethodInput : undefined}
                   checked={profile.paymentMethods.includes(value)}
                   disabled={busy}
                   onChange={(event) =>
@@ -383,9 +391,9 @@ export default function BusinessSettings({
               </label>
             ))}
             <p className="field-help text-sm text-muted">
-              Selecciona las formas de pago que aceptas. La tarjeta se cobra en
-              tu terminal. Esta selección no conecta la terminal a la app.
+              Mercado Pago envía el cobro a la terminal. Tarjeta externa lo registra manualmente.
             </p>
+            <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Vincular una terminal</button>
           </fieldset>
           <div className="management-actions mt-1 flex flex-wrap gap-3 max-compact:flex-col">
             <button
@@ -393,7 +401,7 @@ export default function BusinessSettings({
               disabled={busy || !dirty}
               aria-busy={busy}
             >
-              {busy ? "Guardando…" : "Guardar cambios"}
+              <AccessButtonContent busy={busy}>Guardar cambios</AccessButtonContent>
             </button>
           </div>
         </form>

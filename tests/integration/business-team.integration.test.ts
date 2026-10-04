@@ -142,7 +142,7 @@ describe.skipIf(!config)('business profile, personal employees and shared device
 
   it('rejects expired/revoked invitations and accepts only one competing identity', async () => {
     const business = await newBusiness(owner); const ownerArgs = { businessId: business.business.id, operatorToken: business.operatorToken };
-    const invite = () => account<{ invitationCode: string; invitationId: string }>(owner, { action: 'create_invitation', ...ownerArgs, name: `Encargado sintético ${randomUUID().slice(0, 8)}`, role: 'manager', operationId: randomUUID() });
+    const invite = () => account<{ invitationCode: string; invitationId: string }>(owner, { action: 'create_invitation', ...ownerArgs, name: `Encargado sintético ${randomUUID().slice(0, 8)}`, role: 'cashier', permissions: ['catalog.read', 'catalog.manage'], operationId: randomUUID() });
     const expired = (await invite()).body.data!;
     sql(`update app_private.business_invitations set expires_at=now()-interval '1 second' where id=${sqlUuid(expired.invitationId)};`);
     expect((await account(employee, { action: 'accept_invitation', invitationCode: expired.invitationCode, name: 'Persona sintética', pin: '246802', operationId: randomUUID() })).body.error?.code).toBe('INVITATION_INVALID');
@@ -153,12 +153,12 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     const concurrent = await Promise.all([employee, anotherOwner].map(identity => account(identity, { action: 'accept_invitation', invitationCode: live.invitationCode, name: 'Persona sintética', pin: '246802', operationId: randomUUID() })));
     expect(concurrent.map(r => r.status).sort()).toEqual([200, 400]);
     expect(concurrent.find(r => r.status === 400)?.body.error?.code).toBe('INVITATION_INVALID');
-    expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role='manager' and user_id is not null;`).trim()).toBe('1');
+    expect(sql(`select count(*) from app_private.employees where business_id=${sqlUuid(business.business.id)} and role='cashier' and permissions @> array['catalog.read','catalog.manage'] and cardinality(permissions)=2 and user_id is not null;`).trim()).toBe('1');
   });
 
   it('enforces shared employee PIN lockout under concurrency and removes inactive operators', async () => {
     const business = await newBusiness(owner); const ownerArgs = { businessId: business.business.id, operatorToken: business.operatorToken };
-    const request = { action: 'create_employee', ...ownerArgs, name: 'Cocina sintética', role: 'kitchen', pin: null, operationId: randomUUID() };
+    const request = { action: 'create_employee', ...ownerArgs, name: 'Cocina sintética', role: 'cashier', permissions: ['kitchen.read', 'kitchen.operate'], pin: null, operationId: randomUUID() };
     const people = await Promise.all([account<{ id: string }>(owner, request), account<{ id: string }>(owner, request)]);
     expect(people[0].status).toBe(200); expect(people[1].body.data?.id).toBe(people[0].body.data?.id); const employeeId=people[0].body.data!.id;
     expect((await account(owner, { ...request, role: 'manager' })).body.error?.code).toBe('OPERATION_CONFLICT');
@@ -171,7 +171,8 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     expect(locked.filter(r=>r.body.error?.code==='PIN_INVALID')).toHaveLength(4); expect(locked.filter(r=>r.body.error?.code==='PIN_LOCKED')).toHaveLength(1);
     expect((await account(null,login)).body.error?.code).toBe('PIN_LOCKED');
     sql(`update app_private.shared_employee_credentials set locked_until=now()-interval '1 second' where employee_id=${sqlUuid(employeeId)};`);
-    const unlocked=await account<BusinessSession>(null,login); expect(unlocked.status).toBe(200); expect(unlocked.body.data?.business.role).toBe('kitchen');
+    const unlocked=await account<BusinessSession>(null,login); expect(unlocked.status).toBe(200); expect(unlocked.body.data?.business.role).toBe('cashier');
+    expect(unlocked.body.data?.business.permissions.slice().sort()).toEqual(['kitchen.read','kitchen.operate'].sort());
     expect((await account(owner,{ action:'team',businessId:business.business.id,operatorToken:unlocked.body.data!.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
     expect((await account(owner,{ action:'update_employee',...ownerArgs,employeeId,name:'Cocina sintética',role:'kitchen',active:false,pin:null })).status).toBe(200);
     expect((await account(null,{ action:'device_context',deviceToken:device.deviceToken,operatorToken:unlocked.body.data!.operatorToken })).body.error?.code).toBe('SESSION_INVALID');
