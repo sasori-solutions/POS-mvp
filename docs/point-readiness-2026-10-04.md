@@ -22,6 +22,7 @@ PWA, métodos, reservas, división por artículos, descuentos/IVA, Auth y revoca
 | Recursos truncados | Paginación acotada, POS máximo 30 por página, filtro de sucursal y verificación de receptor/duplicados/paging. Exceso falla explícitamente. |
 | Importe no admitido reservaba terminal | Rechazo antes de checkout Point: mínimo $5.00 sólo virtual oficial y máximo del adaptador. Sin orden, trabajo o movimiento monetario. |
 | Tarjeta y Mercado Pago como opciones distintas | Una sola Tarjeta. Perfiles anteriores se convierten al guardar como dueño; contratos históricos y recuperación exacta anterior permanecen. |
+| Alta nueva guardaba la tarjeta antigua | Nuevos negocios guardan `card_integrated` con etiqueta Tarjeta. El alta no vincula ni activa Point; no normaliza reintentos pendientes. |
 | Home conservaba configuración anterior al volver | Consulta de estado al salir de Configuración o guardar métodos; no inicia consultas en cada render. |
 | Terminal lista, pero aviso pedía volver a vincularla | Se identifica el paso pendiente: pausa, activar Tarjeta en Formas de pago según rol, o vincular terminal. Sin cambios automáticos de perfil. |
 | Rechazo parcial documentado retenía saldo disponible | Sólo `400 unsupported_partially_refunds`, primer parcial y dos GET sin devoluciones permiten cerrar la solicitud como rechazada. Dinero e historial no cambian. |
@@ -54,6 +55,8 @@ Regresión funcional headless: seis casos Point entre escritorio/móvil (aprobar
 Después de ajustar la cobertura legacy: **294 unitarias y 498 de componentes/SQL aprobadas**, build y lint sin errores.
 
 Último ajuste de mensajes de activación: tres fallos reproducidos antes del cambio. Casos de dueño, cajero, gerente, pausa y terminal ausente comprobados; **294 unitarias y 503 de componentes/SQL aprobadas**, build, TypeScript y lint sin errores. No cambia permisos, configuración ni dinero.
+
+Alta de negocio alineada: regresión previa falló por ausencia de Tarjeta; **68 pruebas enfocadas y 6/6 E2E funcionales** entre escritorio/móvil aprobados, build y lint correctos. Toggle, validación y comando `create_business` con tarjeta integrada; ninguna activación Point automática. Respuesta perdida compara UUID y contenido completo del comando, excluyendo sólo `deviceProof`, cuyo nonce y firma se renuevan al autorizar cada reintento.
 
 No se usó navegador para revisar diseño, conforme al usuario. Desarrollo de esta rama: `http://127.0.0.1:5181/`. Backend compatible se aplica antes del frontend; el frontend sigue PR revisado y CI de DEPLOYMENT. Aplicar backend no significa publicar los nuevos assets.
 

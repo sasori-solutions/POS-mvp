@@ -115,6 +115,9 @@ test('a lost business-creation response can be retried with the same operation i
   const attempts = calls.filter((call) => call.action === 'create_business');
   expect(attempts).toHaveLength(2);
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
+  const payloads = attempts.map(({ deviceProof: _deviceProof, ...payload }) => payload);
+  expect(payloads[1]).toEqual(payloads[0]);
+  expect(attempts[0]).toMatchObject({ profile: { paymentMethods: ['cash', 'card_integrated'] } });
   await page.getByRole('button', { name: 'Abrir Dashboard', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(2);

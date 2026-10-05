@@ -24,6 +24,33 @@ test('a new Google account chooses whether to create or join a business', async 
   await capture(page, testInfo.project.name, 'onboarding-choice');
 });
 
+test('new business card selection saves only Tarjeta without activating or linking Point', async ({ page }) => {
+  const { calls } = await mockOnboarding(page);
+  await page.goto('/business/new');
+  await page.getByLabel('Nombre del negocio', { exact: true }).fill('Café de tarjeta');
+  const card = page.getByRole('checkbox', { name: 'Tarjeta', exact: true });
+  await expect(card).toBeChecked();
+  await expect(page.getByRole('checkbox')).toHaveCount(3);
+  await expect(page.getByRole('checkbox', { name: /Tarjeta en terminal|Tarjeta externa|Mercado Pago/ })).toHaveCount(0);
+  await card.uncheck();
+  await expect(card).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Efectivo', exact: true })).toBeChecked();
+  await card.check();
+  await expect(card).toBeChecked();
+  expect(calls.filter(call => call.action === 'create_business')).toHaveLength(0);
+
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await fillAccountPin(page);
+  await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
+  const creations = calls.filter(call => call.action === 'create_business');
+  expect(creations).toHaveLength(1);
+  expect(creations[0].profile.paymentMethods).toEqual(['cash', 'card_integrated']);
+  expect(creations[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(calls.filter(call => call.action === 'point' || call.action === 'device_point')).toHaveLength(0);
+  expect(calls.filter(call => call.action === 'update_business')).toHaveLength(0);
+});
+
 test('creation saves branch, register and progressive profile for later editing', async ({ page }, testInfo) => {
   const { calls } = await mockOnboarding(page);
   await page.goto('/');
@@ -43,7 +70,7 @@ test('creation saves branch, register and progressive profile for later editing'
   const create = calls.find((call) => call.action === 'create_business');
   expect(create).toMatchObject({ profile: {
     branchName: 'Centro', registerName: 'Mostrador', city: 'Guadalajara', state: 'Jalisco',
-    paymentMethods: ['cash', 'card_external', 'transfer'],
+    paymentMethods: ['cash', 'card_integrated', 'transfer'],
   } });
   await page.getByRole('button', { name: 'Abrir Dashboard', exact: true }).click();
   await openOwnerTask(page, 'Datos del negocio');
@@ -75,7 +102,7 @@ test('invalid branch, payment methods and phone stay on business details before 
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   await page.getByLabel('Sucursal', { exact: true }).fill('Principal');
   await page.getByLabel('Efectivo', { exact: true }).uncheck();
-  await page.getByLabel('Tarjeta en terminal', { exact: true }).uncheck();
+  await page.getByLabel('Tarjeta', { exact: true }).uncheck();
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/método|pago/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();

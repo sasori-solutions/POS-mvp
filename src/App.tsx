@@ -118,7 +118,7 @@ const initialDraft: BusinessDraft = {
     city: "",
     state: "",
     contactPhone: "",
-    paymentMethods: ["cash", "card_external"],
+    paymentMethods: ["cash", "card_integrated"],
   },
 };
 const invitationKey = "pos-mexico-pending-invitation";
@@ -1846,7 +1846,7 @@ function AccountApp() {
                   {(
                     [
                       ["cash", "Efectivo"],
-                      ["card_external", "Tarjeta en terminal"],
+                      ["card_integrated", "Tarjeta"],
                       ["transfer", "Transferencia"],
                     ] as const
                   ).map(([method, label]) => (
