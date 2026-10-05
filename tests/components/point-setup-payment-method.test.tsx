@@ -130,14 +130,26 @@ test('a legacy external-card preference converts only when the owner explicitly 
     if (parsed.action !== 'update_business') throw new Error('Unexpected request')
     return { ...business, profile: parsed.profile } as never
   })
-  render(<BusinessSettings business={legacy} operatorToken={'a'.repeat(64)} onSaved={saved} onBack={vi.fn()} />)
+  const view = render(<BusinessSettings business={legacy} operatorToken={'a'.repeat(64)} onSaved={saved} onBack={vi.fn()} />)
   expect((screen.getByRole('checkbox', { name: 'Tarjeta' }) as HTMLInputElement).checked).toBe(true)
   expect(screen.getAllByRole('checkbox')).toHaveLength(3)
   expect(screen.queryByRole('checkbox', { name: 'Tarjeta externa' })).toBeNull()
   expect(accountRequest).not.toHaveBeenCalled()
   expect(legacy.profile.paymentMethods).toEqual(['cash', 'card_external', 'card_integrated'])
+  expect((screen.getByRole('button', { name: 'Guardar cambios' }) as HTMLButtonElement).disabled).toBe(false)
   fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
   await waitFor(() => expect(saved).toHaveBeenCalledOnce())
   expect(vi.mocked(accountRequest).mock.calls[0][0]).toMatchObject({ profile: { paymentMethods: ['cash', 'card_integrated'] } })
   expect(saved.mock.calls[0][0].profile.paymentMethods).toEqual(['cash', 'card_integrated'])
+  view.rerender(<BusinessSettings business={saved.mock.calls[0][0]} operatorToken={'a'.repeat(64)} onSaved={saved} onBack={vi.fn()} />)
+  expect((screen.getByRole('button', { name: 'Guardar cambios' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(accountRequest).toHaveBeenCalledOnce()
+})
+
+test('canonical saved card preferences leave saving disabled without an owner edit', () => {
+  const canonical = { ...business, profile: { ...business.profile, paymentMethods: ['cash', 'card_integrated'] as BusinessContext['profile']['paymentMethods'] } }
+  render(<BusinessSettings business={canonical} operatorToken={'a'.repeat(64)} onSaved={vi.fn()} onBack={vi.fn()} />)
+  expect((screen.getByRole('checkbox', { name: 'Tarjeta' }) as HTMLInputElement).checked).toBe(true)
+  expect((screen.getByRole('button', { name: 'Guardar cambios' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(accountRequest).not.toHaveBeenCalled()
 })

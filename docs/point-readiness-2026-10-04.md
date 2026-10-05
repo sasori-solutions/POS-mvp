@@ -46,7 +46,11 @@ Una devolución parcial de $2.00 de esa orden sintética respondió HTTP 412. **
 
 ## Verificación y entrega
 
-Suites de dinero/snapshots/IVA/descuentos/doble envío/respuesta perdida/aborto/devolución/revocación. Resultado final: **294 unitarias**, **497 de componentes/SQL**, **23 del adaptador HTTP**, **15 integraciones Point** y **33 integraciones financieras**, sin fallos ni omisiones. Build, TypeScript, lint y los tres bundles standalone comprobados con Deno. La integración financiera estándar incluye tres regresiones Auth concurrentes; Point usa Auth/Edge/PostgreSQL locales reales y proveedor HTTP loopback. Auditor local de ledger: nueve contadores cero. Commit exacto y CI quedan en el PR.
+Suites de dinero/snapshots/IVA/descuentos/doble envío/respuesta perdida/aborto/devolución/revocación. Resultado de código `2d92bd8`: **294 unitarias**, **497 de componentes/SQL**, **23 del adaptador HTTP**, **15 integraciones Point** y **33 integraciones financieras**, sin fallos ni omisiones. Build, TypeScript, lint y los tres bundles standalone comprobados con Deno. La integración financiera estándar incluye tres regresiones Auth concurrentes; Point usa Auth/Edge/PostgreSQL locales reales y proveedor HTTP loopback. Auditor local de ledger: nueve contadores cero. Commit final y CI quedan en el PR.
+
+Regresión funcional headless: seis casos Point entre escritorio/móvil (aprobar, recuperar respuesta perdida con recarga/PIN/dos pestañas, cancelar) y dos casos de conversión explícita legacy, **8/8 aprobados**. No se revisaron capturas. Primera CI de `2d92bd8`: Basic, Edge e integración aprobados (911 pruebas sin skips); Web tuvo 299 aprobadas, dos expectativas antiguas de Guardar y un caso móvil que aprobó reintento. Se corrigió el fixture normal para usar métodos actuales, conservando prueba legacy que exige guardar explícitamente. El caso con múltiples arranques/dos pestañas dispone de 60 s totales; conserva los límites y comprobaciones individuales. La nueva corrida queda enlazada en el PR.
+
+Después de ajustar la cobertura legacy: **294 unitarias y 498 de componentes/SQL aprobadas**, build y lint sin errores.
 
 No se usó navegador para revisar diseño, conforme al usuario. Desarrollo de esta rama: `http://127.0.0.1:5181/`. Backend compatible se aplica antes del frontend; el frontend sigue PR revisado y CI de DEPLOYMENT. Aplicar backend no significa publicar los nuevos assets.
 
@@ -60,7 +64,7 @@ Proyecto `sdisalomdxgejyhpxtri`: cinco migraciones nuevas aplicadas, historial c
 | point-worker | 5 | `74af0a2b88d0f0433f68e15cbde1df44b5b881fcb89ef5999c4c2a4756ac5b4d` |
 | point-webhook | 5 | `3d4b379b052da37e3d21bbe42319dc9a3b5ae9fd107af51b91301abd97fe3607` |
 
-Fuentes descargadas idénticas a los bundles. Cron activo `15 seconds`, comando exacto comprobado por MD5 `c38450cf91189d6c84b8c4d98579b636`. Ejecución 00:47 UTC: HTTP 200, `failed=0`; cero trabajos pendientes y cero aprobadas sin materializar. Probes anónimos: account/worker 401, origen no permitido 403 y `no-store`.
+Fuentes descargadas idénticas a los bundles. Cron activo `15 seconds`, comando exacto comprobado por MD5 `c38450cf91189d6c84b8c4d98579b636`. Ejecuciones 00:47 y 00:55:30 UTC: HTTP 200, `failed=0`; cero trabajos pendientes, en revisión o aprobadas sin materializar. Nueve controles financieros publicados con cero inconsistencias. Probes anónimos: account/worker 401, origen no permitido 403 y `no-store`.
 
 Webhook sin firma devolvió **503 SERVER_ERROR**: la configuración de firmas continúa incompleta; no acredita notificaciones operativas. No se configuraron nuevas credenciales ni se modificaron cobros humanos para obtener esta evidencia. El frontend publicado conserva el commit `446d3ed`; los nuevos assets esperan revisión humana y CI de PR #24.
 

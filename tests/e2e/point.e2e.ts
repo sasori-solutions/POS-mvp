@@ -33,6 +33,9 @@ test('Point linked SQL payment creates one sale and reports verified volume; own
 })
 
 test('uncertain action_required blocks cart/payment changes and restores through reload/PIN and two tabs', async ({page,context}) => {
+  // Several app boots and independent polling views share a constrained CI runner.
+  // Keep each assertion's deadline; allow the complete recovery scenario to finish.
+  test.setTimeout(60_000)
   const backend = await mockPoint(page,{state:'unknown_review',startLoss:true})
   const other = await context.newPage()
   try {
