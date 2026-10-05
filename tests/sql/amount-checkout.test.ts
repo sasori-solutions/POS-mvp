@@ -76,7 +76,8 @@ describe('amount checkout settlement', () => {
     expect(quotes.reduce((s,q)=>s+q.taxCents,0)).toBe(original.taxCents)
     expect(quotes.reduce((s,q)=>s+q.items.reduce((n,i)=>n+i.quantity,0),0)).toBe(1)
     expect(order.items[0].paidQuantity).toBe(1)
-    const report=await execute<{grossCents:number;discountCents:number;salesCents:number;taxCents:number}>(actor,{command:'report',date:order.createdAt.slice(0,10)})
+    const date = await businessDate(actor)
+    const report=await execute<{grossCents:number;discountCents:number;salesCents:number;taxCents:number}>(actor,{command:'report',date})
     expect(report).toMatchObject({grossCents:76068,discountCents:0,salesCents:76068,taxCents:original.taxCents})
     expect((await db.query<{result:Record<string,number>}>('select app_private.ops_financial_ledger_check() as result')).rows[0].result).toEqual(expect.objectContaining({invalidSales:0,invalidCompletedAttempts:0,invalidOrders:0}))
   })
@@ -187,7 +188,7 @@ describe('amount checkout settlement', () => {
     const otherOrder = await createOrder(owner, [{ product: item, quantity: 1 }])
     const otherQuote = await execute<CheckoutAttempt>(owner, { command: 'prepare_checkout', operationId: randomUUID(), orderId: otherOrder.id, expectedRevision: otherOrder.revision, items: [{ lineId: otherOrder.items[0].lineId, quantity: 1 }], paymentMethod: 'cash' })
     await execute(owner, { command: 'record_checkout', operationId: randomUUID(), attemptId: otherQuote.id, expectedRevision: otherQuote.revision, confirmed: true })
-    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const date = await businessDate(employee)
     let own = await execute<BusinessPeriodReport>(employee, { command: 'report_own_period', date, period: 'day' })
     expect(own.totals).toMatchObject({ grossCents: 5800, discountCents: 580, salesCents: 5220, taxCents: 720, saleCount: 1, operators: [], cashDifferences: [] })
     expect(own.totals.products).toHaveLength(1)
@@ -211,6 +212,13 @@ describe('amount checkout settlement', () => {
     }
   })
 })
+
+async function businessDate(actor: Actor): Promise<string> {
+  return (await db.query<{ day: string }>(
+    "select to_char(clock_timestamp() at time zone timezone, 'YYYY-MM-DD') as day from app_private.businesses where id = $1",
+    [actor.businessId],
+  )).rows[0].day
+}
 
 async function fixture(openingCents = 0): Promise<Actor> {
   const actor = { userId: randomUUID(), sessionId: randomUUID(), businessId: randomUUID(), employeeId: randomUUID(), token: randomUUID().replaceAll('-', '').repeat(2), keyHash: randomUUID().replaceAll('-', '').repeat(2) }
