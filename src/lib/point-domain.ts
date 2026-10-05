@@ -38,7 +38,7 @@ export function mapPointState(status: string, detail: string, transactionStatus:
   if (status === 'processed' && ['processed', 'accredited'].includes(detail) && transactionStatus === 'processed' && ['processed', 'accredited'].includes(transactionDetail)) return 'approved_verified'
   const definitive = ['failed','bad_filled_card_data','insufficient_amount','high_risk','rejected_by_issuer','required_call_for_authorize','max_attempts_exceeded','card_disabled','amount_limit_exceeded','invalid_installments','processing_error']
   if (status === 'failed' && detail === 'failed' && transactionStatus === 'failed' && definitive.includes(transactionDetail)) return 'rejected'
-  if (status === 'canceled' && ['canceled','canceled_by_api','canceled_on_terminal'].includes(detail) && transactionStatus === 'canceled' && ['canceled','canceled_by_api','canceled_on_terminal'].includes(transactionDetail)) return 'cancelled'
+  if (status === 'canceled' && ['canceled','canceled_by_api','canceled_on_terminal'].includes(detail) && transactionStatus === 'canceled' && ['canceled','canceled_by_api','canceled_on_terminal','cancel_by_terminal'].includes(transactionDetail)) return 'cancelled'
   if (status === 'expired' && detail === 'expired' && ['created','expired'].includes(transactionStatus)) return 'expired'
   if (status === 'at_terminal' && detail === 'at_terminal' && ['created','at_terminal'].includes(transactionStatus)) return 'sent_to_terminal'
   if (status === 'created' && detail === 'created' && transactionStatus === 'created') return 'pending'

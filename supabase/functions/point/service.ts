@@ -1,5 +1,5 @@
 import { challenge, digest, randomSecret, TokenVault } from './crypto.ts'
-import { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, verifyOrder } from './provider.ts'
+import { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, validateCreatePayload, verifyOrder } from './provider.ts'
 import type { Environment, ExpectedOrder, PointAdapter, TokenSet } from './provider.ts'
 export interface RpcClient { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> }
 export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string; testAccessToken?: string; localSimulator?: boolean; oauthAvailable?: boolean }
@@ -79,12 +79,49 @@ function redacted(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value
   return Object.fromEntries(Object.entries(value).filter(([key]) => !/token|secret|ciphertext|verifier|backendDirective|lease/i.test(key)).map(([key, item]) => [key, redacted(item)]))
 }
-async function terminals(config: Configuration, token: TokenSet, storeId?: string, posId?: string): Promise<Record<string, unknown>[]> {
-  const path = `/terminals/v1/list?limit=50&offset=0${storeId ? `&store_id=${identifier(storeId)}` : ''}${posId ? `&pos_id=${identifier(posId)}` : ''}`
-  const result = await config.adapter.request(token, path)
-  const list = record(result.data).terminals
-  if (!Array.isArray(list)) throw new ProviderError('INVALID_RESPONSE')
-  return list.map(item => { const t = record(item); return { id: identifier(t.id), serial: identifier(t.id).split('__').at(-1), branchId: identifier(t.store_id), registerId: identifier(t.pos_id), mode: String(t.operating_mode), verified: false, active: false, physicalStepsPending: true } })
+type ResourceBudget = { remaining: number; deadline?: number }
+async function resourcePages(config: Configuration, token: TokenSet, path: string, select: (page: Record<string, unknown>) => unknown,
+  limit: number, budget: ResourceBudget = { remaining: 40 }): Promise<Record<string, unknown>[]> {
+  const result: Record<string, unknown>[] = [], seen = new Set<string>()
+  budget.deadline ??= Date.now() + 15000
+  let offset = 0, knownTotal: number | undefined
+  while (true) {
+    const remainingMs = budget.deadline - Date.now()
+    if (--budget.remaining < 0 || remainingMs <= 0) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let page: Record<string, unknown>
+    try {
+      page = await Promise.race([config.adapter.request(token, `${path}${path.includes('?') ? '&' : '?'}limit=${limit}&offset=${offset}`),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new PointServiceError('POINT_SERVICE_UNAVAILABLE')), remainingMs) })])
+    } finally { clearTimeout(timer) }
+    if (Date.now() >= budget.deadline) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+    const items = select(page)
+    if (!Array.isArray(items) || items.length > limit) throw new ProviderError('INVALID_RESPONSE')
+    const paging = page.paging === undefined ? null : record(page.paging)
+    if (paging) {
+      if (!Number.isSafeInteger(paging.total) || Number(paging.total) < offset + items.length
+        || paging.offset !== undefined && paging.offset !== offset
+        || paging.limit !== undefined && (!Number.isSafeInteger(paging.limit) || Number(paging.limit) < 1 || Number(paging.limit) > limit)) throw new ProviderError('INVALID_RESPONSE')
+      if (Number(paging.total) > 500) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+      if (knownTotal !== undefined && paging.total !== knownTotal) throw new ProviderError('INVALID_RESPONSE')
+      knownTotal = Number(paging.total)
+    }
+    for (const item of items) {
+      const row = record(item), id = identifier(row.id)
+      if (seen.has(id)) throw new ProviderError('INVALID_RESPONSE')
+      seen.add(id); result.push(row)
+    }
+    offset += items.length
+    if (result.length > 500) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+    if (knownTotal !== undefined ? offset === knownTotal : items.length < limit) return result
+    if (!items.length) throw new ProviderError('INVALID_RESPONSE')
+  }
+}
+async function terminals(config: Configuration, token: TokenSet, storeId?: string, posId?: string, budget?: ResourceBudget): Promise<Record<string, unknown>[]> {
+  const filters = `${storeId ? `store_id=${identifier(storeId)}` : ''}${posId ? `${storeId ? '&' : ''}pos_id=${identifier(posId)}` : ''}`
+  const path = `/terminals/v1/list${filters ? `?${filters}` : ''}`
+  const list = await resourcePages(config, token, path, page => record(page.data).terminals, 50, budget)
+  return list.map(t => ({ id: identifier(t.id), serial: identifier(t.id).split('__').at(-1), branchId: identifier(t.store_id), registerId: identifier(t.pos_id), mode: String(t.operating_mode), verified: false, active: false, physicalStepsPending: true }))
 }
 /** Called only AFTER SQL authorized the exact account/device command. Directives never cross the browser boundary. */
 export async function processPointResult(admin: RpcClient, request: Record<string, unknown>, result: unknown,
@@ -92,10 +129,10 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
   const data = record(result)
   if (!data.backendDirective) {
     if (request.command === 'settings') {
-      let available = false, availableEnvironment: Environment | null = null
+      let available = false, chargesEnabled = false, availableEnvironment: Environment | null = null
       let official = supplied ? !supplied.localSimulator : Deno.env.get('MP_ALLOW_LOCAL_SIMULATOR') !== 'true'
-      try { const configured = supplied ?? configuration(); official = !configured.localSimulator; available = Boolean(configured.testAccessToken && official); availableEnvironment = configured.oauthAvailable ? configured.environment : null } catch { /* Feature remains visible but disabled without server credentials. */ }
-      return redacted({ ...data, availableEnvironment, sandbox: { available, official, testBusiness: record(data.sandbox ?? {}).testBusiness === true } })
+      try { const configured = supplied ?? configuration(); official = !configured.localSimulator; chargesEnabled = configured.chargesEnabled; available = Boolean(configured.testAccessToken && official); availableEnvironment = configured.oauthAvailable ? configured.environment : null } catch { /* Feature remains visible but disabled without server credentials. */ }
+      return redacted({ ...data, chargesEnabled, availableEnvironment, sandbox: { available, official, testBusiness: record(data.sandbox ?? {}).testBusiness === true } })
     }
     return redacted(data)
   }
@@ -137,7 +174,10 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
     const { verifier } = await config.vault.open<{ verifier: string }>(String(saved.verifierCiphertext), `oauth:${businessId}:${identity.userId}:${stateHash}`)
     const token = await config.adapter.exchange(request.code, verifier, config.environment)
     const tokensCiphertext = await config.vault.seal(token, `mercadopago:${businessId}:${config.environment}`)
-    await serviceRpc(admin, 'connection_save', { businessId, environment: token.environment, receiverId: token.receiverId, tokensCiphertext, expiresAt: token.expiresAt })
+    // OAuth I/O can outlive logout, PIN lock or ownership revocation. Complete
+    // only while the original actor and consumed browser state still authorize it.
+    await serviceRpc(admin, 'oauth_connection_save', { businessId, ...identity, operatorToken: request.operatorToken, stateHash,
+      redirectUri: config.redirectUri, environment: token.environment, receiverId: token.receiverId, tokensCiphertext, expiresAt: token.expiresAt })
     return { connected: true, environment: token.environment, receiverId: token.receiverId, terminalReady: false }
   }
   const connectionId = identifier(directive.connectionId)
@@ -152,6 +192,9 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
       const remoteOrderId = identifier(directive.remoteOrderId)
       const before = await config.adapter.order(token, remoteOrderId)
       if (identifier(before.id) !== remoteOrderId || identifier(before.user_id) !== token.receiverId || record(record(before.config).point).terminal_id !== 'NEWLAND_N950__SBX0000001' || before.live_mode === true || !['created', 'at_terminal', 'action_required'].includes(String(before.status))) throw new PointServiceError('POINT_STATE_INVALID')
+      // The official virtual device accepts approval to resolve check_on_terminal;
+      // cancellation from that state is rejected. This never overrides a live payment.
+      if (before.status === 'action_required' && (before.status_detail !== 'check_on_terminal' || request.status !== 'processed')) throw new PointServiceError('POINT_STATE_INVALID')
       const authorization = await serviceRpc(admin, 'official_sandbox_authorize', { businessId, ...identity, operatorToken: request.operatorToken, checkoutId: request.checkoutId, status: request.status })
       const fresh = record(authorization.backendDirective)
       if (fresh.connectionId !== connectionId || fresh.remoteOrderId !== remoteOrderId) throw new PointServiceError('POINT_STATE_INVALID')
@@ -167,12 +210,23 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
       return redacted({ ...data, verified: true, terminalReady: false })
     }
     if (command === 'resources') {
-      const stores = await config.adapter.request(token, `/users/${identifier(token.receiverId)}/stores/search?limit=50&offset=0`)
-      const points = await config.adapter.request(token, '/pos?limit=50&offset=0')
-      if (!Array.isArray(stores.results) || !Array.isArray(points.results)) throw new ProviderError('INVALID_RESPONSE')
-      const branches = stores.results.map(item => { const s = record(item); if (s.user_id !== undefined && identifier(s.user_id) !== token.receiverId) throw new ProviderError('INVALID_RESPONSE'); return { id: identifier(s.id), name: String(s.name ?? '') } })
-      const registers = points.results.map(item => { const p = record(item); if (p.user_id !== undefined && identifier(p.user_id) !== token.receiverId) throw new ProviderError('INVALID_RESPONSE'); return { id: identifier(p.id), branchId: identifier(p.store_id), name: String(p.name ?? '') } })
-      const availableTerminals = (await terminals(config, token)).map(terminal => ({
+      const budget = { remaining: 40 }
+      const stores = await resourcePages(config, token, `/users/${identifier(token.receiverId)}/stores/search`, page => page.results, 50, budget)
+      const branches = stores.map(s => { if (s.user_id !== undefined && identifier(s.user_id) !== token.receiverId) throw new ProviderError('INVALID_RESPONSE'); return { id: identifier(s.id), name: String(s.name ?? '') } })
+      const registers: { id: string; branchId: string; name: string }[] = [], registerIds = new Set<string>()
+      for (const branch of branches) {
+        // v2 POS does not promise store_id in its response. The provider's store
+        // filter establishes that relationship; never guess it from a name.
+        const points = await resourcePages(config, token, `/v2/pos?store_id=${branch.id}`, page => page.data, 30, budget)
+        for (const p of points) {
+          const id = identifier(p.id)
+          if (registerIds.has(id) || p.user_id !== undefined && identifier(p.user_id) !== token.receiverId
+            || p.store_id !== undefined && identifier(p.store_id) !== branch.id) throw new ProviderError('INVALID_RESPONSE')
+          registerIds.add(id); registers.push({ id, branchId: branch.id, name: String(p.name ?? '') })
+          if (registers.length > 500) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+        }
+      }
+      const availableTerminals = (await terminals(config, token, undefined, undefined, budget)).map(terminal => ({
         ...terminal,
         branchName: branches.find(branch => branch.id === terminal.branchId)?.name ?? '',
         registerName: registers.find(register => register.id === terminal.registerId)?.name ?? '',
@@ -180,15 +234,34 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
       return { branches, registers, terminals: availableTerminals }
     }
     if (command === 'create_branch') {
+      const externalId = `sasori${identifier(request.operationId).replaceAll('-', '')}`
+      const found = await config.adapter.request(token, `/users/${identifier(token.receiverId)}/stores/search?external_id=${externalId}`)
+      if (!Array.isArray(found.results) || found.results.length > 1) throw new ProviderError('INVALID_RESPONSE')
+      if (found.results.length === 1) {
+        const existing = record(found.results[0]), location = record(existing.location), requested = record(request.location)
+        if (existing.external_id !== externalId || existing.name !== request.name
+          || (existing.user_id !== undefined && identifier(existing.user_id) !== token.receiverId)
+          || Number(location.latitude) !== requested.latitude || Number(location.longitude) !== requested.longitude
+          || String(location.reference ?? '') !== String(requested.reference ?? '')) throw new PointServiceError('POINT_FACT_MISMATCH')
+        return { id: identifier(existing.id), name: String(existing.name) }
+      }
       const raw = await config.adapter.request(token, `/users/${identifier(token.receiverId)}/stores`, 'POST',
-        { name: request.name, external_id: `sasori_${identifier(request.operationId)}`, location: request.location })
+        { name: request.name, external_id: externalId, location: request.location })
       return { id: identifier(raw.id), name: String(raw.name ?? '') }
     }
     if (command === 'create_register') {
-      const branches = await config.adapter.request(token, `/users/${identifier(token.receiverId)}/stores/search?limit=50&offset=0`)
-      if (!Array.isArray(branches.results) || !branches.results.some(item => identifier(record(item).id) === request.branchId)) throw new PointServiceError('POINT_FACT_MISMATCH')
-      const raw = await config.adapter.request(token, '/pos', 'POST', { name: request.name, store_id: identifier(request.branchId), external_id: `sasori_${identifier(request.operationId)}`, fixed_amount: false })
-      return { id: identifier(raw.id), branchId: identifier(raw.store_id), name: String(raw.name ?? '') }
+      const branches = await resourcePages(config, token, `/users/${identifier(token.receiverId)}/stores/search`, page => page.results, 50)
+      if (branches.some(branch => branch.user_id !== undefined && identifier(branch.user_id) !== token.receiverId)
+        || !branches.some(branch => identifier(branch.id) === request.branchId)) throw new PointServiceError('POINT_FACT_MISMATCH')
+      const operationId = identifier(request.operationId)
+      const externalId = `sasori${operationId.replaceAll('-', '')}`
+      const raw = await config.adapter.request(token, '/v2/pos', 'POST', { name: request.name, store_id: identifier(request.branchId), external_id: externalId }, operationId)
+      if (raw.store_id !== undefined && identifier(raw.store_id) !== request.branchId
+        || raw.user_id !== undefined && identifier(raw.user_id) !== token.receiverId
+        || raw.external_id !== undefined && raw.external_id !== externalId) throw new PointServiceError('POINT_FACT_MISMATCH')
+      // v2 does not guarantee store_id in the response. Its owned store was
+      // checked before POST and the operation keeps the exact requested binding.
+      return { id: identifier(raw.id), branchId: identifier(request.branchId), name: String(raw.name ?? '') }
     }
     if (command === 'link_terminal' || command === 'test_terminal') {
       const serial = String(request.serial ?? directive.serial ?? '')
@@ -255,7 +328,8 @@ export async function runWorker(admin: RpcClient, supplied?: Configuration): Pro
         if (!config.chargesEnabled && !job.payload.firstSentAt) throw new PointServiceError('POINT_DISABLED')
         const firstSent = job.payload.firstSentAt
         if (firstSent && Date.now() - Date.parse(String(firstSent)) >= 23 * 3600000) throw new PointServiceError('POINT_IDEMPOTENCY_WINDOW_EXPIRED')
-        const created = await config.adapter.create(token, record(job.payload.createPayload), identifier(job.payload.idempotencyKey))
+        const payload = validateCreatePayload(job.payload.createPayload, expected, token)
+        const created = await config.adapter.create(token, payload, identifier(job.payload.idempotencyKey))
         remoteOrderId = identifier(created.id)
         await serviceRpc(admin, 'record_remote_order', { attemptId: job.attemptId, remoteOrderId, leaseToken: job.leaseToken, jobId: job.id })
       } else if (job.kind === 'refund') {
@@ -268,8 +342,26 @@ export async function runWorker(admin: RpcClient, supplied?: Configuration): Pro
           if (!withinReplayWindow(refund.firstSentAt)) throw new PointServiceError('POINT_IDEMPOTENCY_WINDOW_EXPIRED')
           const refundAmount = Number(refund.amountCents)
           if (refundAmount !== Number(job.payload.refundAmountCents)) throw new PointServiceError('POINT_FACT_MISMATCH')
-          const response = await config.adapter.refund(token, remoteOrderId, identifier(job.payload.paymentId), refundAmount,
-            identifier(job.payload.idempotencyKey), refundAmount === expected.amountCents)
+          let response: Record<string, unknown>
+          try {
+            response = await config.adapter.refund(token, remoteOrderId, identifier(job.payload.paymentId), refundAmount,
+              identifier(job.payload.idempotencyKey), refundAmount === expected.amountCents)
+          } catch (error) {
+            if (!(error instanceof ProviderError && error.code === 'REFUND_UNSUPPORTED')) throw error
+            // A second authenticated GET must rule out a successful lost response.
+            // Any refund history or in-flight refund requires reconciliation instead.
+            const after = await readOrder(config, token, remoteOrderId, expected)
+            const noRefunds = (value: typeof before) => value.evidence.verified && value.evidence.state === 'approved'
+              && (record(value.order.transactions).refunds === undefined || Array.isArray(record(value.order.transactions).refunds)
+                && (record(value.order.transactions).refunds as unknown[]).length === 0)
+            if (!noRefunds(before) || !noRefunds(after) || after.evidence.paymentId !== identifier(job.payload.paymentId)
+              || refundAmount >= expected.amountCents) throw new PointServiceError('POINT_RESULT_UNCERTAIN')
+            await serviceRpc(admin, 'refund_declined', { jobId: job.id, leaseToken: job.leaseToken, refundId: identifier(refund.id),
+              code: 'unsupported_partially_refunds', refundAmountCents: refundAmount, idempotencyKey: job.payload.idempotencyKey,
+              ...after.evidence })
+            processed++
+            continue
+          }
           if (identifier(response.id) !== remoteOrderId) throw new ProviderError('INVALID_RESPONSE')
           const prior = record(before.order.transactions).refunds
           const priorIds = new Set((Array.isArray(prior) ? prior : []).map(item => identifier(record(item).id)))

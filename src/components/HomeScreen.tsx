@@ -127,6 +127,15 @@ export default function HomeScreen({
   useEffect(() => { if (active === 'Venta') setSaleVisited(true); }, [active]);
   const access = { businessId: business.id, operatorToken, deviceToken };
   const point = usePoint(access, isOwner || hasPermission(business, 'sales.create') || hasPermission(business, 'reports.read'), onSessionError);
+  const paymentMethodKey = business.profile.paymentMethods.join('|');
+  const managing = Boolean(managementContent);
+  const pointReadinessContext = useRef({ scope: operatorScope, managing, paymentMethodKey });
+  useEffect(() => {
+    const previous = pointReadinessContext.current;
+    pointReadinessContext.current = { scope: operatorScope, managing, paymentMethodKey };
+    // Settings owns a separate Point controller. Read its saved changes when returning to work.
+    if (previous.scope === operatorScope && !managing && (previous.managing || previous.paymentMethodKey !== paymentMethodKey)) void point.refresh();
+  }, [operatorScope, managing, paymentMethodKey, point.refresh]);
   const [pointPage, setPointPage] = useState<'setup' | 'admin' | null>(null);
   const [pointReport, setPointReport] = useState(false);
   const [recoverPoint, setRecoverPoint] = useState<PointCheckout | null>(null);

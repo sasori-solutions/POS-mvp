@@ -13,7 +13,7 @@ type CashDifference = BusinessDayReport['cashDifferences'][number]
 type TooltipPayload = { active?: boolean; payload?: readonly { payload?: unknown }[] }
 
 const colors = { cash: '#0F766E', card_external: '#2563EB', card_integrated: '#111111', transfer: '#7C3AED', tax: '#B45309', refund: '#DC2626', ink: '#111111', previous: '#8B8B8B' }
-const paymentLabels: Record<Payment['paymentMethod'], string> = { cash: 'Efectivo', card_external: 'Tarjeta externa', card_integrated: 'Tarjeta integrada', transfer: 'Transferencia' }
+const paymentLabels: Record<Payment['paymentMethod'], string> = { cash: 'Efectivo', card_external: 'Tarjeta externa', card_integrated: 'Tarjeta', transfer: 'Transferencia' }
 const metricLabels: Record<TemporalMetric, string> = { netCents: 'Ventas netas', salesCents: 'Cobrado', saleCount: 'Cobros' }
 const compactCurrency = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', currencyDisplay: 'narrowSymbol', notation: 'compact', maximumFractionDigits: 1 })
 const compactNumber = new Intl.NumberFormat('es-MX', { notation: 'compact', maximumFractionDigits: 1 })

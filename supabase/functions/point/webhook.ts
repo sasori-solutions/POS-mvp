@@ -1,5 +1,10 @@
 import { digest } from './crypto.ts'
 export class SignatureError extends Error {}
+/** Separate applications can deliver test and live orders during the pilot. */
+export function webhookSecrets(env: (name: string) => string | undefined): string[] {
+  return [...new Set(['MP_WEBHOOK_SECRET', 'MP_WEBHOOK_TEST_SECRET', 'MP_WEBHOOK_PREVIOUS_SECRET']
+    .map(env).filter((secret): secret is string => Boolean(secret)))]
+}
 export async function verifySignature(request: Request, secrets: string[]): Promise<{ remoteOrderId: string; eventKey: string; signatureTimestamp: string }> {
   const url = new URL(request.url), ids = url.searchParams.getAll('data.id')
   const requestId = request.headers.get('x-request-id')

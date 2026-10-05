@@ -248,7 +248,7 @@ test('product actions stay above navigation on phone and tablet', async ({ page 
   } finally { await backend.db.close() }
 })
 
-for (const method of ['Efectivo', 'Tarjeta externa', 'Transferencia']) test(`sale registers ${method}, quantities, exact total and historical detail`, async ({ page }, info) => {
+for (const method of ['Efectivo', 'Transferencia']) test(`sale registers ${method}, quantities, exact total and historical detail`, async ({ page }, info) => {
   const backend = await mockPos(page)
   try {
     await unlock(page)
@@ -259,10 +259,8 @@ for (const method of ['Efectivo', 'Tarjeta externa', 'Transferencia']) test(`sal
     await page.getByRole('button', { name: 'Aumentar Latte' }).click()
     await page.getByRole('button', { name: 'Quitar Croissant' }).click()
     await charge(page, '$116.00')
-    const methodLabel = method === 'Tarjeta externa' ? 'Tarjeta externa Registro manual' : method
-    const option = page.locator('label').filter({has:page.getByRole('radio', {name:methodLabel,exact:true})})
+    const option = page.locator('label').filter({has:page.getByRole('radio', {name:method,exact:true})})
     await option.click()
-    if (method === 'Tarjeta externa') await expect(option.getByText('Registro manual', {exact:true})).toBeVisible()
     if (method === 'Transferencia') await expect(page.getByText(/Verifica que recibiste la transferencia/)).toHaveCount(0)
     await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
     await recorded(page, backend)
@@ -278,6 +276,19 @@ for (const method of ['Efectivo', 'Tarjeta externa', 'Transferencia']) test(`sal
     await navigate(page, 'Venta')
     if (await page.getByRole('button', { name: /^Ver cuenta/ }).isVisible()) await expect(page.getByRole('button', { name: /^Ver cuenta/ })).toBeDisabled()
     else await expect(page.getByRole('button', { name: 'Cobrar', exact:true })).toBeDisabled()
+  } finally { await backend.db.close() }
+})
+
+test('legacy card configuration cannot create a manual card payment without a linked terminal', async ({ page }) => {
+  const backend = await mockPos(page)
+  try {
+    await unlock(page); await add(page, 'Latte'); await openCart(page)
+    await charge(page, '$58.00')
+    await expect(page.getByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true })).toBeDisabled()
+    await expect(page.getByRole('radio', { name: /Tarjeta externa|Registro manual/ })).toHaveCount(0)
+    await expect(page.getByText('Vincula una terminal para cobrar con tarjeta.')).toBeVisible()
+    expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(0)
+    expect((await backend.sales()).sales).toHaveLength(0)
   } finally { await backend.db.close() }
 })
 

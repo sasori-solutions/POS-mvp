@@ -7,11 +7,11 @@ import { readFile, writeFile, rename } from 'node:fs/promises'
 /** Synthetic local HTTP server; no upstream network access or live credentials. */
 export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, realtime = false } = {}) {
   if (!['127.0.0.1', 'localhost', '0.0.0.0'].includes(host)) throw new Error('Simulator bind must be local')
-  const state = { scenario: 'approved', sequence: [], creates: 0, refunds: 0, refreshes: 0, version: 1, deliveries: 0, calls: /** @type {Array<{method:string,path:string,key:string|null}>} */ ([]), terminalMode: 'PDV', orders: new Map(), keys: new Map(), refundKeys: new Map() }
+  const state = { scenario: 'approved', sequence: [], creates: 0, refunds: 0, refreshes: 0, version: 1, deliveries: 0, calls: /** @type {Array<{method:string,path:string,key:string|null}>} */ ([]), terminalMode: 'PDV', orders: new Map(), keys: new Map(), refundKeys: new Map(), registerKeys: new Map() }
   if (stateFile) {
     try {
       const saved=JSON.parse(await readFile(stateFile,'utf8'))
-      Object.assign(state,saved,{orders:new Map(saved.orders),keys:new Map(saved.keys),refundKeys:new Map(saved.refundKeys)})
+      Object.assign(state,saved,{orders:new Map(saved.orders),keys:new Map(saved.keys),refundKeys:new Map(saved.refundKeys),registerKeys:new Map(saved.registerKeys ?? [])})
     } catch(error) { if(error.code!=='ENOENT') throw new Error('Could not read synthetic Point state') }
   }
   const branches = state.branches ?? [{ id: 'STORE-1', name: 'Sucursal de prueba', user_id: '900001' }]
@@ -19,7 +19,14 @@ export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, 
   Object.assign(state,{branches,registers})
   const terminal = () => ({ id: 'NEWLAND_N950__SERIAL-1', store_id: 'STORE-1', pos_id: 'POS-1', operating_mode: state.terminalMode })
   const now = () => realtime ? new Date().toISOString() : new Date(Date.UTC(2026, 9, 3, 12, 0, state.deliveries++)).toISOString()
-  const snapshot = () => ({ ...state, orders: [...state.orders.values()], keys: [...state.keys.keys()], refundKeys: [...state.refundKeys.keys()] })
+  const snapshot = () => ({ ...state, orders: [...state.orders.values()], keys: [...state.keys.keys()], refundKeys: [...state.refundKeys.keys()], registerKeys: [...state.registerKeys.keys()] })
+  function page(url, values, maximum) {
+    const offset = Number(url.searchParams.get('offset') ?? 0), limit = Number(url.searchParams.get('limit') ?? maximum)
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > maximum) throw new Error('Invalid paging')
+    return { values: values.slice(offset, offset + limit), paging: { total: values.length, offset, limit } }
+  }
+  // The official v2 response does not promise its store_id; the filtered GET binds it.
+  function posResponse(register) { const { store_id: _store, ...visible } = register; return visible }
   function send(response, data, status = 200) { response.writeHead(status, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(data)) }
   function loseResponse(response) { response.writeHead(200, { 'Content-Type': 'application/json' }); response.write('{'); setTimeout(() => response.destroy(), 5) }
   async function body(request) {
@@ -40,7 +47,7 @@ export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, 
       if (url.pathname === '/__control') {
         if (request.method === 'POST') {
           if (input.reset && stateFile) return send(response,{error:'persistent_development_orders_cannot_be_reset'},400)
-          if (input.reset) { state.orders.clear(); state.keys.clear(); state.refundKeys.clear(); state.creates = 0; state.refunds = 0; state.refreshes = 0; state.version = 1; state.calls = [] }
+          if (input.reset) { state.orders.clear(); state.keys.clear(); state.refundKeys.clear(); state.registerKeys.clear(); state.creates = 0; state.refunds = 0; state.refreshes = 0; state.version = 1; state.calls = [] }
           if (typeof input.scenario === 'string') state.scenario = input.scenario
           if (Array.isArray(input.sequence)) state.sequence = [...input.sequence]
           if (typeof input.terminalMode === 'string') state.terminalMode = input.terminalMode
@@ -69,16 +76,40 @@ export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, 
       }
       if (!String(request.headers.authorization).startsWith('Bearer sim-access-') || state.scenario === 'revoked') return send(response, { error: 'unauthorized' }, 401)
       if (url.pathname === '/users/me') return send(response, { id: 900001, site_id: 'MLM', tags: state.scenario === 'wrong-environment' ? [] : ['test_user'] })
-      if (/^\/users\/900001\/stores\/search$/.test(url.pathname)) return send(response, { results: branches, paging: { total: branches.length } })
+      if (/^\/users\/900001\/stores\/search$/.test(url.pathname)) {
+        const results = branches.filter(branch => !url.searchParams.has('external_id') || branch.external_id === url.searchParams.get('external_id'))
+        const result = page(url, results, 50)
+        return send(response, { results: result.values, paging: result.paging })
+      }
       if (/^\/users\/900001\/stores$/.test(url.pathname) && request.method === 'POST') {
-        if (!input.location || !Number.isFinite(input.location.latitude) || !Number.isFinite(input.location.longitude)) return send(response, { error: 'invalid_location' }, 400)
-        const branch = { id: `STORE-${branches.length + 1}`, name: input.name, external_id: input.external_id, user_id: '900001' }; branches.push(branch); return send(response, branch, 201)
+        if (!input.location || !Number.isFinite(input.location.latitude) || !Number.isFinite(input.location.longitude)
+          || !/^[A-Za-z0-9]{1,40}$/.test(input.external_id ?? '')) return send(response, { error: 'invalid_location' }, 400)
+        const branch = { id: `STORE-${branches.length + 1}`, name: input.name, external_id: input.external_id, location: input.location, user_id: '900001' }; branches.push(branch); return send(response, branch, 201)
       }
-      if (url.pathname === '/pos') {
-        if (request.method === 'GET') return send(response, { results: registers, paging: { total: registers.length } })
-        const pos = { id: `POS-${registers.length + 1}`, store_id: input.store_id, name: input.name, user_id: '900001' }; registers.push(pos); return send(response, pos, 201)
+      if (url.pathname === '/v2/pos') {
+        if (request.method === 'GET') {
+          const filtered = registers.filter(register => !url.searchParams.has('store_id') || register.store_id === url.searchParams.get('store_id'))
+          const result = page(url, filtered, 30)
+          return send(response, { data: result.values.map(posResponse), paging: result.paging })
+        }
+        if (request.method !== 'POST') return send(response, { error: 'method_not_allowed' }, 405)
+        const key = request.headers['x-idempotency-key']
+        if (!key) return send(response, { error: 'missing_idempotency' }, 400)
+        const old = state.registerKeys.get(key)
+        if (old) {
+          if (old.payload !== JSON.stringify(input)) return send(response, { error: 'idempotency_key_already_used' }, 409)
+          return send(response, posResponse(registers.find(register => register.id === old.id)), 201)
+        }
+        if (typeof input.name !== 'string' || !input.name.trim() || !branches.some(branch => branch.id === input.store_id)
+          || !/^[A-Za-z0-9]{1,40}$/.test(input.external_id ?? '') || input.fixed_amount !== undefined && input.fixed_amount !== false) return send(response, { error: 'invalid_pos' }, 400)
+        const pos = { id: `POS-${registers.length + 1}`, store_id: input.store_id, name: input.name, external_id: input.external_id, user_id: '900001' }
+        registers.push(pos); state.registerKeys.set(key, { id: pos.id, payload: JSON.stringify(input) }); return send(response, posResponse(pos), 201)
       }
-      if (url.pathname === '/terminals/v1/list') return send(response, { data: { terminals: [terminal()].filter(t => (!url.searchParams.has('store_id') || t.store_id === url.searchParams.get('store_id')) && (!url.searchParams.has('pos_id') || t.pos_id === url.searchParams.get('pos_id'))) }, paging: { total: 1, offset: 0, limit: 50 } })
+      if (url.pathname === '/terminals/v1/list') {
+        const filtered = [terminal()].filter(t => (!url.searchParams.has('store_id') || t.store_id === url.searchParams.get('store_id')) && (!url.searchParams.has('pos_id') || t.pos_id === url.searchParams.get('pos_id')))
+        const result = page(url, filtered, 50)
+        return send(response, { data: { terminals: result.values }, paging: result.paging })
+      }
       if (url.pathname === '/terminals/v1/setup') { state.terminalMode = 'PDV'; return send(response, { terminals: [terminal()] }) }
       if (url.pathname === '/v1/orders' && request.method === 'POST') {
         const key = request.headers['x-idempotency-key']
@@ -94,10 +125,10 @@ export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, 
         if (input.type !== 'point' || !/^\d+\.\d{2}$/.test(input.transactions?.payments?.[0]?.amount) || input.config?.point?.terminal_id !== terminal().id) return send(response, { error: 'invalid_order' }, 400)
         state.creates++
         const id = `ORD${String(state.creates).padStart(26, '0')}`, paymentId = `PAY${String(state.creates).padStart(26, '0')}`
-        const pending = ['pending', 'at_terminal', 'action_required', 'rejected'].includes(scenario)
-        const status = scenario === 'pending' ? 'created' : scenario === 'at_terminal' ? 'at_terminal' : scenario === 'action_required' ? 'action_required' : scenario === 'rejected' ? 'failed' : 'processed'
+        const pending = ['pending', 'at_terminal', 'action_required', 'rejected', 'canceled', 'expired'].includes(scenario)
+        const status = scenario === 'pending' ? 'created' : scenario === 'at_terminal' ? 'at_terminal' : scenario === 'action_required' ? 'action_required' : scenario === 'rejected' ? 'failed' : scenario === 'canceled' ? 'canceled' : scenario === 'expired' ? 'expired' : 'processed'
         const order = { id, user_id: scenario === 'wrong-account' ? '800001' : '900001', type: 'point', external_reference: input.external_reference,
-          country_code: 'MEX', status, status_detail: status, last_updated_date: now(), config: input.config,
+          country_code: 'MEX', status, status_detail: status === 'action_required' ? 'check_on_terminal' : status, last_updated_date: now(), config: input.config,
           transactions: { payments: [{ id: paymentId, amount: scenario === 'wrong-amount' ? '999.99' : input.transactions.payments[0].amount,
             status, status_detail: status === 'processed' ? 'accredited' : status === 'failed' ? 'rejected_by_issuer' : status === 'action_required' ? 'check_on_terminal' : status,
             ...(pending ? {} : { reference_id: String(700000 + state.creates) }) }], refunds: [] }, _currency: scenario === 'wrong-currency' ? 'USD' : 'MXN' }
@@ -112,14 +143,25 @@ export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, 
         const order = [...state.orders.values()].find(o => o.transactions.payments[0].reference_id === paymentId)
         if (!order) return send(response, { error: 'not_found' }, 404)
         return send(response, { id: Number(paymentId), collector_id: Number(order.user_id), currency_id: order._currency, live_mode: false,
-          transaction_amount: Number(order.transactions.payments[0].amount), external_reference: order.external_reference,
+          transaction_amount: order.transactions.payments[0].amount, external_reference: order.external_reference,
           status: order.status === 'refunded' ? 'refunded' : 'approved' })
       }
-      const match = url.pathname.match(/^\/v1\/orders\/([A-Za-z0-9_-]+)(?:\/(refund|cancel))?$/)
+      const match = url.pathname.match(/^\/v1\/orders\/([A-Za-z0-9_-]+)(?:\/(refund|cancel|events))?$/)
       if (match) {
         const order = state.orders.get(match[1])
         if (!order) return send(response, { error: 'order_not_found' }, 404)
         if (!match[2]) return send(response, order)
+        if (match[2] === 'events') {
+          if (request.method !== 'POST' || !['processed', 'failed', 'canceled', 'expired', 'action_required'].includes(input?.status)
+            || !['created', 'at_terminal', 'action_required'].includes(order.status)
+            || order.status === 'action_required' && (order.status_detail !== 'check_on_terminal' || input.status !== 'processed')) return send(response, { error: 'invalid_simulation' }, 400)
+          order.status = input.status; order.status_detail = input.status === 'action_required' ? 'check_on_terminal' : input.status; order.last_updated_date = now()
+          const payment = order.transactions.payments[0]
+          payment.status = input.status
+          payment.status_detail = input.status === 'processed' ? 'accredited' : input.status === 'failed' ? 'insufficient_amount' : input.status === 'action_required' ? 'check_on_terminal' : input.status === 'canceled' ? 'cancel_by_terminal' : input.status
+          if (input.status === 'processed') payment.reference_id = String(700000 + Number(order.id.slice(3)))
+          response.writeHead(204, { 'Cache-Control': 'no-store' }); response.end(); return
+        }
         const key = request.headers['x-idempotency-key']
         if (!key) return send(response, { error: 'missing_key' }, 400)
         if (match[2] === 'cancel') {
@@ -142,7 +184,7 @@ export async function startSimulator({ host = '127.0.0.1', port = 0, stateFile, 
   })
   let persistence=Promise.resolve()
   function persist() {
-    const serialized=JSON.stringify({...state,orders:[...state.orders.entries()],keys:[...state.keys.entries()],refundKeys:[...state.refundKeys.entries()]})
+    const serialized=JSON.stringify({...state,orders:[...state.orders.entries()],keys:[...state.keys.entries()],refundKeys:[...state.refundKeys.entries()],registerKeys:[...state.registerKeys.entries()]})
     persistence=persistence.then(async()=>{
       await writeFile(`${stateFile}.tmp`,serialized,{mode:0o600})
       await rename(`${stateFile}.tmp`,stateFile)

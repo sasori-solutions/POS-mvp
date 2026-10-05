@@ -9,6 +9,13 @@ import LoadingPlaceholder, { PendingIndicator } from './LoadingPlaceholder'
 import { accessErrorCodes } from './useCatalog'
 import './point-setup.css'
 
+type SetupOperation = { payload: string; id: string }
+function operationFor(ref: { current: SetupOperation | null }, payload: unknown): string {
+  const fingerprint = JSON.stringify(payload)
+  if (ref.current?.payload !== fingerprint) ref.current = { payload: fingerprint, id: crypto.randomUUID() }
+  return ref.current.id
+}
+
 export default function PointSetup(props: Parameters<typeof PointSetupSession>[0]) {
   return <PointSetupSession key={`${props.access.businessId}:${props.access.operatorToken}:${props.access.deviceToken ?? ''}`} {...props} />
 }
@@ -32,6 +39,7 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
   const readyTerminal = readyTerminals.find(t => t.serial === normalizedSerial) ?? readyTerminals[0]
   const [manual, setManual] = useState(false), [changingTerminal, setChangingTerminal] = useState(false)
   const [newBranch, setNewBranch] = useState(''), [newRegister, setNewRegister] = useState('')
+  const branchOperation = useRef<SetupOperation | null>(null), registerOperation = useRef<SetupOperation | null>(null)
   const [location, setLocation] = useState({ street_name: '', street_number: '', city_name: '', state_name: '', latitude: '', longitude: '', reference: '' })
   const locationValid = Boolean(location.street_name.trim() && location.street_number.trim() && location.city_name.trim() && location.state_name.trim() && location.latitude.trim() && location.longitude.trim() && Number.isFinite(Number(location.latitude)) && Number.isFinite(Number(location.longitude)) && Math.abs(Number(location.latitude)) <= 90 && Math.abs(Number(location.longitude)) <= 180)
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('')
@@ -43,7 +51,10 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
   const currentConnection = useRef(connectionKey); currentConnection.current = connectionKey
   const step = !verified ? 0 : !readyTerminal || changingTerminal ? 1 : 2
   const needsPaymentMethod = Boolean(settings?.enabled && !paymentMethodEnabled)
-  const activationComplete = Boolean(settings?.enabled && readyTerminal && paymentMethodEnabled)
+  const chargesPaused = settings?.chargesEnabled === false
+  const activationComplete = Boolean(settings?.enabled && readyTerminal && paymentMethodEnabled && !chargesPaused)
+  const realModeHint = settings?.sandbox?.testBusiness ? 'Este negocio conserva las pruebas. Para cobros reales, usa un negocio aparte.'
+    : settings?.availableEnvironment !== undefined && settings.availableEnvironment !== 'live' ? 'Los cobros reales todavía no están habilitados.' : ''
   const disabled = busy || !online
   const linked = settings?.terminals.find(t => t.serial === normalizedSerial && t.branchId === branchId && t.registerId === registerId)
   const selected = resources?.terminals.find(t => t.serial === normalizedSerial)
@@ -132,6 +143,14 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
       window.location.assign(url.href)
     } catch (caught) { failure(caught); running.current = false; if (alive.current) setBusy(false) }
   }
+  function createRegister() {
+    const payload = { branchId, name: newRegister.trim() }
+    void update({ command: 'create_register', operationId: operationFor(registerOperation, payload), ...payload }, 'Caja creada. Ya puedes seleccionarla.')
+  }
+  function createBranch() {
+    const payload = { name: newBranch.trim(), location: { ...location, latitude: Number(location.latitude), longitude: Number(location.longitude) } }
+    void update({ command: 'create_branch', operationId: operationFor(branchOperation, payload), ...payload }, 'Sucursal creada. Ya puedes seleccionarla.')
+  }
   const stepNames = ['Cuenta', 'Terminal', 'Listo']
   const busyIcon = busy ? <PendingIndicator label="Guardando vinculación" /> : null
   const locationFields = ([['street_name', 'Calle'], ['street_number', 'Número'], ['city_name', 'Ciudad'], ['state_name', 'Estado'], ['latitude', 'Latitud'], ['longitude', 'Longitud'], ['reference', 'Referencia (opcional)']] as const)
@@ -147,11 +166,12 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
       : !settings.permissions.manage ? <p>El dueño del negocio puede vincular una terminal.</p> : <>
       <section className="terminal-stage" key={step} aria-labelledby="terminal-step-heading">
         <header className="terminal-stage-heading"><span className="terminal-stage-icon" aria-hidden="true">{step === 0 ? <Link2 size={26} /> : step === 1 ? <Smartphone size={26} /> : <Check size={26} />}</span>
-          <h2 ref={stepHeading} tabIndex={-1} id="terminal-step-heading">{step === 0 ? 'Conecta tu cuenta' : step === 1 ? 'Elige tu terminal' : needsPaymentMethod ? 'Habilita Mercado Pago' : settings.enabled ? 'Todo listo para cobrar' : 'Activa tu terminal'}</h2>
-          <p>{step === 0 ? 'Autoriza a tu negocio para enviar cobros a Mercado Pago.' : step === 1 ? sandbox ? 'Selecciona una terminal para los cobros de prueba.' : 'Estas terminales pertenecen a tu cuenta de Mercado Pago.' : needsPaymentMethod ? 'Actívalo en Configuración → Formas de pago y guarda los cambios.' : settings.enabled ? sandbox ? 'Prueba el cobro completo sin mover dinero.' : 'El importe se enviará desde la pantalla de cobro.' : sandbox ? 'Los pagos de este modo son de prueba.' : 'Confirma esta terminal para recibir cobros.'}</p>
+          <h2 ref={stepHeading} tabIndex={-1} id="terminal-step-heading">{step === 0 ? 'Conecta tu cuenta' : step === 1 ? 'Elige tu terminal' : chargesPaused ? 'Cobros pausados' : needsPaymentMethod ? 'Habilita Tarjeta' : settings.enabled ? 'Todo listo para cobrar' : 'Activa tu terminal'}</h2>
+          <p>{step === 0 ? 'Autoriza a tu negocio para enviar cobros a Mercado Pago.' : step === 1 ? sandbox ? 'Selecciona una terminal para los cobros de prueba.' : 'Estas terminales pertenecen a tu cuenta de Mercado Pago.' : chargesPaused ? 'Los cobros con terminal están pausados. Los pagos pendientes se siguen consultando.' : needsPaymentMethod ? 'Actívalo en Configuración → Formas de pago y guarda los cambios.' : settings.enabled ? sandbox ? 'Prueba el cobro completo sin mover dinero.' : 'El importe se enviará desde la pantalla de cobro.' : sandbox ? 'Los pagos de este modo son de prueba.' : 'Confirma esta terminal para recibir cobros.'}</p>
         </header>
         {step === 0 ? <>
           {!connected && <div className="terminal-mode" role="group" aria-label="Modo de vinculación">{(['sandbox', 'live'] as const).map(mode => <button type="button" key={mode} aria-pressed={environment === mode} disabled={disabled || mode === 'live' && (settings.sandbox?.testBusiness === true || settings.availableEnvironment !== undefined && settings.availableEnvironment !== 'live')} onClick={() => { setEnvironment(mode); setError(''); setNeedsTestBusiness(false) }}>{mode === 'sandbox' ? 'Pruebas' : 'Cobros reales'}</button>)}</div>}
+          {!connected && realModeHint && <p className="terminal-context">{realModeHint}</p>}
           {sandbox && <p className="terminal-context">{officialSandbox ? settings?.sandbox?.available ? 'Se vinculará una terminal virtual. Usa un negocio nuevo dedicado a pruebas.' : 'El simulador oficial necesita las credenciales de prueba de tu aplicación de Mercado Pago.' : 'Usa la cuenta y la terminal de prueba disponibles en este entorno.'}</p>}
           {connected ? <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'verify_connection' })}>{busyIcon}Verificar cuenta</button>
             : officialSandbox ? <><button className="pos-button pos-primary terminal-primary" disabled={disabled || !settings.sandbox?.available} onClick={() => void update({ command: 'connect_sandbox', operationId: sandboxOperation.current })}>{busyIcon}Vincular terminal virtual</button>{needsTestBusiness && <a className="terminal-text-button" href="/business/new">Crear negocio de pruebas</a>}{!settings.sandbox?.available && <a className="terminal-text-button" href="https://www.mercadopago.com.mx/developers/es/docs/mp-point/create-application" target="_blank" rel="noopener noreferrer">Crear aplicación de Mercado Pago</a>}</>
@@ -169,17 +189,18 @@ function PointSetupSession({ access, controller, onSessionError, onStartSale, on
               <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'test_terminal', terminalId: linked.id })}>{busyIcon}Comprobar terminal</button>
             </> : <button className="pos-button pos-primary terminal-primary" disabled={disabled || !selectionReady} onClick={() => void update({ command: 'link_terminal', operationId: crypto.randomUUID(), serial: serial.trim(), branchId, registerId })}>{busyIcon}Vincular terminal</button>}
             <details className="terminal-adjustments"><summary>No encuentro mi terminal<ChevronDown size={17} aria-hidden="true" /></summary><p>Vincúlala a una sucursal y caja en tu cuenta de Mercado Pago.</p><div className="terminal-inline-actions"><button className="terminal-text-button" disabled={disabled || resourcesBusy} onClick={() => void loadResources()}>Buscar de nuevo</button><button className="terminal-text-button" disabled={disabled} onClick={() => setManual(true)}>Usar número de serie</button></div></details>
-            <details className="terminal-adjustments"><summary>Crear sucursal o caja<ChevronDown size={17} aria-hidden="true" /></summary><div className="terminal-fields"><label>Nombre de la nueva caja<input value={newRegister} maxLength={100} onChange={event => setNewRegister(event.target.value)} disabled={disabled} /></label><button className="pos-button pos-secondary" disabled={disabled || !branchId || !newRegister.trim()} onClick={() => void update({ command: 'create_register', operationId: crypto.randomUUID(), branchId, name: newRegister.trim() }, 'Caja creada. Ya puedes seleccionarla.')}>Crear caja</button><details><summary>Crear una sucursal</summary><div className="terminal-fields"><label>Nombre de la sucursal<input value={newBranch} maxLength={100} onChange={event => setNewBranch(event.target.value)} disabled={disabled} /></label><div className="terminal-field-pair">{locationFields.map(([field, label]) => <label key={field}>{label}<input value={location[field]} maxLength={100} inputMode={field === 'latitude' || field === 'longitude' ? 'decimal' : 'text'} onChange={event => setLocation(previous => ({ ...previous, [field]: event.target.value }))} disabled={disabled} /></label>)}</div><button className="pos-button pos-secondary" disabled={disabled || !newBranch.trim() || !locationValid} onClick={() => void update({ command: 'create_branch', operationId: crypto.randomUUID(), name: newBranch.trim(), location: { ...location, latitude: Number(location.latitude), longitude: Number(location.longitude) } }, 'Sucursal creada. Ya puedes seleccionarla.')}>Crear sucursal</button></div></details></div></details>
+            <details className="terminal-adjustments"><summary>Crear sucursal o caja<ChevronDown size={17} aria-hidden="true" /></summary><div className="terminal-fields"><label>Nombre de la nueva caja<input value={newRegister} maxLength={100} onChange={event => setNewRegister(event.target.value)} disabled={disabled} /></label><button className="pos-button pos-secondary" disabled={disabled || !branchId || !newRegister.trim()} onClick={createRegister}>Crear caja</button><details><summary>Crear una sucursal</summary><div className="terminal-fields"><label>Nombre de la sucursal<input value={newBranch} maxLength={100} onChange={event => setNewBranch(event.target.value)} disabled={disabled} /></label><div className="terminal-field-pair">{locationFields.map(([field, label]) => <label key={field}>{label}<input value={location[field]} maxLength={100} inputMode={field === 'latitude' || field === 'longitude' ? 'decimal' : 'text'} onChange={event => setLocation(previous => ({ ...previous, [field]: event.target.value }))} disabled={disabled} /></label>)}</div><button className="pos-button pos-secondary" disabled={disabled || !newBranch.trim() || !locationValid} onClick={createBranch}>Crear sucursal</button></div></details></div></details>
           </>}
         </> : <>
           {readyTerminal && <div className="terminal-ready"><Smartphone size={28} aria-hidden="true" /><div><strong>{sandbox ? 'Terminal de prueba' : readyTerminal.serial}</strong><span>{readyTerminal.branchName} / {readyTerminal.registerName}</span><small>{sandbox ? readyTerminal.serial : 'Configuración verificada'}</small></div><Check size={19} aria-hidden="true" /></div>}
-          <div className="terminal-checkout-preview" aria-label="Cómo funciona el cobro"><span>Selecciona Mercado Pago</span><ChevronDown size={16} aria-hidden="true" /><span>Envía el importe a la terminal</span><ChevronDown size={16} aria-hidden="true" /><span>El pago aprobado se registra solo</span></div>
+          <div className="terminal-checkout-preview" aria-label="Cómo funciona el cobro"><span>Selecciona Tarjeta</span><ChevronDown size={16} aria-hidden="true" /><span>Envía el importe a la terminal</span><ChevronDown size={16} aria-hidden="true" /><span>El pago aprobado se registra solo</span></div>
           {settings.enabled && paymentMethodEnabled && !readyToCharge && <p className="terminal-context">Abre un turno en Caja para hacer el primer cobro.</p>}
-          {needsPaymentMethod ? <button className="pos-button pos-primary terminal-primary" disabled={disabled || !onOpenPaymentMethods} onClick={onOpenPaymentMethods}>Configurar formas de pago</button> : settings.enabled ? onStartSale && <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={!readyToCharge && onOpenCash ? onOpenCash : onStartSale}>{!readyToCharge && onOpenCash ? 'Ir a Caja' : sandbox ? 'Probar un cobro' : 'Ir a Venta'}</button> : <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'activate', enabled: true })}>{busyIcon}{sandbox ? 'Activar modo prueba' : 'Activar cobros'}</button>}
+          {chargesPaused ? <button className="pos-button pos-primary terminal-primary" disabled>Cobros pausados</button> : needsPaymentMethod ? <button className="pos-button pos-primary terminal-primary" disabled={disabled || !onOpenPaymentMethods} onClick={onOpenPaymentMethods}>Configurar formas de pago</button> : settings.enabled ? onStartSale && <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={!readyToCharge && onOpenCash ? onOpenCash : onStartSale}>{!readyToCharge && onOpenCash ? 'Ir a Caja' : sandbox ? 'Probar un cobro' : 'Ir a Venta'}</button> : <button className="pos-button pos-primary terminal-primary" disabled={disabled} onClick={() => void update({ command: 'activate', enabled: true })}>{busyIcon}{sandbox ? 'Activar modo prueba' : 'Activar cobros'}</button>}
           {!settings.sandbox?.testBusiness && <button className="terminal-text-button" disabled={disabled} onClick={() => setChangingTerminal(true)}>Vincular otra terminal</button>}
         </>}
       </section>
       {connection && <details className="terminal-management"><summary>Administrar conexión<ChevronDown size={17} aria-hidden="true" /></summary><div className="terminal-management-body"><span>{connection.environment === 'sandbox' ? 'Cuenta de pruebas' : 'Cuenta para cobros reales'}</span>
+        {settings.sandbox?.testBusiness && <><p>{realModeHint}</p><a className="terminal-text-button" href="/business/new">Crear negocio real</a></>}
         {settings.enabled && <button className="terminal-text-button" disabled={disabled} onClick={() => void update({ command: 'activate', enabled: false }, 'Cobros nuevos pausados.')}>Pausar cobros nuevos</button>}
         <p>Los pagos pendientes y su historial se conservan al desconectar.</p>
         {confirmDisconnect ? <div className="terminal-inline-actions"><button className="terminal-text-button terminal-danger" disabled={disabled} onClick={() => void update({ command: 'disconnect' }, 'Cuenta desconectada.')}>Desconectar cuenta</button><button className="terminal-text-button" disabled={disabled} onClick={() => setConfirmDisconnect(false)}>Cancelar</button></div> : <button className="terminal-text-button" disabled={disabled} onClick={() => setConfirmDisconnect(true)}>Desconectar Mercado Pago</button>}

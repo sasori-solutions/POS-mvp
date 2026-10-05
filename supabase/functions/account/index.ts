@@ -15,6 +15,7 @@ const errorDefinitions: Record<AccountErrorCode, { status: number; message: stri
   POINT_CHECKOUT_NOT_FOUND: { status: 404, message: 'The integrated checkout is unavailable.' },
   POINT_RESULT_UNCERTAIN: { status: 409, message: 'The original payment still requires reconciliation.' },
   POINT_STATE_INVALID: { status: 409, message: 'The payment transition is unavailable.' },
+  POINT_AMOUNT_INVALID: { status: 422, message: 'The amount is outside the terminal range.' },
   POINT_FACT_MISMATCH: { status: 409, message: 'The provider evidence requires review.' },
   POINT_REFUND_LIMIT: { status: 409, message: 'The refund exceeds the available balance.' },
   POINT_REFUND_ALLOCATION_REQUIRED: { status: 409, message: 'The refund allocation requires evidence.' },

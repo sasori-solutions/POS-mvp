@@ -21,6 +21,7 @@ describe('Point exact money, monthly fee and conservative states', () => {
     expect(mapPointState('new-state', 'unknown', 'new-state', 'unknown')).toBe('unknown_review')
     expect(mapPointState('failed', 'failed', 'failed', 'in_review')).toBe('unknown_review')
     expect(mapPointState('failed', 'failed', 'failed', 'rejected_by_issuer')).toBe('rejected')
+    expect(mapPointState('canceled', 'canceled', 'canceled', 'cancel_by_terminal')).toBe('cancelled')
     expect(mapPointState('created', 'unknown', 'created', 'created')).toBe('unknown_review')
     expect(mapPointState('created', 'refunded', 'created', 'created')).toBe('unknown_review')
   })

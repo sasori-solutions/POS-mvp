@@ -98,3 +98,30 @@ test('closing legacy checkout while waiting to persist never writes or sends an 
   expect(localStorage.getItem(key)).toBeNull()
   expect(posRequest).not.toHaveBeenCalled()
 })
+
+test('new legacy checkout never offers manual card collection', async () => {
+  catalog.paymentMethods = ['card_external', 'card_integrated']
+  render(<SaleScreen {...props()} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Agregar Café sintético, $10.01' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Cobrar' }))
+  const card = await screen.findByRole('radio', { name: 'Tarjeta Mercado Pago' }) as HTMLInputElement
+  expect(card.disabled).toBe(true)
+  expect(screen.queryByRole('radio', { name: /Tarjeta externa|Registro manual/ })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+  expect(posRequest).not.toHaveBeenCalled()
+  expect(localStorage.getItem(key)).toBeNull()
+})
+
+test('an uncertain historical card operation retries its exact payload and UUID without creating a Point payment', async () => {
+  const historical = { ...command, paymentMethod: 'card_external' as const }
+  localStorage.setItem(key, JSON.stringify(historical))
+  vi.mocked(posRequest).mockResolvedValue({ ...sale, paymentMethod: 'card_external' })
+  render(<SaleScreen {...props()} />)
+  const retry = await screen.findByRole('button', { name: 'Reintentar registro' })
+  expect(screen.queryByRole('radio', { name: /Tarjeta/ })).toBeNull()
+  fireEvent.click(retry)
+  await waitFor(() => expect(posRequest).toHaveBeenCalledOnce())
+  expect(posRequest).toHaveBeenCalledWith(access, historical)
+  expect(await screen.findByRole('heading', { name: 'Venta registrada' })).toBeTruthy()
+  expect(localStorage.getItem(key)).toBeNull()
+})

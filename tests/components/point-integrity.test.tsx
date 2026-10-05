@@ -119,6 +119,34 @@ test('another refund cannot confirm the current request by reaching the same agg
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Reintentar la misma devolución' })).toBeNull())
 })
 
+test('a definitive rejected partial refund releases its request and leaves the original paid balance available', async () => {
+  let current = pointPaid(), ownId = ''
+  vi.mocked(pointRequest).mockImplementation(async (_access, command) => {
+    if (command.command === 'refund') {
+      ownId = command.operationId
+      current = { ...current, refundRequests: [request(ownId)] }
+    }
+    return current
+  })
+  render(<PointRefund access={pointAccess} saleId={pointId(12)} />)
+  fireEvent.change(await screen.findByLabelText('Importe a devolver MXN'), { target: { value: '20.00' } })
+  fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'Corrección' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Solicitar devolución parcial' }))
+  await screen.findByText(/Devolución pendiente: \$20.00/)
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Consultar devolución' }) as HTMLButtonElement).disabled).toBe(false))
+  current = { ...current, refundRequests: [request(ownId, 'rejected')] }
+  fireEvent.click(screen.getByRole('button', { name: 'Consultar devolución' }))
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'La devolución fue rechazada.')
+  expect(screen.queryByText(/Devolución pendiente:/)).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Reintentar la misma devolución' })).toBeNull()
+  expect((screen.getByLabelText('Importe a devolver MXN') as HTMLInputElement).value).toBe('100.00')
+  expect((screen.getByLabelText('Importe a devolver MXN') as HTMLInputElement).disabled).toBe(false)
+  expect(screen.getByText(/Devuelto: \$0.00. Disponible: \$100.00/)).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'Devolución total' } })
+  expect((screen.getByRole('button', { name: 'Solicitar devolución total' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(vi.mocked(pointRequest).mock.calls.filter(([, command]) => command.command === 'refund')).toHaveLength(1)
+})
+
 test('a late refund context from a different sale cannot populate the new sale form', async () => {
   const first = deferred<PointCheckout>(), second = { ...pointPaid(), totalCents: 5000, sale: { ...pointPaid().sale!, id: pointId(55) } }
   vi.mocked(pointRequest).mockImplementation(async (_access, command) => command.command === 'refund_context' && command.saleId === pointId(12) ? first.promise : second)

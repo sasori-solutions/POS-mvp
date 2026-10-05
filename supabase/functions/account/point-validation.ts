@@ -53,7 +53,12 @@ export function parsePointCommand(input: Record<string, unknown>, accessKeys: st
       if (Object.hasOwn(location,'reference') && (typeof location.reference !== 'string' || location.reference.length>300 || /[\u0000-\u001f\u007f]/.test(location.reference))) invalid()
       return { command: input.command, operationId: operation(), name: text(input.name,100), location: { street_name:text(location.street_name,100), street_number:text(location.street_number,20), city_name:text(location.city_name,100), state_name:text(location.state_name,100), latitude:location.latitude, longitude:location.longitude, ...(Object.hasOwn(location,'reference') ? { reference: location.reference as string } : {}) } }
     }
-    case 'create_register': keys(['operationId','branchId','name']); return { command: input.command, operationId: operation(), branchId: providerId(input.branchId), name: text(input.name,100) }
+    case 'create_register': {
+      keys(['operationId','branchId','name'])
+      const name = text(input.name,100)
+      if (!/^[\p{L}\p{N}](?:[\p{L}\p{N}_ -]*[\p{L}\p{N}])?$/u.test(name)) invalid()
+      return { command: input.command, operationId: operation(), branchId: providerId(input.branchId), name }
+    }
     case 'link_terminal':
       keys(['operationId','serial','branchId','registerId'])
       return { command: input.command, operationId: operation(), serial: text(input.serial,100), branchId: text(input.branchId,100), registerId: text(input.registerId,100) }

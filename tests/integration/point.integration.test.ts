@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { OperatorSession } from '../../src/lib/contracts'
 import type { OperationalOrder, CheckoutAttempt } from '../../src/lib/operations-contracts'
-import type { PointCheckout, PointCommand, PointSettings, PointReport } from '../../src/lib/point-contracts'
+import type { PointCheckout, PointCommand, PointSettings, PointReport, PointSimulationStatus } from '../../src/lib/point-contracts'
 import type { Product } from '../../src/lib/pos-contracts'
 import { signedRequest } from './device-proof-fixture'
 
@@ -35,6 +35,15 @@ async function point<T>(actor:Actor,command:PointCommand) { return call<T>(actor
 async function pos<T>(actor:Actor,command:Record<string,unknown>) { return call<T>(actor,{action:'pos',...access(actor),...command}) }
 async function control(payload:Record<string,unknown>) { const response=await fetch(`${simulator}/__control`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});expect(response.status).toBe(200);return response.json() }
 async function stats() { return (await fetch(`${simulator}/__control`)).json() }
+async function simulateRemote(checkout:PointCheckout,status:PointSimulationStatus) {
+  const response=await fetch(`${simulator}/v1/orders/${checkout.remoteOrderId}/events`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer sim-access-local-fixture'},body:JSON.stringify({status})})
+  expect(response.status).toBe(204);expect(await response.text()).toBe('')
+}
+function ageReconciliation(checkout:PointCheckout) {
+  // Deterministically advances only this fixture's scheduling clock; provider evidence is untouched.
+  sql(`update app_private.point_attempts set last_reconciled_at=clock_timestamp()-interval '11 seconds' where business_id=${literal(owner.operator.business.id)}::uuid and id=${literal(checkout.attemptId!)}::uuid;`)
+}
+async function orderFor(checkout:PointCheckout) { return data(await pos<OperationalOrder>(owner,{command:'order',orderId:checkout.checkout.orderId})) }
 async function worker() {
   const response=await fetch(`${url}/functions/v1/point-worker`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${workerSecret}`,apikey:anon},body:'{"limit":20}',signal:AbortSignal.timeout(55000)})
   expect(response.status).toBe(200);return response.json()
@@ -60,9 +69,9 @@ async function actor():Promise<Actor> {
   const operator=data(await call<OperatorSession>(temporary,{action:'create_business',operationId:randomUUID(),name:'Point integración sintética',businessType:'cafe',timezone:'America/Mexico_City',pin:'583927',profile:{branchName:'Local',registerName:'Caja',address:'',city:'',state:'',contactPhone:'',paymentMethods:['cash','card_external','transfer']}}))
   businesses.push(operator.business.id);return {...temporary,operator}
 }
-async function reserve(actor=owner) {
-  const order=data(await pos<OperationalOrder>(actor,{command:'save_order',operationId:randomUUID(),orderId:randomUUID(),expectedRevision:null,name:'Cuenta Point',tableId:null,items:[{lineId:randomUUID(),productId:product.id,version:product.version,unitPriceCents:product.priceCents,quantity:1,note:''}]}))
-  const checkout=data(await pos<CheckoutAttempt>(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:order.items.map(i=>({lineId:i.lineId,quantity:i.quantity})),paymentMethod:'card_integrated'}))
+async function reserve(actor=owner,quantity=1,selectedQuantity=quantity) {
+  const order=data(await pos<OperationalOrder>(actor,{command:'save_order',operationId:randomUUID(),orderId:randomUUID(),expectedRevision:null,name:'Cuenta Point',tableId:null,items:[{lineId:randomUUID(),productId:product.id,version:product.version,unitPriceCents:product.priceCents,quantity,note:''}]}))
+  const checkout=data(await pos<CheckoutAttempt>(actor,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:order.items.map(i=>({lineId:i.lineId,quantity:selectedQuantity})),paymentMethod:'card_integrated'}))
   return data(await point<PointCheckout>(actor,{command:'prepare',operationId:randomUUID(),checkoutAttemptId:checkout.id,terminalId}))
 }
 
@@ -131,6 +140,106 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(results.every(r=>r.status===200||r.error?.code==='POINT_REFRESH_BUSY')).toBe(true)
     expect((await stats()).refreshes-before.refreshes).toBe(1)
     data(await point(owner,{command:'verify_connection'}))
+  },60000)
+
+  it('recovers a provider branch and creates a v2 register with exact replay idempotency',async()=>{
+    const branchCommand={command:'create_branch' as const,operationId:randomUUID(),name:'Sucursal idempotente',location:{street_name:'Calle de prueba',street_number:'1',city_name:'Ciudad de México',state_name:'Distrito Federal',latitude:19.4326,longitude:-99.1332,reference:'Fixture sintético'}}
+    const branchBefore=await stats()
+    const branch=data(await point<{id:string;name:string}>(owner,branchCommand))
+    expect(data(await point(owner,branchCommand))).toEqual(branch)
+    const branchAfter=await stats()
+    expect(branchAfter.branches.length-branchBefore.branches.length).toBe(1)
+    expect(branchAfter.calls.slice(branchBefore.calls.length).filter((entry:{method:string;path:string})=>entry.method==='POST'&&entry.path==='/users/900001/stores')).toHaveLength(1)
+    const command={command:'create_register' as const,operationId:randomUUID(),branchId:'STORE-1',name:'Caja idempotente'}
+    const before=await stats()
+    const first=data(await point<{id:string;branchId:string;name:string}>(owner,command))
+    expect(first).toMatchObject({branchId:'STORE-1',name:'Caja idempotente'})
+    expect(data(await point(owner,command))).toEqual(first)
+    const after=await stats()
+    expect(after.registers.length-before.registers.length).toBe(1)
+    expect(after.calls.filter((entry:{method:string;path:string;key:string|null})=>entry.method==='POST'&&entry.path==='/v2/pos'&&entry.key===command.operationId)).toHaveLength(2)
+    const resources=data(await point<{registers:{id:string;branchId:string;name:string}[]}>(owner,{command:'resources'}))
+    expect(resources.registers).toContainEqual(first)
+  },60000)
+
+  it('rejects an unsupported Point amount before reserving a terminal or sending a charge',async()=>{
+    const expensive=data(await pos<Product>(owner,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Límite Point sintético',category:'',priceCents:99999999}))
+    const order=data(await pos<OperationalOrder>(owner,{command:'save_order',operationId:randomUUID(),orderId:randomUUID(),expectedRevision:null,name:'Límite Point',tableId:null,items:[{lineId:randomUUID(),productId:expensive.id,version:expensive.version,unitPriceCents:expensive.priceCents,quantity:11,note:''}]}))
+    const quote=data(await pos<CheckoutAttempt>(owner,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:order.items.map(item=>({lineId:item.lineId,quantity:11})),paymentMethod:'card_integrated'}))
+    expect(quote.totalCents).toBe(1099999989)
+    const before=await stats()
+    expect(await point(owner,{command:'prepare',operationId:randomUUID(),checkoutAttemptId:quote.id,terminalId})).toMatchObject({status:422,error:{code:'POINT_AMOUNT_INVALID'}})
+    expect(Number(sql(`select count(*) from app_private.point_checkouts where business_id=${literal(owner.operator.business.id)}::uuid and checkout_attempt_id=${literal(quote.id)}::uuid;`))).toBe(0)
+    expect(Number(sql(`select count(*) from app_private.point_terminal_reservations where business_id=${literal(owner.operator.business.id)}::uuid;`))).toBe(0)
+    expect(data(await pos<OperationalOrder>(owner,{command:'order',orderId:order.id}))).toMatchObject({paidCents:0,balanceCents:1099999989})
+    expect(data(await pos<CheckoutAttempt>(owner,{command:'attempt',attemptId:quote.id}))).toMatchObject({status:'prepared',saleId:null})
+    expect((await stats()).creates).toBe(before.creates)
+  },60000)
+
+  it.each([
+    ['failed','rejected'],['canceled','cancelled'],['expired','expired'],['action_required','unknown_review'],
+  ] as const)('reconciles simulated %s without reducing the order balance',async(remoteState,expectedState)=>{
+    await control({scenario:'pending'})
+    const checkout=await reserve(),before=await stats()
+    data(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:checkout.id}))
+    const pending=await runUntil(checkout.id,c=>c.remoteOrderId!==null)
+    expect(await orderFor(pending)).toMatchObject({paidCents:0,balanceCents:1001})
+    await simulateRemote(pending,remoteState)
+    // An accepted HTTP event does not write a sale or order payment.
+    expect(await orderFor(pending)).toMatchObject({paidCents:0,balanceCents:1001})
+    expect(Number(sql(`select count(*) from app_private.sales where business_id=${literal(owner.operator.business.id)}::uuid and operation_id=${literal(checkout.checkout.id)}::uuid;`))).toBe(0)
+    ageReconciliation(pending)
+    const result=await runUntil(checkout.id,c=>c.state===expectedState)
+    expect(result.saleState).toBe('pending');expect(result.sale).toBeNull()
+    expect(await orderFor(result)).toMatchObject({paidCents:0,balanceCents:1001})
+    expect((await stats()).creates-before.creates).toBe(1)
+    if(remoteState==='action_required') {
+      expect(result.checkout.status).toBe('uncertain')
+      expect(data(await point<{checkouts:PointCheckout[]}>(owner,{command:'recover'})).checkouts.some(c=>c.id===result.id)).toBe(true)
+      await simulateRemote(result,'processed');ageReconciliation(result)
+      const resolved=await runUntil(checkout.id,c=>c.saleState==='materialized')
+      expect(await orderFor(resolved)).toMatchObject({paidCents:1001,balanceCents:0})
+    } else {
+      expect(result.checkout.status).toBe('aborted')
+      expect(Number(sql(`select count(*) from app_private.point_terminal_reservations where attempt_id=${literal(result.attemptId!)}::uuid;`))).toBe(0)
+    }
+  },60000)
+
+  it('confirms each item-split payment once and settles only the verified part',async()=>{
+    await control({scenario:'pending'})
+    const first=await reserve(owner,3,1),before=await stats()
+    const start={command:'start' as const,operationId:randomUUID(),checkoutId:first.id}
+    data(await point(owner,start))
+    const pending=await runUntil(first.id,c=>c.remoteOrderId!==null)
+    expect(pending.totalCents).toBe(1001)
+    expect(await orderFor(pending)).toMatchObject({totalCents:3003,paidCents:0,balanceCents:3003})
+    await simulateRemote(pending,'processed')
+    expect(await orderFor(pending)).toMatchObject({paidCents:0,balanceCents:3003})
+    ageReconciliation(pending)
+    const paid=await runUntil(first.id,c=>c.saleState==='materialized')
+    const remaining=await orderFor(paid)
+    expect(remaining).toMatchObject({status:'open',totalCents:3003,paidCents:1001,balanceCents:2002})
+    // Mutation replay preserves its original acceptance; the status endpoint owns the latest result.
+    expect(data(await point<PointCheckout>(owner,start)).attemptId).toBe(paid.attemptId)
+    expect(data(await point<PointCheckout>(owner,{command:'status',checkoutId:first.id})).sale?.id).toBe(paid.sale?.id)
+    await worker()
+    expect(await orderFor(paid)).toMatchObject({paidCents:1001,balanceCents:2002})
+    const next=data(await pos<CheckoutAttempt>(owner,{command:'prepare_checkout',operationId:randomUUID(),orderId:remaining.id,expectedRevision:remaining.revision,items:remaining.items.map(item=>({lineId:item.lineId,quantity:2})),paymentMethod:'card_integrated'}))
+    const second=data(await point<PointCheckout>(owner,{command:'prepare',operationId:randomUUID(),checkoutAttemptId:next.id,terminalId}))
+    await control({scenario:'approved'})
+    data(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:second.id}))
+    const complete=await runUntil(second.id,c=>c.saleState==='materialized')
+    expect(complete.totalCents).toBe(2002)
+    expect(await orderFor(complete)).toMatchObject({status:'closed',totalCents:3003,paidCents:3003,balanceCents:0})
+    expect((await stats()).creates-before.creates).toBe(2)
+    expect(Number(sql(`select count(*) from app_private.sales where business_id=${literal(owner.operator.business.id)}::uuid and operation_id in (${literal(first.checkout.id)}::uuid,${literal(second.checkout.id)}::uuid);`))).toBe(2)
+    expect(Number(sql(`select count(distinct line_id) from app_private.sale_items where business_id=${literal(owner.operator.business.id)}::uuid and sale_id in (${literal(paid.sale!.id)}::uuid,${literal(complete.sale!.id)}::uuid);`))).toBe(2)
+    const refund={command:'refund' as const,operationId:randomUUID(),checkoutId:first.id,amountCents:1001,merchandiseCents:1001,tipCents:0,reason:'Devolver sólo la primera parte'}
+    data(await point(owner,refund))
+    const returned=await runUntil(first.id,c=>c.state==='refunded')
+    expect(returned).toMatchObject({refundedCents:1001,sale:{id:paid.sale!.id}})
+    expect(data(await point<PointCheckout>(owner,{command:'status',checkoutId:second.id}))).toMatchObject({state:'approved_verified',refundedCents:0,sale:{id:complete.sale!.id}})
+    expect(await orderFor(complete)).toMatchObject({paidCents:3003,balanceCents:0})
   },60000)
 
   it('uses separate PostgreSQL connections for double send and terminal competition, materializing once',async()=>{
@@ -210,7 +319,7 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})).toMatchObject({status:200,data:{attemptId:review.attemptId}})
     // Authoritative remote evidence resolves the old attempt even when charging is off.
     await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',last_updated_date:new Date().toISOString(),transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited',reference_id:String(700000 + Number(review.remoteOrderId!.slice(3)))}],refunds:[]}}})
-    sql(`update app_private.point_attempts set observed_at=clock_timestamp()-interval '10 minutes',updated_at=clock_timestamp()-interval '10 minutes' where id=${literal(review.attemptId!)}::uuid;`)
+    ageReconciliation(review)
     await runUntil(checkout.id,c=>c.saleState==='materialized')
     data(await point(owner,{command:'activate',enabled:true}))
   },60000)

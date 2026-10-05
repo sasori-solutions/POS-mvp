@@ -12,6 +12,7 @@ import type { OperationalMutation } from './useOperations'
 import { AccountClientError } from '../../lib/account'
 import { accessErrorCodes } from '../../components/useCatalog'
 import { checkoutTotals, checkoutSelectionKey, type CheckoutDraft } from '../../lib/checkout-selection'
+import { collectionPaymentMethod, collectionPaymentMethods, isManualCollectionMethod, pointCardReady } from '../../lib/payment-methods'
 import { useCurrentAttempt } from './useCurrentAttempt'
 import PointPayment from '../../components/PointPayment'
 import type { PointCheckout, PointSettings } from '../../lib/point-contracts'
@@ -21,7 +22,10 @@ import CheckoutItemSelection from './CheckoutItemSelection'
 import './checkout-selection.css'
 
 export default function OrderDetail({ order, business, methods: configuredMethods, attempts, mutation, onSaved, onPaymentRecorded, onEdit, refresh, collectionAllowed, access, onSessionError, checkoutView = false, onOpenCash, draft, onDraftChange, pointSettings, onPointBlocked }: { checkoutView?: boolean; order: OperationalOrder; business: BusinessContext; methods: PaymentMethod[]; attempts: CheckoutAttempt[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onPaymentRecorded?: (order: OperationalOrder) => void; onEdit: () => void; refresh: () => Promise<void>; collectionAllowed: boolean; access?: PosAccess; onSessionError?: (error: AccountClientError) => void; onOpenCash?: () => void; draft?: CheckoutDraft; onDraftChange?: (draft: CheckoutDraft) => void; pointSettings?: PointSettings | null; onPointBlocked?: (blocked: boolean) => void }) {
-  const methods = configuredMethods.filter(method => method !== 'card_integrated' || pointSettings?.enabled && pointSettings.permissions.charge)
+  const choices = collectionPaymentMethods(configuredMethods)
+  const cardReady = pointCardReady(configuredMethods, pointSettings)
+  const methods = choices.filter(method => method !== 'card_integrated' || cardReady)
+  const methodsKey = methods.join('|')
   const [pointBusy, setPointBusy] = useState(false)
   const checkoutClosing = useContext(CheckoutClosingContext)
   const lockCheckoutInteraction = useContext(CheckoutInteractionContext)
@@ -36,7 +40,9 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   const selectionAttemptId = useRef(recovered.current?.id ?? null)
   const [split, setSplit] = useState(() => recovered.current ? order.items.some(l => (recovered.current!.items.find(i => i.lineId === l.lineId)?.quantity ?? 0) !== l.quantity - l.paidQuantity) : initialDraft.current?.split ?? false)
   const [quantities, setQuantities] = useState<Record<string, number>>(() => Object.fromEntries(order.items.map(l => [l.lineId, Math.min(l.quantity - l.paidQuantity, recovered.current ? recovered.current.items.find(i => i.lineId === l.lineId)?.quantity ?? 0 : initialDraft.current?.quantities[l.lineId] ?? 0)])))
-  const [method, setMethod] = useState<PaymentMethod>(recovered.current?.paymentMethod ?? initialDraft.current?.method ?? methods[0] ?? 'cash')
+  const [method, setMethod] = useState<PaymentMethod>(() => recovered.current
+    ? recovered.current.status === 'prepared' ? collectionPaymentMethod(recovered.current.paymentMethod) : recovered.current.paymentMethod
+    : initialDraft.current ? collectionPaymentMethod(initialDraft.current.method) : methods[0] ?? choices[0] ?? 'cash')
   const [attempt, setAttempt] = useState<CheckoutAttempt | null>(null)
   const completedAttempts = useRef(new Set<string>())
   const handledPaymentResult = useRef(mutation.lastResult)
@@ -99,7 +105,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   useEffect(() => {
     if (!currentAttempt || !adoptingReservation) return
     selectionAttemptId.current = currentAttempt.id
-    setMethod(currentAttempt.paymentMethod)
+    setMethod(currentAttempt.status === 'prepared' ? collectionPaymentMethod(currentAttempt.paymentMethod) : currentAttempt.paymentMethod)
     setQuantities(Object.fromEntries(order.items.map(l => [l.lineId, currentAttempt.items.find(i => i.lineId === l.lineId)?.quantity ?? 0])))
     setSplit(order.items.some(l => (currentAttempt.items.find(i => i.lineId === l.lineId)?.quantity ?? 0) !== l.quantity - l.paidQuantity))
   }, [currentAttempt?.id, adoptingReservation])
@@ -170,10 +176,10 @@ export default function OrderDetail({ order, business, methods: configuredMethod
       reserveTimer.current = null
       if (requested.current === requestKey) requested.current = ''
     }
-  }, [order.id, order.revision, selectionKey, method, disabled, collectionAllowed, checkoutClosing, currentAttempt?.id, currentAttempt?.revision, current.blocked, editableReservation, reservationMatches, settled, reservationRetry, adoptingReservation, adjustingDiscount, registeringPayment])
+  }, [order.id, order.revision, selectionKey, method, methodsKey, disabled, collectionAllowed, checkoutClosing, currentAttempt?.id, currentAttempt?.revision, current.blocked, editableReservation, reservationMatches, settled, reservationRetry, adoptingReservation, adjustingDiscount, registeringPayment])
   const preparingReservation = mutation.pending && ['prepare_checkout', 'update_checkout'].includes(mutation.pending.command)
   const selectionLocked = registeringPayment || adjustingDiscount || Boolean(mutation.busy && !preparingReservation && !preparingCheckout) || Boolean(mutation.pending && !mutation.busy) || Boolean(current.error) || !editableReservation || settled
-  const reservingCheckout = Boolean(collectionAllowed && items.length && !reservationMatches && !reservationError && !current.error && (!mutation.pending || mutation.busy))
+  const reservingCheckout = Boolean(collectionAllowed && methods.includes(method) && items.length && !reservationMatches && !reservationError && !current.error && (!mutation.pending || mutation.busy))
   async function transition(command: 'resume_order_service' | 'cancel_order' | 'close_order') {
     try {
       const common = { operationId: crypto.randomUUID(), orderId: order.id, expectedRevision: order.revision }
@@ -275,7 +281,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   }
   async function recordPayment() {
     const generation = workflowGeneration.current
-    if (method === 'card_integrated' || paymentSubmission.current === generation) return
+    if (!isManualCollectionMethod(method) || paymentSubmission.current === generation) return
     if (disabled || registeringPayment || adjustingDiscount || !collectionAllowed || !allowed('sales.create') || !methods.includes(method) || !items.length || !currentAttempt || !reservationMatches || current.blocked) return
     // Guard synchronously: a second tap can arrive before React commits the disabled state.
     paymentSubmission.current = generation
@@ -346,7 +352,8 @@ export default function OrderDetail({ order, business, methods: configuredMethod
     {discountError && <p className="checkout-discount-error" role="alert">{discountError}</p>}
     {!settled && !discountOpen && allowed('sales.create') && editableReservation && <section className="ops-card">
       <h3 className={checkoutView ? 'sr-only' : undefined}>{split ? 'Cobrar selección' : 'Cobrar cuenta'}</h3>
-      {checkoutView ? <PaymentMethodPicker name="order-payment" methods={methods} value={method} onChange={setMethod} disabled={selectionLocked} /> : <label>Método de pago<select value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} disabled={selectionLocked}>{methods.map(m => <option key={m} value={m}>{paymentLabels[m]}</option>)}</select></label>}
+      {checkoutView ? <PaymentMethodPicker name="order-payment" methods={choices} value={method} onChange={setMethod} disabled={selectionLocked} disabledMethods={cardReady ? [] : ['card_integrated']} /> : <label>Método de pago<select value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} disabled={selectionLocked}>{choices.map(m => <option key={m} value={m} disabled={!methods.includes(m)}>{paymentLabels[m]}</option>)}</select></label>}
+      {choices.includes('card_integrated') && !cardReady && <p className="point-payment-hint" role="status">{pointSettings?.chargesEnabled === false ? 'Los cobros con tarjeta están pausados.' : 'Vincula una terminal para cobrar con tarjeta.'}</p>}
       <div className="checkout-reservation">
         {!collectionAllowed ? onOpenCash && <button className="pos-button pos-secondary" disabled={disabled} onClick={onOpenCash}>Ir a Caja</button>
           : adjustingDiscount ? null
@@ -357,14 +364,14 @@ export default function OrderDetail({ order, business, methods: configuredMethod
           : <p>Selecciona artículos para cobrar.</p>}
       </div>
       {collectionAllowed && reservationError && !mutation.pending && <button className="pos-button pos-secondary" disabled={disabled} onClick={() => setReservationRetry(n => n + 1)}>Reintentar reserva</button>}
-      {method !== 'card_integrated' && <button className="pos-button pos-primary checkout-register-payment" aria-label="Registrar pago" aria-busy={registeringPayment || reservingCheckout} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !reservationMatches || !collectionAllowed || !methods.includes(method) || !items.length} onClick={() => void recordPayment()}>{(registeringPayment || reservingCheckout) && <PendingIndicator label={registeringPayment ? 'Registrando pago' : 'Reservando el cobro'} />}<span>Registrar pago</span>{items.length > 0 && <strong aria-hidden="true">{money(totals.totalCents)}</strong>}</button>}
+      {isManualCollectionMethod(method) && <button className="pos-button pos-primary checkout-register-payment" aria-label="Registrar pago" aria-busy={registeringPayment || reservingCheckout} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !reservationMatches || !collectionAllowed || !methods.includes(method) || !items.length} onClick={() => void recordPayment()}>{(registeringPayment || reservingCheckout) && <PendingIndicator label={registeringPayment ? 'Registrando pago' : 'Reservando el cobro'} />}<span>Registrar pago</span>{items.length > 0 && <strong aria-hidden="true">{money(totals.totalCents)}</strong>}</button>}
       {!checkoutView && order.phase === 'checkout' && !order.frozen && <button className="pos-button pos-secondary" disabled={disabled} onClick={() => void transition('resume_order_service')}>Volver al servicio</button>}
     </section>}
     {current.loading && !currentAttempt && <LoadingPlaceholder dark={checkoutView} variant="form" rows={1} label="Consultando el estado del intento" />}
     {current.loading && currentAttempt && <PendingIndicator label="Consultando el estado del intento" />}
     {current.error && <p role="alert">{current.error}<button className="pos-button pos-secondary" onClick={current.retry}>Reintentar consulta</button></p>}
     {pointResultError && <p role="alert">{pointResultError}</p>}
-    {currentAttempt?.paymentMethod === 'card_integrated' && access && <PointPayment key={currentAttempt.id} access={access} attempt={currentAttempt} initialCheckout={pointSettings?.pending.find(checkout => checkout.checkout.id === currentAttempt.id)} settings={pointSettings ?? null} collectionAllowed={collectionAllowed} canStart={reservationMatches && !adjustingDiscount && !reservingCheckout && !current.blocked && !mutation.pending && !mutation.busy} onSessionError={onSessionError} onBlocked={blocked => { setPointBusy(blocked); onPointBlocked?.(blocked) }} onResolved={() => { void refresh() }} onDone={value => { void finishPoint(value) }} />}
+    {currentAttempt?.paymentMethod === 'card_integrated' && access && <PointPayment key={currentAttempt.id} access={access} attempt={currentAttempt} initialCheckout={pointSettings?.pending.find(checkout => checkout.checkout.id === currentAttempt.id)} settings={pointSettings ?? null} collectionAllowed={collectionAllowed} canStart={cardReady && reservationMatches && !adjustingDiscount && !reservingCheckout && !current.blocked && !mutation.pending && !mutation.busy} onSessionError={onSessionError} onBlocked={blocked => { setPointBusy(blocked); onPointBlocked?.(blocked) }} onResolved={() => { void refresh() }} onDone={value => { void finishPoint(value) }} />}
     {currentAttempt && currentAttempt.paymentMethod !== 'card_integrated' && currentAttempt.status !== 'prepared' && <><AttemptPanel attempt={currentAttempt} mutation={{ ...mutation, busy: mutation.busy || current.blocked }} collectionAllowed={collectionAllowed} onSaved={a => { setAttempt(a); void refresh() }} />{['completed', 'aborted'].includes(currentAttempt.status) && <button className="pos-button pos-secondary" disabled={disabled} onClick={() => {
       const generation = workflowGeneration.current, resolvedId = currentAttempt.id
       void refresh().then(() => {

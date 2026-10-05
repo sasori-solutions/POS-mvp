@@ -9,8 +9,8 @@ async function sell(page: Page) {
   await page.getByRole('button',{name:/^Agregar Latte,/}).click()
   const view = page.getByRole('button',{name:/^Ver cuenta/}); if (await view.isVisible()) await view.click()
   await page.getByRole('button',{name:'Cobrar',exact:true}).click()
-  await page.locator('label').filter({has:page.getByRole('radio',{name:'Mercado Pago A terminal',exact:true})}).click()
-  await expect(page.getByRole('radio',{name:'Mercado Pago A terminal',exact:true})).toBeChecked()
+  await page.locator('label').filter({has:page.getByRole('radio',{name:'Tarjeta Mercado Pago',exact:true})}).click()
+  await expect(page.getByRole('radio',{name:'Tarjeta Mercado Pago',exact:true})).toBeChecked()
   await expect(page.getByRole('button',{name:/^Enviar a terminal/})).toBeEnabled()
 }
 

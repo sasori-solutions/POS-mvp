@@ -3,6 +3,7 @@ import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
 import PointSetup from './PointSetup';
 import { usePoint } from './usePoint';
+import { collectionPaymentMethods } from '../lib/payment-methods';
 import type {
   BusinessContext,
   BusinessProfile,
@@ -29,8 +30,7 @@ const timezones = [
 ];
 const paymentOptions: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Efectivo" },
-  { value: "card_external", label: "Tarjeta externa" },
-  { value: "card_integrated", label: "Mercado Pago" },
+  { value: "card_integrated", label: "Tarjeta" },
   { value: "transfer", label: "Transferencia" },
 ];
 const emptyProfile: BusinessProfile = {
@@ -58,6 +58,7 @@ export default function BusinessSettings({
   const [profile, setProfile] = useState<BusinessProfile>({
     ...emptyProfile,
     ...business.profile,
+    paymentMethods: collectionPaymentMethods(business.profile.paymentMethods),
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -391,7 +392,7 @@ export default function BusinessSettings({
               </label>
             ))}
             <p className="field-help text-sm text-muted">
-              Mercado Pago envía el cobro a la terminal. Tarjeta externa lo registra manualmente.
+              Tarjeta envía el cobro a tu terminal de Mercado Pago.
             </p>
             <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Vincular una terminal</button>
           </fieldset>
