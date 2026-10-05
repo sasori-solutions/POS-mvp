@@ -286,7 +286,7 @@ test('legacy card configuration cannot create a manual card payment without a li
     await charge(page, '$58.00')
     await expect(page.getByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true })).toBeDisabled()
     await expect(page.getByRole('radio', { name: /Tarjeta externa|Registro manual/ })).toHaveCount(0)
-    await expect(page.getByText('Vincula una terminal para cobrar con tarjeta.')).toBeVisible()
+    await expect(page.getByText('Activa Tarjeta en Formas de pago.')).toBeVisible()
     expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(0)
     expect((await backend.sales()).sales).toHaveLength(0)
   } finally { await backend.db.close() }

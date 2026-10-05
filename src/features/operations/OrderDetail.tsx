@@ -24,6 +24,10 @@ import './checkout-selection.css'
 export default function OrderDetail({ order, business, methods: configuredMethods, attempts, mutation, onSaved, onPaymentRecorded, onEdit, refresh, collectionAllowed, access, onSessionError, checkoutView = false, onOpenCash, draft, onDraftChange, pointSettings, onPointBlocked }: { checkoutView?: boolean; order: OperationalOrder; business: BusinessContext; methods: PaymentMethod[]; attempts: CheckoutAttempt[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onPaymentRecorded?: (order: OperationalOrder) => void; onEdit: () => void; refresh: () => Promise<void>; collectionAllowed: boolean; access?: PosAccess; onSessionError?: (error: AccountClientError) => void; onOpenCash?: () => void; draft?: CheckoutDraft; onDraftChange?: (draft: CheckoutDraft) => void; pointSettings?: PointSettings | null; onPointBlocked?: (blocked: boolean) => void }) {
   const choices = collectionPaymentMethods(configuredMethods)
   const cardReady = pointCardReady(configuredMethods, pointSettings)
+  const cardHint = pointSettings?.chargesEnabled === false ? 'Los cobros con tarjeta están pausados.'
+    : !configuredMethods.includes('card_integrated')
+      ? business.role === 'owner' ? 'Activa Tarjeta en Formas de pago.' : 'El dueño debe activar Tarjeta en Formas de pago.'
+      : 'Vincula una terminal para cobrar con tarjeta.'
   const methods = choices.filter(method => method !== 'card_integrated' || cardReady)
   const methodsKey = methods.join('|')
   const [pointBusy, setPointBusy] = useState(false)
@@ -353,7 +357,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
     {!settled && !discountOpen && allowed('sales.create') && editableReservation && <section className="ops-card">
       <h3 className={checkoutView ? 'sr-only' : undefined}>{split ? 'Cobrar selección' : 'Cobrar cuenta'}</h3>
       {checkoutView ? <PaymentMethodPicker name="order-payment" methods={choices} value={method} onChange={setMethod} disabled={selectionLocked} disabledMethods={cardReady ? [] : ['card_integrated']} /> : <label>Método de pago<select value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} disabled={selectionLocked}>{choices.map(m => <option key={m} value={m} disabled={!methods.includes(m)}>{paymentLabels[m]}</option>)}</select></label>}
-      {choices.includes('card_integrated') && !cardReady && <p className="point-payment-hint" role="status">{pointSettings?.chargesEnabled === false ? 'Los cobros con tarjeta están pausados.' : 'Vincula una terminal para cobrar con tarjeta.'}</p>}
+      {choices.includes('card_integrated') && !cardReady && <p className="point-payment-hint" role="status">{cardHint}</p>}
       <div className="checkout-reservation">
         {!collectionAllowed ? onOpenCash && <button className="pos-button pos-secondary" disabled={disabled} onClick={onOpenCash}>Ir a Caja</button>
           : adjustingDiscount ? null

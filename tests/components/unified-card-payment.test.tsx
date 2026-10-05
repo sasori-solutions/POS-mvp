@@ -25,10 +25,10 @@ const order: OperationalOrder = {
 function mutation(): OperationalMutation {
   return { execute: vi.fn(async command => ({ ...prepared, revision: 2, paymentMethod: 'paymentMethod' in command ? command.paymentMethod : prepared.paymentMethod })), pending: null, busy: false, error: '', notice: '', lastResult: null, clearNotice: vi.fn() } as OperationalMutation
 }
-function checkout(methods = allMethods, settings: PointSettings | null = pointSettings(), attempt = { ...prepared, paymentMethod: 'cash' as PaymentMethod }) {
+function checkout(methods = allMethods, settings: PointSettings | null = pointSettings(), attempt = { ...prepared, paymentMethod: 'cash' as PaymentMethod }, context = business) {
   const request = mutation()
   vi.mocked(posRequest).mockImplementation(async () => attempt)
-  render(<OrderDetail checkoutView access={pointAccess} order={order} business={business} methods={methods} attempts={[attempt]} mutation={request} onSaved={vi.fn()} onEdit={vi.fn()} refresh={vi.fn(async () => {})} collectionAllowed pointSettings={settings} />)
+  render(<OrderDetail checkoutView access={pointAccess} order={order} business={context} methods={methods} attempts={[attempt]} mutation={request} onSaved={vi.fn()} onEdit={vi.fn()} refresh={vi.fn(async () => {})} collectionAllowed pointSettings={settings} />)
   return request
 }
 beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal('navigator', { onLine: true }) })
@@ -60,13 +60,44 @@ test.each(['missing', 'paused', 'revoked', 'unverified', 'permission'] as const)
   expect(screen.queryByText('Cobra en tu terminal externa.')).toBeNull()
 })
 
-test('a legacy card-only profile shows a disabled card and a linking hint without silently converting the configuration', () => {
+test('a legacy card-only profile asks the owner to activate Tarjeta without relinking or silently converting the configuration', () => {
   const request = checkout(['card_external'], pointSettings(), { ...prepared, paymentMethod: 'card_external' })
   expect(screen.getAllByRole('radio', { name: /Tarjeta/ })).toHaveLength(1)
   expect((screen.getByRole('radio', { name: 'Tarjeta Mercado Pago' }) as HTMLInputElement).disabled).toBe(true)
-  expect(screen.getByText('Vincula una terminal para cobrar con tarjeta.')).toBeTruthy()
+  expect(screen.getByText('Activa Tarjeta en Formas de pago.')).toBeTruthy()
+  expect(screen.queryByText('Vincula una terminal para cobrar con tarjeta.')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
   expect(request.execute).not.toHaveBeenCalled()
+  expect(pointRequest).not.toHaveBeenCalled()
+})
+
+test.each(['cashier', 'manager'] as const)('missing saved Tarjeta asks the owner to enable it for a %s with collection permission', role => {
+  const employee = { ...business, role, permissions: ['sales.create', 'catalog.read'] as BusinessContext['permissions'] }
+  const request = checkout(['card_external'], pointSettings(), { ...prepared, paymentMethod: 'card_external' }, employee)
+  expect(screen.getByText('El dueño debe activar Tarjeta en Formas de pago.')).toBeTruthy()
+  expect(screen.queryByText('Activa Tarjeta en Formas de pago.')).toBeNull()
+  expect(screen.queryByText('Vincula una terminal para cobrar con tarjeta.')).toBeNull()
+  expect((screen.getByRole('radio', { name: 'Tarjeta Mercado Pago' }) as HTMLInputElement).disabled).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
+  expect(request.execute).not.toHaveBeenCalled()
+  expect(pointRequest).not.toHaveBeenCalled()
+})
+
+test.each(['owner', 'cashier'] as const)('paused card collections take precedence over missing profile activation for %s', role => {
+  const context = { ...business, role, permissions: ['sales.create', 'catalog.read'] as BusinessContext['permissions'] }
+  const settings = { ...pointSettings(), chargesEnabled: false }
+  const request = checkout(['card_external'], settings, { ...prepared, paymentMethod: 'card_external' }, context)
+  expect(screen.getByText('Los cobros con tarjeta están pausados.')).toBeTruthy()
+  expect(screen.queryByText(/activar Tarjeta|Activa Tarjeta|Vincula una terminal/)).toBeNull()
+  expect((screen.getByRole('radio', { name: 'Tarjeta Mercado Pago' }) as HTMLInputElement).disabled).toBe(true)
+  expect(request.execute).not.toHaveBeenCalled()
+  expect(pointRequest).not.toHaveBeenCalled()
+})
+
+test('the linking hint remains when Tarjeta is saved but no terminal settings are available', () => {
+  checkout(['cash', 'card_integrated'], null)
+  expect(screen.getByText('Vincula una terminal para cobrar con tarjeta.')).toBeTruthy()
+  expect(screen.queryByText(/activar Tarjeta|Activa Tarjeta/)).toBeNull()
 })
 
 test('choosing card updates a known prepared legacy quote to Point without manually recording a payment', async () => {

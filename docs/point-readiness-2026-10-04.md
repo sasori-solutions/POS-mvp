@@ -23,6 +23,7 @@ PWA, métodos, reservas, división por artículos, descuentos/IVA, Auth y revoca
 | Importe no admitido reservaba terminal | Rechazo antes de checkout Point: mínimo $5.00 sólo virtual oficial y máximo del adaptador. Sin orden, trabajo o movimiento monetario. |
 | Tarjeta y Mercado Pago como opciones distintas | Una sola Tarjeta. Perfiles anteriores se convierten al guardar como dueño; contratos históricos y recuperación exacta anterior permanecen. |
 | Home conservaba configuración anterior al volver | Consulta de estado al salir de Configuración o guardar métodos; no inicia consultas en cada render. |
+| Terminal lista, pero aviso pedía volver a vincularla | Se identifica el paso pendiente: pausa, activar Tarjeta en Formas de pago según rol, o vincular terminal. Sin cambios automáticos de perfil. |
 | Rechazo parcial documentado retenía saldo disponible | Sólo `400 unsupported_partially_refunds`, primer parcial y dos GET sin devoluciones permiten cerrar la solicitud como rechazada. Dinero e historial no cambian. |
 | Auditoría de aprobadas fuera de ventana API | Confirmadas se auditan dentro de tres meses; pendientes no se resuelven por antigüedad. |
 
@@ -52,6 +53,8 @@ Regresión funcional headless: seis casos Point entre escritorio/móvil (aprobar
 
 Después de ajustar la cobertura legacy: **294 unitarias y 498 de componentes/SQL aprobadas**, build y lint sin errores.
 
+Último ajuste de mensajes de activación: tres fallos reproducidos antes del cambio. Casos de dueño, cajero, gerente, pausa y terminal ausente comprobados; **294 unitarias y 503 de componentes/SQL aprobadas**, build, TypeScript y lint sin errores. No cambia permisos, configuración ni dinero.
+
 No se usó navegador para revisar diseño, conforme al usuario. Desarrollo de esta rama: `http://127.0.0.1:5181/`. Backend compatible se aplica antes del frontend; el frontend sigue PR revisado y CI de DEPLOYMENT. Aplicar backend no significa publicar los nuevos assets.
 
 ### Backend publicado — 5 octubre, 00:47 UTC
@@ -78,5 +81,6 @@ Webhook sin firma devolvió **503 SERVER_ERROR**: la configuración de firmas co
 - Orders permite consultas dentro de tres meses calendario y las devoluciones se documentan hasta 90 días. Las ventanas no siempre coinciden; no se omite la prueba autoritativa para una devolución tardía.
 - `Dividir por cantidad` está sin integrar en otro worktree. Revisión separada: 20 pruebas enfocadas aprobadas, sin editar ni incluir esos cambios. Antes de integrar necesita nuevas regresiones Point.
 - Backend conserva compatibilidad con contratos y recuperación manual anteriores. La nueva UI no ofrece registrar una tarjeta nueva manualmente como alternativa a Point.
+- La casilla Tarjeta controla la nueva UI. La habilitación del servidor sigue en Point (`point_settings.enabled` y permisos); desmarcarla no es una pausa global del backend.
 
 Fuentes primarias: [payload](https://www.mercadopago.com.mx/developers/es/reference/in-person-payments/point/orders/create-order/post), [estados](https://www.mercadopago.com.mx/developers/es/docs/mp-point/resources/status-order-transaction), [simulador](https://www.mercadopago.com.mx/developers/es/docs/mp-point/integration-test), [POS v2](https://www.mercadopago.com.mx/developers/es/reference/in-person-payments/point/pos/create-pos/post), [GET Orders](https://www.mercadopago.com.mx/developers/es/reference/in-person-payments/point/orders/get-order/get), [devoluciones](https://www.mercadopago.com.mx/developers/es/reference/in-person-payments/point/orders/refund-order/post), [producción](https://www.mercadopago.com.mx/developers/es/docs/mp-point/go-to-production).
