@@ -86,7 +86,8 @@ for (const decision of ['approve', 'reject'] as const) {
       expect(calls.filter(call => call.action === 'review_employee_device')).toHaveLength(0)
       await page.getByRole('button', { name: 'Reemplazar dispositivo', exact: true }).click()
     } else await page.getByRole('button', { name: 'Rechazar', exact: true }).click()
-    await expect(page.getByRole('status')).toContainText(decision === 'approve' ? 'Cambio autorizado' : 'Solicitud rechazada')
+    const confirmation = decision === 'approve' ? 'Cambio autorizado' : 'Solicitud rechazada'
+    await expect(page.getByRole('status').filter({ hasText: confirmation })).toContainText(confirmation)
     expect(calls.find(call => call.action === 'review_employee_device')).toMatchObject({ businessId: fixtureBusiness.id, decision, notificationId: notices[0].id })
     await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toHaveCount(0)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
@@ -137,7 +138,7 @@ test('a delayed inbox refresh cannot restore a pending device request after appr
     await expect.poll(() => Boolean(releaseReview)).toBe(true)
     await expect(page.getByRole('button', { name: 'Reemplazar dispositivo', exact: true })).toBeDisabled()
     releaseReview!()
-    await expect(page.getByRole('status')).toContainText('Cambio autorizado')
+    await expect(page.getByRole('status').filter({ hasText: 'Cambio autorizado' })).toContainText('Cambio autorizado')
     for (const release of delayedReads) release()
     await expect(page.getByText('Autorizado', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toHaveCount(0)
@@ -177,7 +178,7 @@ test('a device decision supersedes a pending inbox refresh without restoring sta
     holdRefresh = false
     await page.getByRole('button', { name: 'Rechazar', exact: true }).click()
     await expect(page.getByText('Rechazado', { exact: true })).toBeVisible()
-    await expect(page.getByRole('status')).toContainText('Solicitud rechazada')
+    await expect(page.getByRole('status').filter({ hasText: 'Solicitud rechazada' })).toContainText('Solicitud rechazada')
     releaseRefresh!()
     await expect(page.getByText('Rechazado', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toHaveCount(0)

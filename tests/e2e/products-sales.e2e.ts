@@ -35,9 +35,17 @@ async function recorded(page: Page, backend: Awaited<ReturnType<typeof mockPos>>
   await expect.poll(async () => (await backend.sales()).sales.length).toBe(1)
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pos-operations:')))).toEqual([])
 }
-async function showReceipt(page: Page, recovered = false) {
+async function showReceipt(page: Page, recoveredAmount?: string) {
   const checkout = page.getByRole('dialog', { name: 'Cobrar', exact: true })
-  if (recovered && await checkout.isVisible()) await checkout.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  if (recoveredAmount) {
+    const account = page.getByRole('dialog', { name: 'Mostrador', exact: true })
+    await expect(account).toBeVisible()
+    const totals = account.locator('.ops-totals > div')
+    await expect(totals.filter({ has: page.getByText('Pagado', { exact: true }) }).locator('dd')).toHaveText(recoveredAmount)
+    await expect(totals.filter({ has: page.getByText('Saldo', { exact: true }) }).locator('dd')).toHaveText('$0.00')
+    await account.getByRole('button', { name: 'Cerrar', exact: true }).click()
+    await expect(account).not.toBeVisible()
+  }
   await expect(checkout).not.toBeVisible()
   await navigate(page, 'Ventas')
   await page.getByRole('button', { name: /^Ver venta/ }).click()
@@ -524,7 +532,7 @@ test('expanded product editor persists a photo, variants and extras with manual 
     await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page)
     await retryPayment(page).click()
     await recorded(page, backend)
-    await showReceipt(page, true)
+    await showReceipt(page, '$62.13')
     await expect(page.locator('.sale-detail')).toContainText('Grande, Avena')
     expect((await backend.catalog()).products[0].details?.trackStock).toBe(false)
     expect((await backend.catalog()).products[0].version).toBe(product.version)

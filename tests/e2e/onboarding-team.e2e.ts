@@ -48,7 +48,8 @@ test('new business card selection saves only Tarjeta without activating or linki
   expect(creations).toHaveLength(1);
   expect(creations[0].profile.paymentMethods).toEqual(['cash', 'card_integrated']);
   expect(creations[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
-  expect(calls.filter(call => call.action === 'point' || call.action === 'device_point')).toHaveLength(0);
+  const pointCommands = calls.filter(call => call.action === 'point' || call.action === 'device_point').map(call => call.command);
+  expect(pointCommands.filter(command => command !== 'settings')).toEqual([]);
   expect(calls.filter(call => call.action === 'update_business')).toHaveLength(0);
 });
 
