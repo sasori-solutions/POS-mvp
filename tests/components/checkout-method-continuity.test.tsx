@@ -107,7 +107,7 @@ test('the card quote becoming ready does not steal focus, and terminal initiatio
   await screen.findByText('El cobro está en camino a la terminal.')
   expect(cash).toHaveProperty('disabled', true)
   expect(screen.getByTestId('blocked').textContent).toBe('true')
-  expect(vi.mocked(pointRequest).mock.calls.map(([, command]) => command.command)).toEqual(['prepare', 'start'])
+  await waitFor(() => expect(vi.mocked(pointRequest).mock.calls.map(([, command]) => command.command)).toEqual(['prepare', 'start', 'status']))
 })
 
 test('a late initiated-card response restores card recovery before any manual action can collect', async () => {

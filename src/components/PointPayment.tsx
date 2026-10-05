@@ -33,6 +33,7 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
   const [uncertain, setUncertain] = useState(Boolean(!initialCheckout && attempt && attempt.status !== 'prepared')), [online, setOnline] = useState(navigator.onLine)
   const [simulation, setSimulation] = useState<'processed' | 'failed' | 'canceled' | 'expired' | 'action_required'>('processed')
   const [simulationPending, setSimulationPending] = useState(false)
+  const [pollRevision, setPollRevision] = useState(0)
   const requestedSimulation = useRef(simulation)
   const sandboxReview = checkout?.state === 'unknown_review' && checkout.statusDetail === 'check_on_terminal'
   const alive = useRef(true), running = useRef(false), prepareId = useRef(crypto.randomUUID()), startId = useRef(crypto.randomUUID())
@@ -83,12 +84,17 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
     try { change(await pointRequest(access, { command: 'status', checkoutId: checkout.id })) } catch (caught) { failure(caught) }
     finally { running.current = false }
   }, [access.businessId, access.operatorToken, access.deviceToken, checkout?.id])
+  function observeFreshResult() {
+    // Wake only after the current mutation releases the shared request lock.
+    // React commits its returned checkout before this observation effect runs.
+    if (alive.current && !accessDenied.current) setPollRevision(previous => previous + 1)
+  }
   useEffect(() => {
     if (!checkout || finished) return
     // Keep observing the durable server result while this view is open. A hidden
     // PWA/outage must not consume a finite polling budget and strand the payment.
     let active = true, polling = false, timer: number | null = null
-    const startedAt = Date.now()
+    let startedAt = Date.now()
     const stopTimer = () => { if (timer !== null) window.clearTimeout(timer); timer = null }
     const canRead = () => active && !accessDenied.current && navigator.onLine && !document.hidden
     const schedule = () => {
@@ -100,8 +106,11 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
       polling = true
       try { await read() } finally { polling = false; schedule() }
     }
-    const resume = () => { stopTimer(); if (canRead()) void poll() }
-    schedule()
+    const resume = () => { stopTimer(); if (canRead()) { startedAt = Date.now(); void poll() } }
+    // A new send/simulation starts a fresh observation window even if this
+    // account has been open for hours. Acceptance alone never confirms money.
+    if (pollRevision) void poll()
+    else schedule()
     document.addEventListener('visibilitychange', resume)
     window.addEventListener('focus', resume)
     window.addEventListener('online', resume)
@@ -113,10 +122,11 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
       window.removeEventListener('online', resume)
       window.removeEventListener('offline', stopTimer)
     }
-  }, [checkout?.id, finished, read])
+  }, [checkout?.id, finished, read, pollRevision])
   async function initiate() {
     if (running.current || !navigator.onLine || !startAllowed.current) return
     running.current = true; setBusy(true); setError('')
+    let sent = false
     try {
       let value = checkout
       if (!value) {
@@ -126,7 +136,10 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
         change(value)
       }
       if (!matchesQuote(latestAttempt.current, value.checkout)) { setError('La reserva cambió. Revisa el importe actualizado o cancela este intento.'); return }
-      if (alive.current && startAllowed.current && value.state === 'prepared') change(await pointRequest(access, { command: 'start', operationId: startId.current, checkoutId: value.id }))
+      if (alive.current && startAllowed.current && value.state === 'prepared') {
+        sent = true
+        change(await pointRequest(access, { command: 'start', operationId: startId.current, checkoutId: value.id }))
+      }
     } catch (caught) {
       if (!alive.current) return
       failure(caught)
@@ -138,7 +151,7 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
         const value = recovery.checkouts.find(item => item.checkout.id === attempt?.id || item.id === checkout?.id)
         if (value) change(value)
       } catch { /* Keep the conservative lock and explicit recovery action. */ }
-    } finally { running.current = false; if (alive.current) setBusy(false) }
+    } finally { running.current = false; if (alive.current) { setBusy(false); if (sent) observeFreshResult() } }
   }
   async function cancel() {
     if (!checkout || running.current || !online) return
@@ -175,7 +188,7 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
       // verify the order and materialize its original snapshot before showing success.
       if (alive.current) setSimulationPending(true)
     } catch (caught) { failure(caught) }
-    finally { running.current = false; if (alive.current) setBusy(false) }
+    finally { running.current = false; if (alive.current) { setBusy(false); observeFreshResult() } }
   }
   const ready = !checkout || checkout.state === 'prepared'
   const failed = Boolean(checkout && pointFailed(checkout.state))

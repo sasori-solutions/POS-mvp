@@ -40,11 +40,11 @@ test('Point starts from the selected reservation even when onBlocked rerenders t
     reservation = quote(command.items[0].quantity, reservation.revision + 1); return reservation
   })
   vi.mocked(posRequest).mockImplementation(async () => reservation)
-  vi.mocked(pointRequest).mockImplementation(async (_access, command) => ({ ...pointCheckout(), checkout: reservation, items: reservation.items, totalCents: reservation.totalCents, state: command.command === 'start' ? 'pending' : 'prepared' }))
+  vi.mocked(pointRequest).mockImplementation(async (_access, command) => ({ ...pointCheckout(), checkout: reservation, items: reservation.items, totalCents: reservation.totalCents, state: command.command === 'prepare' ? 'prepared' : 'pending' }))
   render(<Harness request={request} />)
   await waitFor(() => expect((screen.getByRole('button', { name: /^Enviar a terminal/ }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(screen.getByRole('button', { name: /^Enviar a terminal/ }))
-  await waitFor(() => expect(vi.mocked(pointRequest).mock.calls.map(([, command]) => command.command)).toEqual(['prepare', 'start']))
+  await waitFor(() => expect(vi.mocked(pointRequest).mock.calls.map(([, command]) => command.command)).toEqual(['prepare', 'start', 'status']))
   expect(screen.getByTestId('parent-blocked').textContent).toBe('true')
   expect(vi.mocked(pointRequest).mock.calls[0][1]).toMatchObject({ checkoutAttemptId: reservation.id })
 })

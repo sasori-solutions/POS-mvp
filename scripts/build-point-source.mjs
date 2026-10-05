@@ -4,12 +4,13 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const hash = value => createHash('sha256').update(value).digest('hex')
-const namespaces = { crypto: 'PointCrypto', provider: 'PointProvider', service: 'PointService', http: 'PointHttp', webhook: 'PointWebhook' }
+const namespaces = { crypto: 'PointCrypto', provider: 'PointProvider', service: 'PointService', background: 'PointBackground', http: 'PointHttp', webhook: 'PointWebhook' }
 const aliases = {
   service: "const { challenge, digest, randomSecret, TokenVault } = PointCrypto; type TokenVault = PointCrypto.TokenVault; const { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, validateCreatePayload, verifyOrder } = PointProvider; type Environment = PointProvider.Environment; type ExpectedOrder = PointProvider.ExpectedOrder; type PointAdapter = PointProvider.PointAdapter; type TokenSet = PointProvider.TokenSet;",
   webhook: 'const { digest } = PointCrypto;',
+  background: 'const { runWorker } = PointService; type Configuration = PointService.Configuration; type RpcClient = PointService.RpcClient; type WorkerScope = PointService.WorkerScope;',
 }
-export function buildPointModules(modules = ['crypto', 'provider', 'service']) {
+export function buildPointModules(modules = ['crypto', 'provider', 'service', 'background']) {
   return modules.map(name => {
     const path = `supabase/functions/point/${name}.ts`, original = readFileSync(path, 'utf8')
     const body = original.replace(/^import[^\n]*from ['"]\.[^'"]+['"]\r?\n/gm, '')
@@ -22,10 +23,10 @@ export function buildPointSource(endpoint) {
   const original = readFileSync(path, 'utf8')
   let body = original.replace(/^import[^\n]*from ['"][^'"]+['"]\r?\n/gm, '')
   body = body.replace(/if \(import\.meta\.main\) /g, '')
-  const modules = endpoint === 'point' ? ['http'] : endpoint === 'point-webhook' ? ['crypto', 'provider', 'service', 'http', 'webhook'] : ['crypto', 'provider', 'service', 'http']
+  const modules = endpoint === 'point' ? ['http'] : endpoint === 'point-webhook' ? ['crypto', 'provider', 'service', 'background', 'http', 'webhook'] : ['crypto', 'provider', 'service', 'http']
   const imports = endpoint === 'point' ? '' : "import { createClient } from 'npm:@supabase/supabase-js@2.117.2'\n"
   const alias = endpoint === 'point' ? 'const { boundedBody, HttpError, json } = PointHttp;' : endpoint === 'point-webhook'
-    ? 'const { boundedBody, HttpError, json, serviceKey } = PointHttp; const { serviceRpc } = PointService; const { SignatureError, verifySignature, webhookSecrets } = PointWebhook;'
+    ? 'const { boundedBody, HttpError, json, serviceKey } = PointHttp; const { serviceRpc } = PointService; const { backgroundPointWork } = PointBackground; const { SignatureError, verifySignature, webhookSecrets } = PointWebhook;'
     : 'const { json, serviceKey, workerAuthorized } = PointHttp; const { runWorker } = PointService;'
   return `${imports}${buildPointModules(modules)}\n${alias}\n// Source: ${path}; SHA-256 ${hash(original)}\n${body}`
 }

@@ -92,6 +92,7 @@ jobs:
           MP_ALLOW_LOCAL_SIMULATOR=true
           MP_API_BASE_URL=http://host.docker.internal:8187
           POINT_CHARGES_ENABLED=true
+          POINT_IMMEDIATE_WORK_ENABLED=false
           ENV
           npx supabase status -o json > /tmp/pos-local-status.json
           node --input-type=module <<'JS'

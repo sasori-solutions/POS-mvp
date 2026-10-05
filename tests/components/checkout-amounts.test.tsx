@@ -164,7 +164,7 @@ test('closing and reopening a partially paid counter shows its exact remaining a
 
 test.each(['approved_verified','rejected'] as const)('Tarjeta uses the same amount reservation and handles %s without a manual card payment',async(state)=>{
  const request=mutation(),original=amountQuote(initial,[50000,4000,22068],'card_integrated')
- let current=initial,reservation=original
+ let current=initial,reservation=original,verified=false
  vi.mocked(request.execute).mockImplementation(async command=>{
   if(command.command!=='prepare_checkout')throw new Error('Point must not register a manual payment')
   reservation=amountQuote(current,command.amountsCents,'card_integrated',reservation.revision+1);return reservation
@@ -175,6 +175,7 @@ test.each(['approved_verified','rejected'] as const)('Tarjeta uses the same amou
   if(command.command==='prepare')return base
   if(command.command==='start')return {...base,state:'processing'}
   if(command.command==='status'){
+   if(!verified)return {...base,state:'processing'}
    if(state==='approved_verified')current={...initial,revision:3,frozen:true,paidCents:50000,balanceCents:26068,amountSplit:true,amountParts:[4000,22068],amountPaidParts:1,items:[{...initial.items[0],paidTotalCents:50000}]}
    return {...base,state,saleState:state==='approved_verified'?'materialized':'pending',checkout:{...reservation,status:state==='approved_verified'?'completed':'aborted',revision:reservation.revision+1}}
   }
@@ -185,11 +186,12 @@ test.each(['approved_verified','rejected'] as const)('Tarjeta uses the same amou
  expect(screen.queryByRole('button',{name:'Registrar pago'})).toBeNull()
  const send=await screen.findByRole('button',{name:/^Enviar a terminal/})
  fireEvent.click(send)
- await waitFor(()=>expect(vi.mocked(pointRequest).mock.calls.map(([,command])=>command.command)).toEqual(['prepare','start']))
+ await waitFor(()=>expect(vi.mocked(pointRequest).mock.calls.map(([,command])=>command.command)).toEqual(['prepare','start','status']))
  expect(vi.mocked(pointRequest).mock.calls[0][1]).toMatchObject({checkoutAttemptId:original.id})
  expect(current.balanceCents).toBe(76068)
  expect(screen.getByLabelText('Persona 1')).toHaveProperty('value','500.00')
  expect(screen.getByLabelText('Persona 1')).toHaveProperty('disabled',true)
+ verified=true
  fireEvent(window,new Event('focus'))
  fireEvent.click(await screen.findByRole('button',{name:state==='approved_verified'?'Continuar':'Volver a la cuenta'}))
  if(state==='approved_verified'){

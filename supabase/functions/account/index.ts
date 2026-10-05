@@ -5,6 +5,7 @@ import { isUuid, parseAccountRequest, RequestValidationError } from './validatio
 import { mailConfiguration, sendPinRecovery } from './email.ts'
 import { claimsFromVerifiedJwt, verifiedGoogleAuthentication } from './authentication.ts'
 import { processPointResult } from '../point/service.ts'
+import { backgroundPointWork } from '../point/background.ts'
 
 const maxBodyBytes = 8192
 const errorDefinitions: Record<AccountErrorCode, { status: number; message: string }> = {
@@ -275,7 +276,8 @@ Deno.serve(async (request: Request) => {
     }
     if (action.action === 'point' || action.action === 'device_point') {
       let result = await processPointResult(admin, action, data.data,
-        identityArgs.p_user_id ? { userId: identityArgs.p_user_id, authSessionId: identityArgs.p_auth_session_id } : undefined)
+        identityArgs.p_user_id ? { userId: identityArgs.p_user_id, authSessionId: identityArgs.p_auth_session_id } : undefined,
+        undefined, scope => backgroundPointWork(admin, scope))
       if (['connect_sandbox','oauth_callback','verify_connection','link_terminal','test_terminal'].includes(action.command)) {
         const refreshed = action.action === 'point'
           ? await admin.rpc('point_execute', { ...identityArgs, p_business_id: action.businessId, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })

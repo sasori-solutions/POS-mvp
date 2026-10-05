@@ -64,13 +64,14 @@ test('accepting a simulation event never registers a payment before independent 
 })
 
 test.each<PointSimulationStatus>(['processed', 'failed', 'canceled', 'expired', 'action_required'])('simulation submits only the requested provider status: %s', async status => {
-  vi.mocked(pointRequest).mockResolvedValue({ accepted: true })
   const initial = pending()
+  vi.mocked(pointRequest).mockImplementation(async (_access, command) => command.command === 'simulate' ? { accepted: true } : initial)
   render(<PointPayment access={pointAccess} initialCheckout={initial} settings={settings()} />)
   fireEvent.change(screen.getByRole('combobox', { name: 'Resultado de prueba' }), { target: { value: status } })
   fireEvent.click(screen.getByRole('button', { name: 'Simular resultado' }))
   await screen.findByRole('button', { name: 'Resultado solicitado' })
-  expect(pointRequest).toHaveBeenCalledExactlyOnceWith(pointAccess, { command: 'simulate', checkoutId: initial.id, status })
+  expect(vi.mocked(pointRequest).mock.calls.filter(([, command]) => command.command === 'simulate')).toEqual([[pointAccess, { command: 'simulate', checkoutId: initial.id, status }]])
+  await waitFor(() => expect(pointRequest).toHaveBeenCalledWith(pointAccess, { command: 'status', checkoutId: initial.id }))
   expect(screen.getByRole('heading', { name: 'Esperando la terminal' })).toBeTruthy()
 })
 
@@ -199,7 +200,7 @@ test('the simulator accepts a follow-up result only after observing a new provid
   fireEvent.click(screen.getByRole('button', { name: 'Simular resultado' }))
   await screen.findByRole('button', { name: 'Resultado solicitado' })
   fireEvent.click(screen.getByRole('button', { name: 'Consultar estado' }))
-  await waitFor(() => expect(pointRequest).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(pointRequest).toHaveBeenCalledTimes(3))
   expect((screen.getByRole('button', { name: 'Resultado solicitado' }) as HTMLButtonElement).disabled).toBe(true)
   expect(onResolved).not.toHaveBeenCalled()
 

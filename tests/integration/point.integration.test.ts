@@ -307,6 +307,63 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     await runUntil(second.id,c=>c.saleState==='materialized')
   },60000)
 
+  it('leases fast reconciliation once across separate connections and preserves tenant scope, backoff and receipt identity',async()=>{
+    const { runWorker }=await import('../../supabase/functions/point/service')
+    const { MercadoPagoPoint }=await import('../../supabase/functions/point/provider')
+    const { TokenVault }=await import('../../supabase/functions/point/crypto')
+    const configuration={adapter:new MercadoPagoPoint({clientId:'sim-client',clientSecret:'sim-secret',redirectUri:`${process.env.TEST_APP_ORIGIN ?? 'http://127.0.0.1:5173'}/point/callback`,baseUrl:simulator!,allowLocalSimulator:true}),
+      vault:new TokenVault({[process.env.TEST_POINT_TOKEN_KEY_ID ?? 'ci']:process.env.TEST_POINT_TOKEN_KEY ?? 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE'},process.env.TEST_POINT_TOKEN_KEY_ID ?? 'ci'),
+      clientId:'sim-client',redirectUri:`${process.env.TEST_APP_ORIGIN ?? 'http://127.0.0.1:5173'}/point/callback`,environment:'sandbox' as const,chargesEnabled:true,localSimulator:true}
+    await control({scenario:'pending'})
+    const before=await stats(),prepared=await reserve()
+    const request={command:'start' as const,operationId:randomUUID(),checkoutId:prepared.id}
+    const started=data(await point<PointCheckout>(owner,request))
+    expect(started).not.toHaveProperty('backendWork')
+    const scope={businessId:owner.operator.business.id,attemptId:started.attemptId!}
+    const browser=createClient(url!,anon,{auth:{persistSession:false,autoRefreshToken:false}})
+    expect((await browser.rpc('point_service',{p_action:'claim_jobs',p_payload:{...scope,limit:1,leaseToken:randomUUID(),chargesEnabled:true}})).error).not.toBeNull()
+    const wrong=await admin!.rpc('point_service',{p_action:'claim_jobs',p_payload:{...scope,businessId:other.operator.business.id,limit:1,leaseToken:randomUUID(),chargesEnabled:true}})
+    expect(wrong.error).toBeNull();expect(wrong.data).toEqual({jobs:[]})
+    const claims=await Promise.all([admin!.rpc('point_service',{p_action:'claim_jobs',p_payload:{...scope,limit:1,leaseToken:randomUUID(),chargesEnabled:true}}),
+      admin!.rpc('point_service',{p_action:'claim_jobs',p_payload:{...scope,limit:1,leaseToken:randomUUID(),chargesEnabled:true}})])
+    expect(claims.every(reply=>!reply.error)).toBe(true)
+    const jobs=claims.flatMap(reply=>reply.data.jobs)
+    expect(jobs).toHaveLength(1);expect(jobs[0].attemptId).toBe(started.attemptId)
+    expect((await stats()).creates).toBe(before.creates)
+    // A process can disappear after claiming; expiry retains the same create
+    // operation/idempotency identity and the existing recovery path can reclaim it.
+    sql(`update app_private.point_jobs set lease_until=clock_timestamp()-interval '1 second' where id=${literal(jobs[0].id)}::uuid and business_id=${literal(scope.businessId)}::uuid;`)
+    const recovered=await Promise.all([runWorker(admin!,configuration,scope),runWorker(admin!,configuration,scope)])
+    expect(recovered.reduce((sum,result)=>sum+result.processed,0)).toBe(1)
+    expect(recovered.reduce((sum,result)=>sum+result.failed,0)).toBe(0)
+    const pending=data(await point<PointCheckout>(owner,{command:'status',checkoutId:prepared.id}))
+    expect(pending).toMatchObject({attemptId:started.attemptId,state:'pending',saleState:'pending'})
+    expect(await orderFor(pending)).toMatchObject({paidCents:0,balanceCents:prepared.totalCents})
+    expect((await stats()).creates-before.creates).toBe(1)
+    ageReconciliation(pending)
+    const queued=await admin!.rpc('point_service',{p_action:'reconcile_now',p_payload:scope})
+    expect(queued.error).toBeNull();expect(queued.data).toEqual({queued:true})
+    const blocked=await admin!.rpc('point_service',{p_action:'claim_jobs',p_payload:{...scope,limit:1,leaseToken:randomUUID(),chargesEnabled:false}})
+    expect(blocked.error).toBeNull();expect(blocked.data.jobs).toHaveLength(1)
+    const job=blocked.data.jobs[0]
+    expect(job.kind).toBe('reconcile')
+    const failed=await admin!.rpc('point_service',{p_action:'fail_job',p_payload:{id:job.id,leaseToken:job.leaseToken,code:'UNCERTAIN',uncertain:true,delaySeconds:60}})
+    expect(failed.error).toBeNull()
+    const retryBefore=sql(`select jsonb_build_object('availableAt',available_at,'attempts',attempts) from app_private.point_jobs where id=${literal(job.id)}::uuid;`)
+    expect(await runWorker(admin!,configuration,scope)).toEqual({processed:0,failed:0})
+    expect(sql(`select jsonb_build_object('availableAt',available_at,'attempts',attempts) from app_private.point_jobs where id=${literal(job.id)}::uuid;`)).toBe(retryBefore)
+    await simulateRemote(pending,'processed')
+    sql(`update app_private.point_jobs set available_at=clock_timestamp() where id=${literal(job.id)}::uuid and business_id=${literal(scope.businessId)}::uuid;`)
+    expect(await runWorker(admin!,configuration,scope)).toEqual({processed:1,failed:0})
+    const paid=data(await point<PointCheckout>(owner,{command:'status',checkoutId:prepared.id}))
+    expect(paid).toMatchObject({state:'approved_verified',saleState:'materialized',attemptId:started.attemptId})
+    expect(await orderFor(paid)).toMatchObject({balanceCents:0,paidCents:prepared.totalCents})
+    expect(await runWorker(admin!,configuration,scope)).toEqual({processed:0,failed:0})
+    expect(data(await point<PointCheckout>(owner,request)).sale!.id).toBe(paid.sale!.id)
+    expect((await stats()).creates-before.creates).toBe(1)
+    expect(Number(sql(`select count(*) from app_private.sales where id=${literal(paid.sale!.id)}::uuid;`))).toBe(1)
+  },60000)
+
   it('does not dispatch a newly queued charge after disabling the business',async()=>{
     await control({scenario:'approved'})
     const checkout=await reserve(),before=await stats()

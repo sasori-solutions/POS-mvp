@@ -111,6 +111,7 @@ async function main() {
       await writeFile(secretsPath,JSON.stringify(pointSecrets),{mode:0o600,flag:'wx'})
     }
     pointSimulator=await startSimulator({host:'0.0.0.0',port:settings.pointSimulatorPort,stateFile:join(directory,'point-simulator.json'),realtime:!pointManualWorker})
+    environment+=`POINT_IMMEDIATE_WORK_ENABLED=${pointManualWorker ? 'false' : 'true'}\n`
     environment+=`MP_CLIENT_ID=sim-client\nMP_CLIENT_SECRET=sim-secret\nMP_REDIRECT_URI=${origin}/point/callback\nMP_ENVIRONMENT=sandbox\nMP_TOKEN_KEYS=${JSON.stringify({local:pointSecrets.tokenKey})}\nMP_TOKEN_ACTIVE_KEY=local\nMP_WEBHOOK_SECRET=simulator-webhook-secret\nPOINT_WORKER_SECRET=${pointSecrets.workerSecret}\nMP_ALLOW_LOCAL_SIMULATOR=true\nMP_API_BASE_URL=http://host.docker.internal:${settings.pointSimulatorPort}\nMP_OAUTH_AUTHORIZATION_URL=http://127.0.0.1:${settings.pointSimulatorPort}/authorization\nPOINT_CHARGES_ENABLED=true\n`
   }
   await writeFile(functionEnv,environment,{mode:0o600})

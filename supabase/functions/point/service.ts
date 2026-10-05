@@ -77,7 +77,7 @@ export async function connectionToken(admin: RpcClient, config: Configuration, c
 function redacted(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redacted)
   if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !/token|secret|ciphertext|verifier|backendDirective|lease/i.test(key)).map(([key, item]) => [key, redacted(item)]))
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !/token|secret|ciphertext|verifier|backendDirective|backendWork|lease/i.test(key)).map(([key, item]) => [key, redacted(item)]))
 }
 type ResourceBudget = { remaining: number; deadline?: number }
 async function resourcePages(config: Configuration, token: TokenSet, path: string, select: (page: Record<string, unknown>) => unknown,
@@ -125,8 +125,19 @@ async function terminals(config: Configuration, token: TokenSet, storeId?: strin
 }
 /** Called only AFTER SQL authorized the exact account/device command. Directives never cross the browser boundary. */
 export async function processPointResult(admin: RpcClient, request: Record<string, unknown>, result: unknown,
-  identity?: { userId: string; authSessionId: string }, supplied?: Configuration): Promise<unknown> {
+  identity?: { userId: string; authSessionId: string }, supplied?: Configuration, onWork?: (scope: WorkerScope) => void): Promise<unknown> {
   const data = record(result)
+  const notifyWork = () => {
+    if (!onWork) return
+    // Dispatch is an optimization of an already durable job. Failure to schedule
+    // background work must not turn an accepted command into a failed payment.
+    try {
+      const work = record(data.backendWork ?? {})
+      if (typeof work.businessId !== 'string' || typeof work.attemptId !== 'string'
+        || request.action !== 'device_point' && work.businessId !== request.businessId) return
+      onWork({ businessId: identifier(work.businessId), attemptId: identifier(work.attemptId) })
+    } catch { /* Periodic recovery keeps ownership of the persisted queue. */ }
+  }
   if (!data.backendDirective) {
     if (request.command === 'settings') {
       let available = false, chargesEnabled = false, availableEnvironment: Environment | null = null
@@ -134,6 +145,7 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
       try { const configured = supplied ?? configuration(); official = !configured.localSimulator; chargesEnabled = configured.chargesEnabled; available = Boolean(configured.testAccessToken && official); availableEnvironment = configured.oauthAvailable ? configured.environment : null } catch { /* Feature remains visible but disabled without server credentials. */ }
       return redacted({ ...data, chargesEnabled, availableEnvironment, sandbox: { available, official, testBusiness: record(data.sandbox ?? {}).testBusiness === true } })
     }
+    notifyWork()
     return redacted(data)
   }
   const directive = record(data.backendDirective), config = supplied ?? configuration()
@@ -201,6 +213,7 @@ export async function processPointResult(admin: RpcClient, request: Record<strin
       const status = String(request.status)
       await config.adapter.request(token, `/v1/orders/${remoteOrderId}/events`, 'POST', { status, ...(['processed', 'failed'].includes(status) ? { payment_method_type: 'credit_card', installments: 1, payment_method_id: 'visa', status_detail: status === 'processed' ? 'accredited' : 'insufficient_amount' } : {}) })
       // Accepted is not a payment result. Existing worker/webhook GET reconciliation owns all money writes.
+      notifyWork()
       return { accepted: true }
     }
     if (token.source === 'server_test' && command === 'resources') return { branches: [{ id: 'sandbox', name: 'Pruebas' }], registers: [{ id: 'sandbox', branchId: 'sandbox', name: 'Terminal virtual' }], terminals: [{ id: 'NEWLAND_N950__SBX0000001', serial: 'SBX0000001', branchId: 'sandbox', registerId: 'sandbox', mode: 'PDV', branchName: 'Pruebas', registerName: 'Terminal virtual' }] }
@@ -306,13 +319,15 @@ function withinReplayWindow(firstSentAt: unknown): boolean {
   const firstSent = typeof firstSentAt === 'string' ? Date.parse(firstSentAt) : NaN
   return Number.isFinite(firstSent) && firstSent <= Date.now() && Date.now() - firstSent < 23 * 3600000
 }
-export async function runWorker(admin: RpcClient, supplied?: Configuration): Promise<{ processed: number; failed: number }> {
+export interface WorkerScope { businessId: string; attemptId: string }
+export async function runWorker(admin: RpcClient, supplied?: Configuration, scope?: WorkerScope): Promise<{ processed: number; failed: number }> {
   const config = supplied ?? configuration()
-  await serviceRpc(admin, 'pending_sweep', { limit: 100 })
+  if (scope) await serviceRpc(admin, 'reconcile_now', { ...scope })
+  else await serviceRpc(admin, 'pending_sweep', { limit: 100 })
   let processed = 0, failed = 0
   // Acquire each lease immediately before work, so preceding slow HTTP calls cannot age waiting leases.
-  for (let iteration = 0; iteration < 4; iteration++) {
-    const claimed = await serviceRpc(admin, 'claim_jobs', { limit: 1, leaseToken: crypto.randomUUID(), chargesEnabled: config.chargesEnabled })
+  for (let iteration = 0; iteration < (scope ? 1 : 4); iteration++) {
+    const claimed = await serviceRpc(admin, 'claim_jobs', { limit: 1, leaseToken: crypto.randomUUID(), chargesEnabled: config.chargesEnabled, ...scope })
     const jobs = Array.isArray(claimed.jobs) ? claimed.jobs as unknown as Job[] : []
     if (jobs.length === 0) break
     const job = jobs[0]

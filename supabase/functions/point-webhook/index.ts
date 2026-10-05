@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2'
 import { boundedBody, HttpError, json, serviceKey } from '../point/http.ts'
 import { serviceRpc } from '../point/service.ts'
+import { backgroundPointWork } from '../point/background.ts'
 import { SignatureError, verifySignature, webhookSecrets } from '../point/webhook.ts'
 export async function handleWebhook(request: Request): Promise<Response> {
   if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED' } }, 405)
@@ -14,7 +15,14 @@ export async function handleWebhook(request: Request): Promise<Response> {
     if (body.type !== 'order' || typeof data?.id !== 'string' || data.id.toLowerCase() !== evidence.remoteOrderId.toLowerCase()) throw new HttpError(400)
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, serviceKey(), { auth: { persistSession: false, autoRefreshToken: false } })
     // ONLY authenticated locator is stored. Unsigned financial/account fields cannot establish a tenant or payment.
-    await serviceRpc(admin, 'webhook_enqueue', evidence)
+    const enqueued = await serviceRpc(admin, 'webhook_enqueue', evidence)
+    // ACK only after durable storage; financial evidence is fetched separately.
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (enqueued.accepted === true && enqueued.matched === true
+      && typeof enqueued.businessId === 'string' && uuid.test(enqueued.businessId)
+      && typeof enqueued.attemptId === 'string' && uuid.test(enqueued.attemptId)) {
+      backgroundPointWork(admin, { businessId: enqueued.businessId, attemptId: enqueued.attemptId })
+    }
     return json({ received: true }, 200)
   } catch (error) {
     if (error instanceof SignatureError) {
@@ -27,4 +35,4 @@ export async function handleWebhook(request: Request): Promise<Response> {
     return json({ error: { code: 'SERVER_ERROR' } }, 503)
   }
 }
-Deno.serve(handleWebhook)
+if (import.meta.main) Deno.serve(handleWebhook)

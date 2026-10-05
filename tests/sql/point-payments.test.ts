@@ -572,6 +572,92 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     for (const role of ['anon', 'authenticated', 'service_role']) expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'public.point_service_before_prompt_reconciliation(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
   })
 
+  it('scopes fast claims to an exact business and attempt without consuming another queue', async () => {
+    const first = await setup(), second = await setup()
+    const a = await point<PointCheckout>(first.actor, { command: 'start', operationId: randomUUID(), checkoutId: first.checkout.id })
+    const b = await point<PointCheckout>(second.actor, { command: 'start', operationId: randomUUID(), checkoutId: second.checkout.id })
+    expect(await service('claim_jobs', { businessId: first.actor.businessId, attemptId: b.attemptId, leaseToken: randomUUID(), chargesEnabled: true })).toEqual({ jobs: [] })
+    expect(await service('reconcile_now', { businessId: first.actor.businessId, attemptId: b.attemptId })).toEqual({ queued: false })
+    await expect(service('claim_jobs', { attemptId: a.attemptId, leaseToken: randomUUID(), chargesEnabled: true })).rejects.toThrow('VALIDATION_ERROR')
+    await expect(service('claim_jobs', { businessId: first.actor.businessId, leaseToken: randomUUID(), chargesEnabled: true })).rejects.toThrow('VALIDATION_ERROR')
+    await point(first.actor, { command: 'activate', enabled: false })
+    expect(await service('claim_jobs', { businessId: first.actor.businessId, attemptId: a.attemptId, leaseToken: randomUUID(), chargesEnabled: true })).toEqual({ jobs: [] })
+    await point(first.actor, { command: 'activate', enabled: true })
+    const selected = await service<{ jobs: { attemptId: string; id: string; leaseToken: string }[] }>('claim_jobs', { businessId: first.actor.businessId, attemptId: a.attemptId, limit: 1, leaseToken: randomUUID(), chargesEnabled: true })
+    expect(selected.jobs).toHaveLength(1)
+    expect(selected.jobs[0].attemptId).toBe(a.attemptId)
+    expect((await db.query<{ state: string }>('select status state from app_private.point_jobs where attempt_id=$1', [b.attemptId])).rows[0].state).toBe('queued')
+    expect(await service('claim_jobs', { businessId: first.actor.businessId, attemptId: a.attemptId, leaseToken: randomUUID(), chargesEnabled: true })).toEqual({ jobs: [] })
+  })
+
+  it('throttles fast GET reconciliation and preserves retries, leases and money', async () => {
+    const { actor, checkout, reservation } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state: 'processing' })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    const scope = { businessId: actor.businessId, attemptId: started.attemptId }
+    expect(await service('reconcile_now', scope)).toEqual({ queued: false })
+    await db.query("update app_private.point_attempts set last_reconciled_at=clock_timestamp()-interval '4 seconds' where id=$1", [started.attemptId])
+    expect(await service('reconcile_now', scope)).toEqual({ queued: true })
+    expect(await service('reconcile_now', scope)).toEqual({ queued: false })
+    expect(await pos(actor, { command: 'order', orderId: reservation.orderId })).toMatchObject({ balanceCents: reservation.totalCents, paidCents: 0 })
+    const claimed = await service<{ jobs: { id: string; kind: string; leaseToken: string }[] }>('claim_jobs', { ...scope, limit: 1, leaseToken: randomUUID(), chargesEnabled: false })
+    expect(claimed.jobs).toHaveLength(1)
+    const job = claimed.jobs[0]
+    expect(job.kind).toBe('reconcile')
+    expect(await service('reconcile_now', scope)).toEqual({ queued: false })
+    await service('fail_job', { id: job.id, leaseToken: job.leaseToken, code: 'UNCERTAIN', uncertain: true, delaySeconds: 60 })
+    const original = (await db.query('select status,available_at,attempts from app_private.point_jobs where id=$1', [job.id])).rows[0]
+    expect(await service('reconcile_now', scope)).toEqual({ queued: false })
+    expect(await service('claim_jobs', { ...scope, leaseToken: randomUUID(), chargesEnabled: false })).toEqual({ jobs: [] })
+    expect((await db.query('select status,available_at,attempts from app_private.point_jobs where id=$1', [job.id])).rows[0]).toEqual(original)
+    expect((await db.query<{ reserved: boolean }>('select exists(select 1 from app_private.point_terminal_reservations where attempt_id=$1) reserved', [started.attemptId])).rows[0].reserved).toBe(true)
+  })
+
+  it('emits background hints only from authorized active checkouts and never after payment', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout & { backendWork: { businessId: string; attemptId: string } }>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    expect(started.backendWork).toEqual({ businessId: actor.businessId, attemptId: started.attemptId })
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ backendWork: started.backendWork })
+    const foreign = await newActor()
+    await expect(point(foreign, { command: 'status', checkoutId: checkout.id })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
+    await db.query('delete from auth.sessions where id=$1', [actor.sessionId])
+    await expect(point(actor, { command: 'status', checkoutId: checkout.id })).rejects.toThrow()
+    await db.query('insert into auth.sessions(id,user_id) values($1,$2)', [actor.sessionId, actor.userId])
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'approved_verified' })
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).not.toHaveProperty('backendWork')
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    expect(await service('reconcile_now', started.backendWork)).toEqual({ queued: false })
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'public.point_service_before_fast_reconciliation(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+      expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'app_private.point_command_before_fast_reconciliation(uuid,uuid,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+    }
+  })
+
+  it('keeps duplicate webhook jobs from running alongside a live create lease', async () => {
+    const { actor, checkout } = await setup()
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const scope = { businessId: actor.businessId, attemptId: started.attemptId }
+    const leased = await service<{ jobs: { id: string; leaseToken: string }[] }>('claim_jobs', { ...scope, limit: 1, leaseToken: randomUUID(), chargesEnabled: true })
+    const job = leased.jobs[0]
+    const evidence = await facts(started.attemptId!)
+    await service('record_remote_order', { ...scope, jobId: job.id, leaseToken: job.leaseToken, remoteOrderId: evidence.remoteOrderId })
+    const event = { eventKey: randomUUID().replaceAll('-', '').repeat(2), remoteOrderId: evidence.remoteOrderId, signatureTimestamp: String(Date.now()) }
+    expect(await service('webhook_enqueue', event)).toMatchObject({ accepted: true, matched: true, ...scope })
+    expect(await service('webhook_enqueue', event)).toMatchObject({ accepted: true, matched: true, ...scope })
+    expect(await service('claim_jobs', { ...scope, limit: 100, leaseToken: randomUUID(), chargesEnabled: true })).toEqual({ jobs: [] })
+    await service('apply_order', { ...evidence, state: 'approved_verified', jobId: job.id, leaseToken: job.leaseToken })
+    await service('complete_job', { id: job.id, leaseToken: job.leaseToken })
+    const notified = await service<{ jobs: { id: string; kind: string; leaseToken: string }[] }>('claim_jobs', { ...scope, limit: 100, leaseToken: randomUUID(), chargesEnabled: true })
+    expect(notified.jobs).toHaveLength(1)
+    expect(notified.jobs[0].kind).toBe('webhook')
+    await service('apply_order', { ...evidence, state: 'approved_verified', jobId: notified.jobs[0].id, leaseToken: notified.jobs[0].leaseToken })
+    await service('complete_job', { id: notified.jobs[0].id, leaseToken: notified.jobs[0].leaseToken })
+    expect((await db.query<{ n: number }>('select count(*)::integer n from app_private.sales where business_id=$1', [actor.businessId])).rows[0].n).toBe(1)
+    expect((await db.query<{ n: number }>('select duplicate_count::integer n from app_private.point_event_inbox where event_key=$1', [event.eventKey])).rows[0].n).toBe(1)
+  })
+
   it('uses inclusive local dates at midnight and preserves complete global detail across pages', async () => {
     const {actor,checkout}=await setup(1001)
     const started=await point<PointCheckout>(actor,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})
