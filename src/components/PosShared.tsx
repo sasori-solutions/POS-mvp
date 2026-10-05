@@ -181,7 +181,7 @@ export function SaleDetail({ sale }: { sale: Sale }) {
               <strong>{item.name}</strong>
               <p>{item.selectionLabel}</p>
               <p>
-                {item.quantity} × {money(item.unitPriceCents)}
+                {item.allocatedGrossCents !== undefined ? 'Parte de cuenta' : `${item.quantity} × ${money(item.unitPriceCents)}`}
               </p>
             </div>
             <span>{money(item.totalCents)}</span>

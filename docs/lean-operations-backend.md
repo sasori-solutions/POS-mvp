@@ -2,6 +2,8 @@
 
 Implementation evidence, 2 October 2026. The current human scope is recorded in [Lean POS MVP](lean-pos-mvp.md); this document describes the server contract and local verification. It does not establish a hosted release.
 
+The [4 October business/operations review](business-operations-review-2026-10-04.md) supersedes the earlier two-state kitchen interface and documents optional accounts, service before payment, private images and `reports.read_own`. Earlier dated verification below remains historical evidence.
+
 ## Authentication and grants
 
 Operational commands use the existing `pos` and `device_pos` transport. The Edge function retains its 8 KiB request limit, exact JSON validation, explicit-origin CORS and no-store responses. Personal calls preserve signed browser proof, Google/Auth session checks and the eight-hour operator session. Shared-register calls preserve device revocation, employee binding and the restricted operator credential. No new browser-visible database endpoint is introduced.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check, CircleAlert, Clock3, CreditCard, X } from 'lucide-react'
 import { AccountClientError } from '../lib/account'
 import type { CheckoutAttempt } from '../lib/operations-contracts'
@@ -22,15 +22,15 @@ export default function PointPayment(props: Parameters<typeof PointPaymentSessio
   return <PointPaymentSession key={`${access.businessId}:${access.operatorToken}:${access.deviceToken ?? ''}:${attempt?.id ?? initialCheckout?.id ?? ''}`} {...props} />
 }
 
-function PointPaymentSession({ access, attempt, initialCheckout, settings, onSessionError, onBlocked, onResolved, onDone, collectionAllowed = true, canStart = true }: {
+function PointPaymentSession({ access, attempt, initialCheckout, settings, onSessionError, onBlocked, onResolved, onDone, collectionAllowed = true, canStart = true, embedded = false }: {
   access: PosAccess; attempt?: CheckoutAttempt | null; initialCheckout?: PointCheckout; settings: PointSettings | null
   onSessionError?: (error: AccountClientError) => void; onBlocked?: (blocked: boolean) => void
-  onResolved?: (checkout: PointCheckout) => void; onDone?: (checkout: PointCheckout) => void; collectionAllowed?: boolean; canStart?: boolean
+  onResolved?: (checkout: PointCheckout) => void; onDone?: (checkout: PointCheckout) => void; collectionAllowed?: boolean; canStart?: boolean; embedded?: boolean
 }) {
   const [checkout, setCheckout] = useState<PointCheckout | null>(initialCheckout ?? null)
   const [terminalId, setTerminalId] = useState(initialCheckout?.terminal.id ?? '')
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [reason, setReason] = useState('')
-  const [uncertain, setUncertain] = useState(false), [online, setOnline] = useState(navigator.onLine)
+  const [uncertain, setUncertain] = useState(Boolean(!initialCheckout && attempt && attempt.status !== 'prepared')), [online, setOnline] = useState(navigator.onLine)
   const [simulation, setSimulation] = useState<'processed' | 'failed' | 'canceled' | 'expired' | 'action_required'>('processed')
   const [simulationPending, setSimulationPending] = useState(false)
   const requestedSimulation = useRef(simulation)
@@ -48,8 +48,12 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
   const finished = Boolean(checkout && pointResolved(checkout.state) && (pointFailed(checkout.state) || checkout.saleState === 'materialized'))
   const change = useCallback((value: PointCheckout) => { if (alive.current) { setCheckout(previous => previous?.id === value.id && previous.updatedAt > value.updatedAt ? previous : value); setUncertain(false); setError('') } }, [])
   useEffect(() => { if (initialCheckout) setCheckout(previous => !previous || initialCheckout.id === previous.id && initialCheckout.updatedAt > previous.updatedAt ? initialCheckout : previous) }, [initialCheckout])
-  useEffect(() => { alive.current = true; const connected = () => setOnline(navigator.onLine); window.addEventListener('online', connected); window.addEventListener('offline', connected); heading.current?.focus(); return () => { alive.current = false; window.removeEventListener('online', connected); window.removeEventListener('offline', connected); onBlocked?.(false) } }, [])
-  useEffect(() => { onBlocked?.(blocked) }, [blocked, onBlocked])
+  useLayoutEffect(() => {
+    if (!checkout && attempt && attempt.status !== 'prepared') setUncertain(true)
+  }, [attempt?.status, checkout])
+  useEffect(() => { alive.current = true; const connected = () => setOnline(navigator.onLine); window.addEventListener('online', connected); window.addEventListener('offline', connected); if (!embedded) heading.current?.focus(); return () => { alive.current = false; window.removeEventListener('online', connected); window.removeEventListener('offline', connected); onBlocked?.(false) } }, [])
+  // Lock the stable method selector before painting a newly pending charge.
+  useLayoutEffect(() => { onBlocked?.(blocked) }, [blocked, onBlocked])
   useEffect(() => {
     // Delivery/processing are intermediate states, not the result of the requested event.
     if (simulationPending && (pointResolved(checkout?.state ?? 'prepared') || requestedSimulation.current === 'action_required' && checkout?.state === 'unknown_review')) setSimulationPending(false)
@@ -58,7 +62,9 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
     if (checkout || uncertain || busy) return
     if (!available.some(terminal => terminal.id === terminalId)) setTerminalId(available[0]?.id ?? '')
   }, [available, terminalId, checkout, uncertain, busy])
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Notify the account before painting its completed-payment action. The
+    // receipt is already materialized by the server; this never confirms it.
     if (!checkout || !pointResolved(checkout.state) || checkout.saleState !== 'materialized' && !pointFailed(checkout.state)) return
     const key = `${checkout.id}:${checkout.state}:${checkout.saleState}`
     if (resolved.current !== key) { resolved.current = key; onResolved?.(checkout) }
@@ -189,22 +195,26 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
     : checkout?.state === 'pending' ? 'El cobro está en camino a la terminal.'
     : checkout && !ready ? 'El cliente puede acercar o insertar su tarjeta.'
     : sandbox ? 'Envía el importe a la terminal de prueba.' : 'El importe se enviará a la terminal seleccionada.'
-  return <section className="point-payment" aria-label="Cobro con Mercado Pago">
-    <div className="point-payment-heading">
+  const sendButton = ready && !uncertain && <button type="button" className="pos-button pos-primary point-payment-send" aria-busy={busy} disabled={busy || !online || changedReservation || unsupportedAmount || !collectionAllowed || !canStart || !settings?.enabled || settings.chargesEnabled === false || !settings.permissions.charge || !checkout && (!attempt || !available.some(terminal => terminal.id === terminalId))} onClick={() => void initiate()}><span className="point-payment-send-progress" data-active={busy || undefined} aria-hidden={!busy}><PendingIndicator label="Enviando el cobro" /></span><span>Enviar a terminal</span>{totalCents !== undefined && <strong>{money(totalCents)}</strong>}</button>
+  const compactReady = embedded && ready && !uncertain
+  return <section className="point-payment" data-embedded={embedded || undefined} aria-label="Cobro con Mercado Pago">
+    {embedded && sendButton}
+    {!compactReady && <div className="point-payment-heading">
       <span className="point-payment-mark">{simulationPending || busy && !ready ? <PendingIndicator label={simulationPending ? 'Verificando el resultado de prueba' : 'Actualizando el cobro'} size={22} /> : <StatusIcon size={22} strokeWidth={1.6} aria-hidden="true" />}</span>
       <div className="point-payment-title" role="status" aria-live="polite" aria-atomic="true"><h3 ref={heading} tabIndex={-1}>{statusTitle}</h3><p>{statusDescription}</p></div>
       {sandbox && <span className="point-payment-sandbox">Modo prueba</span>}
-    </div>
+    </div>}
     {!ready && totalCents !== undefined && <p className="point-payment-amount">{money(totalCents)}<span>MXN</span></p>}
     {!online && <p className="point-payment-message" role="alert">Sin conexión. El cobro sigue guardado; podrás consultarlo al reconectar.</p>}
     {error && <p className="point-payment-message is-error" role="alert">{error}</p>}
     {!checkout && available.length > 1 ? <label className="point-payment-terminal-select">Enviar a<select value={terminalId} onChange={event => setTerminalId(event.target.value)} disabled={busy || uncertain}>
       <option value="">Selecciona una terminal</option>{available.map(terminal => <option key={terminal.id} value={terminal.id}>{terminal.registerName} · {terminal.serial}</option>)}
     </select></label> : selectedTerminal && <div className="point-payment-terminal"><CreditCard size={18} aria-hidden="true" /><span><strong>{selectedTerminal.registerName}</strong><small>{selectedTerminal.serial}</small></span></div>}
+    {compactReady && sandbox && <span className="point-payment-sandbox">Modo prueba</span>}
     {!checkout && !available.length && <p className="point-payment-message">No hay terminales listas. El dueño puede añadir una en Vincular una terminal.</p>}
     {changedReservation && <p className="point-payment-message" role="status">La cuenta cambió. Cancela este intento para usar el importe actualizado.</p>}
     {ready && unsupportedAmount && <p className="point-payment-message" role="status">{totalCents! < 500 ? 'La terminal de prueba admite cobros desde $5.00.' : 'El importe supera el rango admitido por esta terminal.'}</p>}
-    {ready && !uncertain && <button type="button" className="pos-button pos-primary point-payment-send" aria-busy={busy} disabled={busy || !online || changedReservation || unsupportedAmount || !collectionAllowed || !canStart || !settings?.enabled || settings.chargesEnabled === false || !settings.permissions.charge || !checkout && (!attempt || !available.some(terminal => terminal.id === terminalId))} onClick={() => void initiate()}>{busy && <PendingIndicator label="Enviando el cobro" />}<span>Enviar a terminal</span>{totalCents !== undefined && <strong>{money(totalCents)}</strong>}</button>}
+    {!embedded && sendButton}
     {!finished && (uncertain || checkout && !ready) && <p className="point-payment-hint">Cerrar esta pantalla no cancela el cobro.</p>}
     {sandbox && settings?.sandbox?.official && settings.sandbox.testBusiness && settings.permissions.manage && !access.deviceToken && checkout?.remoteOrderId && !pointResolved(checkout.state) && <div className="point-payment-simulator">
       <label>Simulador de Mercado Pago<select aria-label="Resultado de prueba" value={sandboxReview ? 'processed' : simulation} disabled={busy || simulationPending} onChange={event => setSimulation(event.target.value as typeof simulation)}><option value="processed">Aprobar pago</option>{!sandboxReview && <><option value="failed">Rechazar pago</option><option value="canceled">Cancelar pago</option><option value="expired">Expirar cobro</option><option value="action_required">Requiere revisión</option></>}</select></label>

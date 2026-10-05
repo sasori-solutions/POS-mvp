@@ -106,22 +106,20 @@ for (const decision of ['approve', 'reject'] as const) {
 test('a delayed inbox refresh cannot restore a pending device request after approval', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true })
   const notice: OwnerNotification = { id: '54bd1b7e-ab26-4dca-a4ee-63988c136c78', type: 'employee_device_requested', employeeId: '0797aa93-8117-491d-b153-db8001d92224', employeeName: 'Empleado de prueba', deviceName: 'Teléfono nuevo', createdAt: new Date().toISOString(), readAt: null, status: 'pending' }
-  let reviewPending = false
+  let holdRefresh = false
   let releaseReview: (() => void) | undefined
   const delayedReads: (() => void)[] = []
   await page.route('**/functions/v1/account', async route => {
     const body = route.request().postDataJSON()
     if (body.action === 'review_employee_device') {
-      reviewPending = true
       await new Promise<void>(resolve => { releaseReview = resolve })
-      reviewPending = false
       notice.status = 'approved'
       notice.readAt = new Date().toISOString()
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { reviewed: true } }) })
     }
     if (body.action !== 'notifications') return route.fallback()
     const data = { notifications: [structuredClone(notice)], unreadCount: notice.readAt ? 0 : 1 }
-    if (reviewPending) await new Promise<void>(resolve => { delayedReads.push(resolve) })
+    if (holdRefresh) await new Promise<void>(resolve => { delayedReads.push(resolve) })
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) })
   })
   try {
@@ -129,11 +127,15 @@ test('a delayed inbox refresh cannot restore a pending device request after appr
     await page.getByTestId('pin-input').fill(fixturePin)
     await submitPinIfPresent(page);
     await page.getByRole('button', { name: 'Notificaciones, 1 sin leer', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toBeEnabled()
+    holdRefresh = true
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await expect.poll(() => delayedReads.length).toBeGreaterThan(0)
+    holdRefresh = false
     await page.getByRole('button', { name: 'Autorizar cambio', exact: true }).click()
     await page.getByRole('button', { name: 'Reemplazar dispositivo', exact: true }).click()
     await expect.poll(() => Boolean(releaseReview)).toBe(true)
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-    await expect.poll(() => delayedReads.length).toBeGreaterThan(0)
+    await expect(page.getByRole('button', { name: 'Reemplazar dispositivo', exact: true })).toBeDisabled()
     releaseReview!()
     await expect(page.getByRole('status')).toContainText('Cambio autorizado')
     for (const release of delayedReads) release()
@@ -145,7 +147,7 @@ test('a delayed inbox refresh cannot restore a pending device request after appr
   }
 })
 
-test('device decision controls wait for an inbox refresh and work when it completes', async ({ page }) => {
+test('a device decision supersedes a pending inbox refresh without restoring stale actions', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true })
   const notice: OwnerNotification = { id: '54bd1b7e-ab26-4dca-a4ee-63988c136c78', type: 'employee_device_requested', employeeId: '0797aa93-8117-491d-b153-db8001d92224', employeeName: 'Empleado de prueba', deviceName: 'Teléfono nuevo', createdAt: new Date().toISOString(), readAt: null, status: 'pending' }
   let holdRefresh = false
@@ -157,8 +159,9 @@ test('device decision controls wait for an inbox refresh and work when it comple
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { reviewed: true } }) })
     }
     if (body.action !== 'notifications') return route.fallback()
+    const data = { notifications: [structuredClone(notice)], unreadCount: notice.readAt ? 0 : 1 }
     if (holdRefresh) await new Promise<void>(resolve => { releaseRefresh = resolve })
-    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { notifications: [notice], unreadCount: notice.readAt ? 0 : 1 } }) })
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) })
   })
   try {
     await page.goto('/')
@@ -169,11 +172,15 @@ test('device decision controls wait for an inbox refresh and work when it comple
     holdRefresh = true
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     await expect.poll(() => Boolean(releaseRefresh)).toBe(true)
-    await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toBeDisabled()
-    await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toBeDisabled()
-    holdRefresh = false; releaseRefresh!()
+    await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toBeEnabled()
+    holdRefresh = false
     await page.getByRole('button', { name: 'Rechazar', exact: true }).click()
     await expect(page.getByText('Rechazado', { exact: true })).toBeVisible()
     await expect(page.getByRole('status')).toContainText('Solicitud rechazada')
+    releaseRefresh!()
+    await expect(page.getByText('Rechazado', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Rechazar', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Autorizar cambio', exact: true })).toHaveCount(0)
   } finally { releaseRefresh?.() }
 })

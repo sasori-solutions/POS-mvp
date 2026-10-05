@@ -58,7 +58,7 @@
   .workspace-mode-arrow { @apply ml-auto; }
   .workspace-account { @apply relative mt-3; }
   .workspace-account-trigger { @apply flex min-h-17 w-full items-center gap-3 rounded-xl border-0 bg-transparent px-2 py-3 text-left text-sm text-dashboard-foreground enabled:hover:bg-dashboard-hover; }
-  .workspace-avatar { @apply grid size-11 shrink-0 place-items-center rounded-full bg-white text-sm font-medium text-ink; }
+  .workspace-avatar { @apply relative grid size-11 shrink-0 place-items-center overflow-hidden rounded-full bg-white text-sm font-medium text-ink; }
   .workspace-account-name { @apply min-w-0 flex-1 break-words; overflow-wrap: anywhere; }
   .workspace-account-chevron { @apply shrink-0; }
   .workspace-account-chevron.expanded { transform: rotate(-90deg); }
@@ -100,9 +100,10 @@
     .workspace-owner .workspace-mobile-mode { @apply flex min-[64rem]:hidden; }
   }
   .workspace-brand { @apply mb-8 flex min-h-14 items-center gap-3 px-1 text-sm font-medium; }
-  .workspace-brand > span:last-child { @apply min-w-0 break-words; }
+  .workspace-brand > span:nth-child(2) { @apply min-w-0 break-words; }
   .workspace-brand small { @apply mt-1 block text-xs font-normal opacity-60; }
-  .workspace-business-mark { @apply grid size-10 shrink-0 place-items-center rounded-xl bg-surface text-base text-ink; }
+  .workspace-business-mark { @apply relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-xl bg-surface text-base text-ink; }
+  .workspace-business-mark img, .workspace-avatar img { @apply absolute inset-0 size-full object-cover; }
   .workspace-sidebar nav { @apply flex flex-col gap-1; }
   .workspace-nav-item { @apply flex min-h-12 w-full items-center gap-3 rounded-xl border-0 bg-transparent px-3 py-3 text-left text-sm text-inherit; }
   .workspace-nav-item:hover, .workspace-nav-item[aria-current=page] { @apply bg-surface text-ink; }
@@ -116,9 +117,11 @@
   .workspace-header { @apply flex min-h-19 items-center gap-3; padding-top: env(safe-area-inset-top); }
   .workspace-mobile-business { @apply min-w-0 flex-1 truncate text-sm font-medium min-[64rem]:hidden; }
   .workspace-header-actions { @apply ml-auto flex items-center gap-0; }
-  .workspace-header-actions .pos-icon-button { @apply justify-items-end; }
+  .workspace-header-actions .pos-icon-button { @apply relative isolate size-12 min-h-12 justify-items-end bg-transparent enabled:hover:bg-transparent; }
+  .workspace-header-actions .pos-icon-button::before { content: ''; position: absolute; width: 40px; height: 40px; right: -9.5px; top: 50%; transform: translateY(-50%); border-radius: 10px; background: white; z-index: -1; pointer-events: none; transition: background-color 120ms; }
+  .workspace-header-actions .pos-icon-button:enabled:hover::before { background: var(--color-surface); }
   .workspace-mobile-mode { @apply flex min-h-12 shrink-0 items-center gap-1 rounded-lg border-0 bg-surface px-3 text-xs text-ink min-[64rem]:hidden; }
-  .workspace-header-actions .workspace-dashboard-link { @apply bg-white; }
+  .workspace-header-actions .workspace-dashboard-link { @apply bg-transparent; }
   .workspace-page-heading { @apply mt-3 mb-5 flex min-h-9 flex-wrap items-center justify-between gap-3; }
   .workspace-page-heading h1 { @apply m-0 text-[26px] font-medium tracking-tight; }
   .workspace-heading-meta { @apply ml-auto flex min-w-0 items-center gap-3; }
@@ -144,6 +147,14 @@
   .workspace-shell .catalog-filters input { @apply rounded-xl border-transparent bg-surface; }
   .workspace-shell .ops-tabs button[aria-pressed=true] { @apply border-ink text-ink; }
   .workspace-shell .product-list { @apply border-t-0; }
+  .workspace-operator-panel { @apply flex h-full min-h-0 flex-col bg-white text-ink; }
+  .workspace-operator .workspace-menu-toggle { @apply -ml-2 shrink-0 min-[64rem]:hidden; }
+  .workspace-operator .workspace-drawer { @apply bg-white text-ink; }
+  .workspace-drawer .workspace-operator-panel { @apply rounded-r-2xl px-4 pt-6 pb-4; padding-top: max(24px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .workspace-operator-drawer-close { @apply ml-auto shrink-0; }
+  .workspace-operator .workspace-account-trigger { @apply text-ink enabled:hover:bg-surface; }
+  .workspace-operator .workspace-avatar { @apply bg-surface; }
+  .workspace-operator .workspace-account-options { @apply border border-line bg-white text-ink; }
   .workspace-operator .workspace-header { @apply min-h-16 gap-2; }
   .workspace-operator .workspace-mobile-business { @apply line-clamp-2 whitespace-normal text-[13px] leading-5 min-[64rem]:hidden; }
   .workspace-operator .workspace-dashboard-link { @apply min-[64rem]:hidden; }

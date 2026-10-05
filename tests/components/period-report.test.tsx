@@ -17,6 +17,19 @@ function deferred() {
 }
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks() })
 
+test('own metrics use the actor-scoped command and never reuse a business-wide snapshot', async () => {
+  const next = deferred()
+  vi.mocked(posRequest).mockResolvedValueOnce(report('2026-10-03')).mockReturnValueOnce(next.promise)
+  const view = renderHook(({ reportScope }) => useReportController(access, 'UTC', undefined, true, true, reportScope), { initialProps: { reportScope: 'business' as 'business' | 'own' } })
+  await waitFor(() => expect(view.result.current.report).not.toBeNull())
+  view.rerender({ reportScope: 'own' })
+  expect(view.result.current.report).toBeNull()
+  expect(view.result.current.initialLoading).toBe(true)
+  expect(posRequest).toHaveBeenLastCalledWith(access, { command: 'report_own_period', date: businessDate('UTC'), period: 'day' })
+  await act(async () => next.resolve(report('2026-10-04')))
+  expect(view.result.current.report?.startDate).toBe('2026-10-04')
+})
+
 test('losing reports permission clears the memory snapshot even while the analytics view is inactive', async () => {
   vi.mocked(posRequest).mockResolvedValue(report('2026-10-03'))
   const view = renderHook(({ active, authorized }) => useReportController(access, 'UTC', undefined, active, authorized), { initialProps: { active: true, authorized: true } })

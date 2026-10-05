@@ -150,7 +150,7 @@ export default function SalesScreen({
               <div>
                 <strong>#{sale.id.slice(0, 8).toUpperCase()}</strong>
                 <p>{saleDate(sale.createdAt, sale.timezone)}</p>
-                <span>{sale.itemCount} {sale.itemCount === 1 ? 'artículo' : 'artículos'}</span>
+                <span>{sale.itemCount === 0 ? 'Pago parcial' : `${sale.itemCount} ${sale.itemCount === 1 ? 'artículo' : 'artículos'}`}</span>
               </div>
               <span className="sales-history-amount"><b>{money(sale.totalCents)}</b><small>{paymentLabels[sale.paymentMethod]}</small></span>
               <ChevronRight size={20} aria-hidden="true" />

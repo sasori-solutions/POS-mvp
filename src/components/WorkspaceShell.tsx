@@ -1,15 +1,16 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { Home, LayoutGrid, ClipboardList, ReceiptText, Package, Menu, Wallet, ChartNoAxesCombined, Users, Settings, Tablet, KeyRound, ArrowRight, ArrowLeftRight, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, LockKeyhole, Bell, LogOut } from 'lucide-react'
+import { Home, LayoutGrid, ClipboardList, ReceiptText, Package, Menu, Wallet, ChartNoAxesCombined, Users, UserRound, Settings, Tablet, KeyRound, ArrowRight, ArrowLeftRight, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, X, LockKeyhole, Bell, LogOut } from 'lucide-react'
 import { gsap } from 'gsap'
 import { useGSAP } from '@gsap/react'
 import type { BusinessContext } from '../lib/contracts'
-import { primaryDestinations, type Destination } from '../lib/navigation'
+import { hasPermission } from '../lib/business-access'
+import { primaryDestinations, sidebarDestinations, type Destination } from '../lib/navigation'
 
 gsap.registerPlugin(useGSAP)
 const icons = { Inicio: Home, Venta: LayoutGrid, Comandas: ClipboardList, Ventas: ReceiptText, Productos: Package, Más: Menu, Caja: Wallet, Reportes: ChartNoAxesCombined }
 
-function AccountSwitcher({ name, busy, onChangePin, onLogout, logoutLabel }: {
-  name: string; busy: boolean; onChangePin?: () => void; onLogout: () => void; logoutLabel: string
+function AccountSwitcher({ name, avatarUrl, busy, onChangePin, onAccountProfile, onSwitchEmployee, onSwitchBusiness, onLogout, logoutLabel }: {
+  name: string; avatarUrl?: string | null; busy: boolean; onChangePin?: () => void; onAccountProfile?: () => void; onSwitchEmployee?: () => void; onSwitchBusiness?: () => void; onLogout: () => void; logoutLabel: string
 }) {
   const [expanded, setExpanded] = useState(false)
   const id = useId()
@@ -41,27 +42,30 @@ function AccountSwitcher({ name, busy, onChangePin, onLogout, logoutLabel }: {
     <button type="button" ref={trigger} className="workspace-account-trigger" disabled={busy}
       aria-label={`Opciones de cuenta: ${name}`} aria-expanded={expanded} aria-controls={expanded ? id : undefined} data-workspace-action="account"
       onClick={() => setExpanded(value => !value)}>
-      <span className="workspace-avatar" aria-hidden="true">{initials}</span>
+      <span className="workspace-avatar" aria-hidden="true">{initials}{avatarUrl && <img key={avatarUrl} src={avatarUrl} alt="" onError={event => { event.currentTarget.hidden = true }} />}</span>
       <span className="workspace-account-name">{name}</span>
       <ChevronRight size={19} aria-hidden="true" className={expanded ? 'workspace-account-chevron expanded' : 'workspace-account-chevron'}/>
     </button>
     {expanded && <div className="workspace-account-options" id={id} role="group" aria-label="Opciones de cuenta">
+      {onAccountProfile && <button type="button" className="workspace-nav-item" disabled={busy} onClick={() => { setExpanded(false); onAccountProfile() }}><UserRound size={21} aria-hidden="true"/><span>Mi cuenta</span></button>}
       {onChangePin && <button type="button" className="workspace-nav-item" disabled={busy} onClick={() => { setExpanded(false); onChangePin() }}><KeyRound size={21} aria-hidden="true"/><span>Cambiar mi PIN</span></button>}
-      <button type="button" className="workspace-nav-item" disabled={busy} onClick={onLogout}><ArrowLeftRight size={21} aria-hidden="true"/><span>Cambiar cuenta</span></button>
+      {onSwitchBusiness && <button type="button" className="workspace-nav-item" disabled={busy} onClick={() => { setExpanded(false); onSwitchBusiness() }}><Users size={21} aria-hidden="true"/><span>Cambiar negocio</span></button>}
+      <button type="button" className="workspace-nav-item" disabled={busy} onClick={onSwitchEmployee ?? onLogout}><ArrowLeftRight size={21} aria-hidden="true"/><span>{onSwitchEmployee ? 'Cambiar empleado' : 'Cambiar cuenta'}</span></button>
       <button type="button" className="workspace-nav-item" disabled={busy} onClick={onLogout}><LogOut size={21} aria-hidden="true"/><span>{logoutLabel}</span></button>
     </div>}
   </div>
 }
 
-export default function WorkspaceShell({ business, accountName, active, operating, title, busy, onSelect, onLock, onLogout, logoutLabel, onSwitchBusiness, onTeam, onDevices, onSettings, onChangePin, onNotifications, unreadCount, pendingCount, managementKey, headingAside, onPointSetup, onPointAdmin, children }: {
+export default function WorkspaceShell({ business, accountName, active, operating, title, busy, onSelect, onLock, onLogout, logoutLabel, onSwitchBusiness, onTeam, onDevices, onSettings, onChangePin, onAccountProfile, onSwitchEmployee, onNotifications, unreadCount, pendingCount, managementKey, headingAside, onPointSetup, onPointAdmin, children }: {
   business: BusinessContext; accountName?: string; active: Destination; operating: boolean; title: string; busy: boolean
   onSelect: (destination: Destination) => void; onLock: () => void; onLogout: () => void; logoutLabel: string
-  onSwitchBusiness?: () => void; onTeam?: () => void; onDevices?: () => void; onSettings?: () => void; onChangePin?: () => void; onNotifications?: () => void; unreadCount: number; pendingCount: number
+  onSwitchBusiness?: () => void; onTeam?: () => void; onDevices?: () => void; onSettings?: () => void; onChangePin?: () => void; onAccountProfile?: () => void; onSwitchEmployee?: () => void; onNotifications?: () => void; unreadCount: number; pendingCount: number
   onPointSetup?: () => void; onPointAdmin?: () => void
   managementKey?: string; headingAside?: ReactNode; children: ReactNode
 }) {
   const owner = business.role === 'owner'
   const ownerDashboard = owner && !operating
+  const drawerEnabled = ownerDashboard || !owner
   const root = useRef<HTMLDivElement>(null)
   const drawer = useRef<HTMLDialogElement>(null)
   const menuTrigger = useRef<HTMLButtonElement>(null)
@@ -84,7 +88,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
   }, [])
 
   useEffect(() => {
-    if (!navigationOpen || !ownerDashboard) {
+    if (!navigationOpen || !drawerEnabled) {
       drawer.current?.close()
       return
     }
@@ -100,11 +104,11 @@ export default function WorkspaceShell({ business, accountName, active, operatin
       panel.close()
       document.body.style.overflow = previousOverflow
     }
-  }, [navigationOpen, ownerDashboard])
+  }, [navigationOpen, drawerEnabled])
 
   const primary = primaryDestinations(business, operating)
-  const sidebar: Destination[] = ownerDashboard ? ['Inicio', 'Ventas', 'Productos', 'Caja', 'Reportes'] : primary
-  const label = (d: Destination) => d === 'Ventas' && (!owner || operating) ? 'Historial' : d
+  const sidebar = sidebarDestinations(business, operating)
+  const label = (d: Destination) => d === 'Ventas' && (!owner || operating) ? 'Historial' : d === 'Reportes' && !owner && hasPermission(business, 'reports.read_own') ? 'Mis métricas' : d
   function select(action: () => void) {
     setNavigationOpen(false)
     action()
@@ -125,7 +129,7 @@ export default function WorkspaceShell({ business, accountName, active, operatin
     return <div className="workspace-owner-panel">
       <div className="workspace-panel-top">
         <button type="button" className="workspace-business-switch" disabled={busy || !onSwitchBusiness} aria-label={`Cambiar negocio: ${business.name}`} data-workspace-action="business" onClick={() => { if (onSwitchBusiness) select(onSwitchBusiness) }}>
-          <span className="workspace-business-mark" aria-hidden="true">{business.name.slice(0, 1).toUpperCase()}</span>
+          <span className="workspace-business-mark" aria-hidden="true">{business.name.slice(0, 1).toUpperCase()}{business.logoUrl && <img key={business.logoUrl} src={business.logoUrl} alt="" onError={event => { event.currentTarget.hidden = true }} />}</span>
           <span className="workspace-business-name">{business.name}</span>
           <ChevronDown size={19} aria-hidden="true"/>
         </button>
@@ -143,37 +147,45 @@ export default function WorkspaceShell({ business, accountName, active, operatin
       </nav>
       <div className="workspace-sidebar-bottom">
         <button type="button" className="workspace-nav-item workspace-mode" disabled={busy} title={navigationCollapsed ? 'Punto de Venta' : undefined} aria-label="Punto de Venta" onClick={() => select(() => onSelect('Venta'))}><LayoutGrid size={21}/><span>Punto de Venta</span><ArrowRight className="workspace-mode-arrow" size={18}/></button>
-        <AccountSwitcher name={accountName || 'Mi cuenta'} busy={busy} onChangePin={onChangePin ? () => select(onChangePin) : undefined} onLogout={() => select(onLogout)} logoutLabel={logoutLabel}/>
+        <AccountSwitcher name={accountName || 'Mi cuenta'} avatarUrl={business.accountAvatarUrl} busy={busy} onAccountProfile={onAccountProfile ? () => select(onAccountProfile) : undefined} onChangePin={onChangePin ? () => select(onChangePin) : undefined} onLogout={() => select(onLogout)} logoutLabel={logoutLabel}/>
+      </div>
+    </div>
+  }
+
+  function operatorPanel(mobile = false) {
+    return <div className="workspace-operator-panel">
+      <div className="workspace-brand">
+        <span className="workspace-business-mark" aria-hidden="true">{business.name.slice(0, 1).toUpperCase()}{business.logoUrl && <img key={business.logoUrl} src={business.logoUrl} alt="" onError={event => { event.currentTarget.hidden = true }} />}</span>
+        <span>{business.name}{!owner && <small>{business.employee?.name ?? 'Punto de venta'}</small>}</span>
+        {mobile && <button type="button" className="pos-icon-button workspace-operator-drawer-close" aria-label="Cerrar menú" onClick={() => setNavigationOpen(false)}><X size={21} aria-hidden="true"/></button>}
+      </div>
+      <nav aria-label={mobile ? 'Menú de operación' : 'Navegación lateral'}>{sidebar.map(d => item(d))}</nav>
+      <div className="workspace-sidebar-bottom">
+        {owner && <button type="button" className="workspace-nav-item workspace-mode" disabled={busy} onClick={() => select(() => onSelect('Inicio'))}><Home size={21}/><span>Dashboard</span></button>}
+        <AccountSwitcher name={business.employee?.name || accountName || 'Mi cuenta'} onSwitchEmployee={onSwitchEmployee ? () => select(onSwitchEmployee) : undefined} onSwitchBusiness={!owner && onSwitchBusiness ? () => select(onSwitchBusiness) : undefined} avatarUrl={business.accountAvatarUrl} busy={busy} onAccountProfile={onAccountProfile ? () => select(onAccountProfile) : undefined} onChangePin={onChangePin ? () => select(onChangePin) : undefined} onLogout={() => select(onLogout)} logoutLabel={logoutLabel}/>
       </div>
     </div>
   }
 
   return <div ref={root} data-destination={active} className={`workspace-shell ${ownerDashboard ? `workspace-owner${navigationCollapsed ? ' workspace-owner-collapsed' : ''}` : 'workspace-operator'}`}>
     <aside id={sidebarId} className="workspace-sidebar" aria-label="Menú del negocio">
-      {ownerDashboard ? ownerPanel() : <>
-        <div className="workspace-brand"><span className="workspace-business-mark">{business.name.slice(0, 1).toUpperCase()}</span><span>{business.name}{!owner && <small>{business.employee?.name ?? 'Punto de venta'}</small>}</span></div>
-        <nav aria-label="Navegación lateral">{sidebar.map(d => item(d))}</nav>
-        <div className="workspace-sidebar-bottom">
-          {owner && <button type="button" className="workspace-nav-item workspace-mode" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21}/><span>Dashboard</span></button>}
-          <button type="button" className="workspace-nav-item" disabled={busy} onClick={onLogout}><LogOut size={21}/><span>{logoutLabel}</span></button>
-        </div>
-      </>}
+      {ownerDashboard ? ownerPanel() : operatorPanel()}
     </aside>
-    {ownerDashboard && <dialog ref={drawer} id={drawerId} className="workspace-drawer" aria-label="Menú del negocio"
+    {drawerEnabled && <dialog ref={drawer} id={drawerId} className="workspace-drawer" aria-label="Menú del negocio"
       onCancel={() => setNavigationOpen(false)} onClose={() => { setNavigationOpen(false); if (!root.current?.querySelector('.workspace-management h2[tabindex="-1"]')) menuTrigger.current?.focus() }}
       onClick={event => { if (event.target === event.currentTarget) setNavigationOpen(false) }}>
-      {navigationOpen && ownerPanel(true)}
+      {navigationOpen && (ownerDashboard ? ownerPanel(true) : operatorPanel(true))}
     </dialog>}
     <div className="workspace-main">
       <header className="workspace-header">
-        {ownerDashboard && <button type="button" ref={menuTrigger} className="pos-icon-button workspace-menu-toggle" aria-label="Abrir menú" aria-expanded={navigationOpen} aria-controls={drawerId} data-workspace-action="menu" onClick={() => setNavigationOpen(true)}><Menu size={23} aria-hidden="true"/></button>}
+        {drawerEnabled && <button type="button" ref={menuTrigger} className="pos-icon-button workspace-menu-toggle" aria-label="Abrir menú" aria-expanded={navigationOpen} aria-controls={drawerId} data-workspace-action="menu" onClick={() => setNavigationOpen(true)}><Menu size={23} aria-hidden="true"/></button>}
         <span className="workspace-mobile-business" title={business.name}>{business.name}</span>
         {owner && !operating && <button type="button" className="workspace-mobile-mode" disabled={busy} onClick={() => onSelect('Venta')}>Punto de Venta<ArrowRight size={17}/></button>}
         <div className="workspace-header-actions">
           {!owner && onPointAdmin && <button type="button" className="pos-icon-button" aria-label="Panel privado SASORI" disabled={busy} onClick={onPointAdmin}><ChartNoAxesCombined size={21}/></button>}
-          {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><Home size={21} aria-hidden="true"/></button>}
+          {owner && operating && <button type="button" className="pos-icon-button workspace-dashboard-link" aria-label="Dashboard" title="Dashboard" disabled={busy} onClick={() => onSelect('Inicio')}><span className="workspace-icon"><Home size={21} aria-hidden="true"/></span></button>}
           {owner && onNotifications && <button type="button" className="pos-icon-button" aria-label={`Notificaciones${unreadCount ? `, ${unreadCount} sin leer` : ''}`} disabled={busy} data-workspace-action="notifications" onClick={onNotifications}><span className="workspace-icon"><Bell size={21} aria-hidden="true"/>{unreadCount > 0 && <span className="workspace-badge workspace-notification-badge" aria-hidden="true">{unreadCount > 99 ? '99+' : unreadCount}</span>}</span></button>}
-          <button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><LockKeyhole size={21}/></button>
+          <button type="button" className="pos-icon-button" aria-label="Bloquear" disabled={busy} onClick={onLock}><span className="workspace-icon"><LockKeyhole size={21} aria-hidden="true"/></span></button>
         </div>
       </header>
       <div className="workspace-page-heading"><h1 id="pos-section-title">{title}</h1>{(!owner && business.employee || headingAside) && <div className="workspace-heading-meta">{!owner && business.employee && <span>{business.employee.name}</span>}{headingAside}</div>}</div>

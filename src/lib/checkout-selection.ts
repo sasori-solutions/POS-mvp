@@ -6,6 +6,8 @@ import { assertMonetaryLineSnapshot, FinancialIntegrityError, maxOperationalLine
 export interface CheckoutDraft {
   orderId: string
   split: boolean
+  amountSplit?: boolean
+  amountInputs?: string[]
   quantities: Record<string, number>
   method: PaymentMethod
 }

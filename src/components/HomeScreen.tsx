@@ -5,9 +5,6 @@ import {
   KeyRound,
   LockKeyhole,
   LogOut,
-  Package,
-  Wallet,
-  ChartNoAxesCombined,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -34,6 +31,7 @@ import { useOperationalMutation, useOperations } from "../features/operations/us
 import CashScreen from "../features/operations/CashScreen";
 import OrdersScreen from "../features/operations/OrdersScreen";
 import ReportsScreen from "../features/operations/ReportsScreen";
+import PersonalMetricsScreen from "../features/operations/PersonalMetricsScreen";
 import OrderDetail from "../features/operations/OrderDetail";
 import OrderEditor from "../features/operations/OrderEditor";
 import PointSetup from './PointSetup';
@@ -65,6 +63,7 @@ interface HomeScreenProps {
   onDevices?: () => void;
   onSwitchBusiness?: () => void;
   onChangePin?: (returnFocus?: string) => void;
+  onAccountProfile?: () => void;
   onSwitchEmployee?: () => void;
   logoutLabel?: string;
   managementContent?: ReactNode;
@@ -91,6 +90,7 @@ export default function HomeScreen({
   onDevices,
   onSwitchBusiness,
   onChangePin,
+  onAccountProfile,
   onSwitchEmployee,
   onNotifications,
   unreadCount = 0,
@@ -104,6 +104,7 @@ export default function HomeScreen({
   const sessionErrorHandler = useRef(onSessionError);
   sessionErrorHandler.current = onSessionError;
   const [paymentComplete, setPaymentComplete] = useState(false);
+  const [checkoutRequested, setCheckoutRequested] = useState(false);
   const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder } | null>(null);
   const [savedCounter, setSavedCounter] = useState<OperationalOrder | null>(null);
   const counterOrderId = useRef<string | null>(null);
@@ -122,6 +123,7 @@ export default function HomeScreen({
   const active = allowed.includes(destination) ? destination : initialDestination(business);
   const isOwner = business.role === 'owner';
   const canReadReports = hasPermission(business, 'reports.read');
+  const canReadOwnMetrics = !isOwner && hasPermission(business, 'reports.read_own');
   const [operating, setOperating] = useState(!isOwner || active === 'Venta' || active === 'Comandas');
   const [saleVisited, setSaleVisited] = useState(active === 'Venta');
   useEffect(() => { if (active === 'Venta') setSaleVisited(true); }, [active]);
@@ -137,6 +139,10 @@ export default function HomeScreen({
     if (previous.scope === operatorScope && !managing && (previous.managing || previous.paymentMethodKey !== paymentMethodKey)) void point.refresh();
   }, [operatorScope, managing, paymentMethodKey, point.refresh]);
   const [pointPage, setPointPage] = useState<'setup' | 'admin' | null>(null);
+  useEffect(() => {
+    // Parent-owned management and local Point pages are exclusive destinations.
+    if (managementContent) setPointPage(null);
+  }, [managementContent, pointPage]);
   const [pointReport, setPointReport] = useState(false);
   const [recoverPoint, setRecoverPoint] = useState<PointCheckout | null>(null);
   const [pointBlocked, setPointBlocked] = useState(false);
@@ -164,9 +170,11 @@ export default function HomeScreen({
   const scopedPresence = presenceSnapshot?.scope === presenceScope ? presenceSnapshot : null;
   const presence = scopedPresence ? scopedPresence.employees : business.connectedEmployees;
   const homeAnalytics = useReportController(access, business.timezone, onSessionError,
-    !managementContent && active === 'Inicio', hasPermission(business, 'reports.read'));
+    !managementContent && !pointPage && active === 'Inicio', hasPermission(business, 'reports.read'));
   const analytics = useReportController(access, business.timezone, onSessionError,
-    !managementContent && active === 'Reportes', hasPermission(business, 'reports.read'));
+    !managementContent && !pointPage && active === 'Reportes' && !canReadOwnMetrics, canReadReports);
+  const ownMetrics = useReportController(access, business.timezone, onSessionError,
+    !managementContent && !pointPage && active === 'Reportes' && canReadOwnMetrics, canReadOwnMetrics, 'own');
   useEffect(() => {
     const timer = window.setInterval(() => setDatePulse(value => value + 1), 60_000);
     return () => window.clearInterval(timer);
@@ -248,8 +256,12 @@ export default function HomeScreen({
   useEffect(() => {
     if (counterSnapshot && counterSnapshot.revision > (savedCounter?.revision ?? 0)) setSavedCounter(counterSnapshot);
   }, [counterSnapshot, savedCounter?.revision]);
+  function isCounterOrder(value: OperationalOrder) {
+    return value.orderKind === 'counter' || value.orderKind == null && value.id === counterOrderId.current;
+  }
   function orderSaved(saved: OperationalOrder) {
-    if (saved.id === counterOrderId.current) setSavedCounter(saved);
+    if (isCounterOrder(saved)) { counterOrderId.current = saved.id; setSavedCounter(saved); }
+    else if (saved.orderKind === 'service' && saved.id === counterOrderId.current) { counterOrderId.current = null; setSavedCounter(null); }
     setSelectedOrder(saved);
   }
   function paymentRecorded(saved: OperationalOrder) {
@@ -267,7 +279,7 @@ export default function HomeScreen({
   }
   async function updateCounter(items: OrderInputLine[]) {
     if (!counter || counter.status !== 'open' || counter.phase !== 'service' || counter.frozen) return;
-    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId: counter.id, expectedRevision: counter.revision, name: counter.name, tableId: counter.tableId, items });
+    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId: counter.id, expectedRevision: counter.revision, name: counter.name, tableId: counter.tableId, items, ...(counter.orderKind ? { orderKind: counter.orderKind } : {}) }, 'counter');
     setSavedCounter(saved);
     await operation.refresh();
   }
@@ -286,13 +298,14 @@ export default function HomeScreen({
     }));
   }
   async function saveCounter(cart: CartLine[]) {
+    setCheckoutRequested(true);
     if (counter?.status === 'open') {
       setSelectedOrder(counter);
       return;
     }
     const orderId = crypto.randomUUID();
     counterOrderId.current = orderId;
-    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: null, name: 'Mostrador', tableId: null, items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) });
+    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: null, name: 'Mostrador', tableId: null, orderKind: 'counter', items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) }, 'counter');
     setSavedCounter(saved);
     setSelectedOrder(saved);
     await operation.refresh();
@@ -300,18 +313,31 @@ export default function HomeScreen({
   function retryOperation() {
     const command = mutation.pending;
     if (!command) return;
-    if (command.command === 'save_order' && !command.tableId && command.name === 'Mostrador') counterOrderId.current = command.orderId;
-    void mutation.execute(command).then(result => {
-      if (command.command === 'save_order' && command.orderId === counterOrderId.current) {
+    const origin = mutation.pendingOrigin;
+    const counterSave = command.command === 'save_order' && command.orderKind !== 'service' && (command.orderKind === 'counter' || origin === 'counter' || command.orderId === counterOrderId.current);
+    if (counterSave && command.command === 'save_order') counterOrderId.current = command.orderId;
+    const retry = origin ? mutation.execute(command, origin) : mutation.execute(command);
+    void retry.then(result => {
+      if (currentOperator.current !== operatorScope) return;
+      if (command.command === 'save_order') {
         const saved = result as OperationalOrder;
-        setSavedCounter(saved);
-        if (command.expectedRevision === null) setSelectedOrder(saved);
+        const acceptedCounter = saved.orderKind === 'counter' || saved.orderKind == null && counterSave;
+        if (acceptedCounter) { counterOrderId.current = saved.id; setSavedCounter(saved); }
+        else if (saved.id === counterOrderId.current) { counterOrderId.current = null; setSavedCounter(null); }
+        if (acceptedCounter && !editingOrder && command.expectedRevision === null) {
+          setCheckoutRequested(true);
+          setSelectedOrder(saved);
+        } else if (editingOrder || !acceptedCounter) {
+          setEditingOrder(null);
+          setCheckoutRequested(false);
+          setSelectedOrder(saved);
+        }
       }
       if (['record_payment', 'record_checkout'].includes(command.command)) paymentRecorded((result as OperationsResponses['record_payment']).order);
       return operation.refresh();
     }).catch(() => {});
   }
-  const checkoutView = Boolean(order && !editingOrder && hasPermission(business, 'sales.create'));
+  const checkoutView = Boolean(checkoutRequested && order && !editingOrder && hasPermission(business, 'sales.create'));
   async function prepareBackToOrder(): Promise<boolean> {
     backOrder.current = null;
     setBackError("");
@@ -337,7 +363,7 @@ export default function HomeScreen({
         await operation.refresh();
       }
       if (currentOperator.current !== operatorScope) return false;
-      if (order.id !== counterOrderId.current && order.status === 'open' && !order.frozen && hasPermission(business, 'orders.manage')) {
+      if (!isCounterOrder(order) && order.status === 'open' && !order.frozen && hasPermission(business, 'orders.manage')) {
         const saved = await posRequest(access, { command: 'order', orderId: order.id });
         if (currentOperator.current !== operatorScope) return false;
         if (saved.status === 'open' && saved.phase === 'service' && !saved.frozen) backOrder.current = saved;
@@ -351,6 +377,7 @@ export default function HomeScreen({
     }
   }
   function closeOrderPanel() {
+    setCheckoutRequested(false);
     setPaymentComplete(false);
     setSelectedOrder(null);
     setEditingOrder(backOrder.current ? { order: backOrder.current } : null);
@@ -365,6 +392,17 @@ export default function HomeScreen({
     if (next === 'Venta' || next === 'Comandas') setOperating(true);
     setLocalDestination(next);
     onDestinationChange?.(next);
+  }
+  function openManagement(action: () => void) {
+    setPointPage(null);
+    setPointNotice('');
+    action();
+  }
+  function openPoint(page: 'setup' | 'admin') {
+    // This also returns App from its management route before opening Point.
+    setActive(active);
+    setPointNotice('');
+    setPointPage(page);
   }
   function openReport(tab: ReportTab) {
     analytics.setDate(today);
@@ -414,20 +452,21 @@ export default function HomeScreen({
       </button>
     );
   }
-  const title = pointPage === 'setup' ? 'Vincular una terminal' : pointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active);
+  const visiblePointPage = managementContent ? null : pointPage;
+  const title = visiblePointPage === 'setup' ? 'Vincular una terminal' : visiblePointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active === 'Reportes' && canReadOwnMetrics ? 'Mis métricas' : active);
   return (
     <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent && !pointPage} title={title} busy={busy}
-      onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam} onDevices={onDevices} onSettings={onSettings} onChangePin={onChangePin}
-      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={pointPage ?? managementKey}
-      onPointSetup={isOwner && !deviceToken ? () => setPointPage('setup') : undefined} onPointAdmin={point.settings?.permissions.admin ? () => setPointPage('admin') : undefined}
+      onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam ? () => openManagement(onTeam) : undefined} onDevices={onDevices ? () => openManagement(onDevices) : undefined} onSettings={onSettings ? () => openManagement(onSettings) : undefined} onChangePin={onChangePin ? () => openManagement(onChangePin) : undefined} onAccountProfile={onAccountProfile ? () => openManagement(onAccountProfile) : undefined} onSwitchEmployee={onSwitchEmployee}
+      onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications ? () => openManagement(onNotifications) : undefined} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={pointPage ?? managementKey}
+      onPointSetup={isOwner && !deviceToken ? () => openPoint('setup') : undefined} onPointAdmin={point.settings?.permissions.admin ? () => openPoint('admin') : undefined}
       headingAside={active === 'Venta' && !managementContent && !pointPage && snapshot && !operation.error && snapshot.shift?.status !== 'open'
         ? hasPermission(business, 'cash.read')
           ? <button type="button" className="cash-shift-notice" aria-label="Turno cerrado. Ir a Caja" onClick={() => setActive('Caja')}>Turno cerrado</button>
           : <span className="cash-shift-notice" role="status">Turno cerrado</span>
         : undefined}>
-      {pointPage && <div className="workspace-management">
+      {visiblePointPage && <div className="workspace-management">
         {pointNotice && <p role="status" className="mb-4">{pointNotice}</p>}
-        {pointPage === 'setup' ? <PointSetup access={access} controller={point} paymentMethodEnabled={business.profile.paymentMethods.includes('card_integrated')} onOpenPaymentMethods={onSettings ? () => { setPointNotice(''); setPointPage(null); onSettings('payment-methods'); } : undefined} readyToCharge={Boolean(snapshot?.enabled && snapshot.shift?.status === 'open')} onOpenCash={() => { setPointNotice(''); setActive('Caja'); }} onStartSale={() => { setPointNotice(''); setActive('Venta'); }} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
+        {visiblePointPage === 'setup' ? <PointSetup access={access} controller={point} paymentMethodEnabled={business.profile.paymentMethods.includes('card_integrated')} onOpenPaymentMethods={onSettings ? () => { setPointNotice(''); setPointPage(null); onSettings('payment-methods'); } : undefined} readyToCharge={Boolean(snapshot?.enabled && snapshot.shift?.status === 'open')} onOpenCash={() => { setPointNotice(''); setActive('Caja'); }} onStartSale={() => { setPointNotice(''); setActive('Venta'); }} onSessionError={onSessionError} /> : <PointDashboard access={access} timezone={business.timezone} settings={point.settings} admin onSessionError={onSessionError} />}
       </div>}
       {managementContent && <div className="workspace-management">{managementContent}</div>}
       {point.settings?.sandbox?.testBusiness && !pointPage && !managementContent && <p className="mb-4 text-sm text-muted" role="status">Negocio de pruebas · Los cobros con Mercado Pago son simulados.</p>}
@@ -482,7 +521,7 @@ export default function HomeScreen({
         {active === "Inicio" && !managementContent ? (
           <ReportDashboard controller={homeAnalytics} presence={business.role === 'owner' ? presence : undefined} presenceError={scopedPresence?.error} onPresenceRetry={() => setPresenceRefresh(value => value + 1)} onOpenReport={openReport} onOpenTeam={onTeam} />
         ) : active === "Reportes" && !managementContent ? (
-          <>
+          canReadOwnMetrics ? <PersonalMetricsScreen controller={ownMetrics} /> : <>
             {point.settings?.permissions.reports && <div role="group" aria-label="Tipo de reporte" className="analytics-metric-switch mb-4"><button aria-pressed={!pointReport} onClick={() => setPointReport(false)}>Operación del POS</button><button aria-pressed={pointReport} onClick={() => setPointReport(true)}>Pagos integrados</button></div>}
             {pointReport && point.settings?.permissions.reports ? <PointDashboard access={access} timezone={business.timezone} settings={point.settings} onSessionError={onSessionError} /> : <ReportsScreen controller={analytics} tab={reportTab} onTabChange={setReportTab} />}
           </>
@@ -493,6 +532,7 @@ export default function HomeScreen({
             access={access}
             catalog={catalog}
             canManage={hasPermission(business, 'catalog.manage')}
+            defaultVatTreatment={business.profile.defaultVatTreatment}
             canAvailability={hasPermission(business, 'catalog.availability')}
             onSessionError={onSessionError}
           />
@@ -509,12 +549,10 @@ export default function HomeScreen({
             onSessionError={onSessionError}
           />
         ) : active === "Comandas" ? (
-          snapshot ? <OrdersScreen business={business} access={access} snapshot={snapshot} mutation={mutation} onOrder={setSelectedOrder} onNew={() => setEditingOrder({})} refresh={operation.refresh} onSessionError={onSessionError} /> : !operation.error && <LoadingPlaceholder variant="cards" rows={4} label="Cargando comandas" />
+          snapshot ? <OrdersScreen business={business} access={access} snapshot={snapshot} mutation={mutation} onOrder={saved => { setCheckoutRequested(false); setSelectedOrder(saved); }} onNew={() => { setCheckoutRequested(false); setEditingOrder({}); }} refresh={operation.refresh} onSessionError={onSessionError} /> : !operation.error && <LoadingPlaceholder variant="cards" rows={4} label="Cargando comandas" />
         ) : active === "Más" && !isOwner ? (
           <div className="pos-more mt-6 w-full max-w-160 tablet:max-w-280" ref={more}>
-            {!isOwner && hasPermission(business, 'catalog.read') && <section className="pos-menu-group"><h2 className="sr-only">Productos</h2>{row('products','Productos',Package,()=>setActive('Productos'),'Catálogo y disponibilidad autorizada')}</section>}
             {!isOwner && allowed.length === 1 && <p>Tu cuenta no tiene permisos de operación. Pide al dueño que revise tu acceso.</p>}
-            {(hasPermission(business, 'cash.read') || hasPermission(business, 'reports.read')) && <section className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"><h2>Operación</h2>{hasPermission(business, 'cash.read') && row('cash', 'Caja', Wallet, () => setActive('Caja'), 'Turnos, efectivo y cierre')}{hasPermission(business, 'reports.read') && row('reports', 'Reportes', ChartNoAxesCombined, () => setActive('Reportes'), 'Ventas del día y diferencias de caja')}</section>}
             {onChangePin && (
               <section
                 className="pos-menu-group [&+section]:mt-7 [&_h2]:mb-2 [&_h2]:text-sm [&_h2]:text-muted tablet:[&_h2]:mb-0"
@@ -567,7 +605,7 @@ export default function HomeScreen({
           {backError && !mutation.error && <p role="alert">{backError}</p>}
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} serviceAccount={!editingOrder.order || !isCounterOrder(editingOrder.order)} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); setCheckoutRequested(false); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} serviceAccount={order.orderKind === 'service'} onStartCheckout={() => setCheckoutRequested(true)} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
             draft={checkoutDraft.current?.scope === operatorScope ? checkoutDraft.current.value : undefined}
             onDraftChange={value => { if (!paymentComplete && currentOperator.current === operatorScope) checkoutDraft.current = { scope: operatorScope, value }; }}
             onOpenCash={hasPermission(business, 'cash.read') ? () => { void prepareBackToOrder().then(canClose => {

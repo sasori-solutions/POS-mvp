@@ -15,6 +15,7 @@ import { AccountClientError } from "../lib/account";
 import type { PaymentMethod } from "../lib/contracts";
 import type { OperationalOrder } from "../lib/operations-contracts";
 import { checkoutTotals } from "../lib/checkout-selection";
+import { checkoutAmountTotals } from "../lib/checkout-amounts";
 import type {
   CartLine,
   ItemSelection,
@@ -167,7 +168,11 @@ function SaleScreenSession({
   );
   const account = savedCounter?.status === 'open' ? savedCounter : undefined;
   const remainingAccountLines = account?.items.filter(line => line.quantity > line.paidQuantity) ?? [];
-  const remainingAccountTotals = account ? remainingAccountLines.map(line => ({ ...line, ...checkoutTotals(account, [{ lineId: line.lineId, quantity: line.quantity - line.paidQuantity }]) })) : [];
+  const remainingAmounts = account?.amountSplit ? new Map(checkoutAmountTotals(account, account.balanceCents).items.map(line => [line.lineId, line])) : undefined;
+  const remainingAccountTotals = account ? remainingAccountLines.map(line => {
+    const amount = remainingAmounts?.get(line.lineId);
+    return { ...line, ...(amount ? { grossCents: amount.allocatedGrossCents, discountCents: amount.discountCents, totalCents: amount.totalCents, taxCents: amount.taxCents } : checkoutTotals(account, [{ lineId: line.lineId, quantity: line.quantity - line.paidQuantity }])) };
+  }) : [];
   const accountEditable = Boolean(account && account.phase === 'service' && !account.frozen && onAccountAdd && onAccountQuantity);
   const frozen = busy || Boolean(pending) || storageError || Boolean(account && (!accountEditable || !collectionReady));
   const paymentChoices = collectionPaymentMethods(catalog.paymentMethods);

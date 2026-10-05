@@ -54,16 +54,22 @@ async function unlockHome(page: Page) {
   await expect(page.locator('#pos-section-title')).toBeVisible()
 }
 
-test('employee Más keeps every action aligned and separated, including PIN settings', async ({ page }, testInfo) => {
+test('employee session actions stay aligned and separated in More and the desktop account menu', async ({ page }, testInfo) => {
   await mockOnboarding(page, { existingBusiness: true, role: 'cashier' })
   await unlockHome(page)
-  await openOperationalMore(page)
+  const sessionActions = await openOperationalMore(page)
   await expect(page.getByRole('button', { name: 'Cambiar mi PIN', exact: true })).toBeVisible()
-  const actions = await page.locator('.pos-more').getByRole('button').evaluateAll((buttons) => buttons.map((button) => {
+  const mobileMore = await page.getByRole('region', { name: 'Más', exact: true }).isVisible()
+  const expectedActions = mobileMore
+    ? ['Cambiar mi PIN', 'Cambiar negocio', 'Bloquear app', 'Cerrar sesión']
+    : ['Mi cuenta', 'Cambiar mi PIN', 'Cambiar negocio', 'Cambiar cuenta', 'Cerrar sesión']
+  await expect(sessionActions.getByRole('button')).toHaveCount(expectedActions.length)
+  for (const name of expectedActions) await expect(sessionActions.getByRole('button', { name, exact: true })).toBeVisible()
+  const actions = await sessionActions.getByRole('button').evaluateAll((buttons) => buttons.map((button) => {
     const rect = button.getBoundingClientRect()
     return { label: button.textContent, left: rect.left, right: rect.right, width: rect.width, top: rect.top, bottom: rect.bottom, height: rect.height }
   }))
-  expect(actions.length).toBeGreaterThan(4)
+  expect(actions).toHaveLength(mobileMore ? 4 : 5)
   const viewportWidth = page.viewportSize()!.width
   for (const [index, action] of actions.entries()) {
     expect(action.height, action.label ?? '').toBeGreaterThanOrEqual(48)
@@ -79,7 +85,7 @@ test('employee Más keeps every action aligned and separated, including PIN sett
     }
   }
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
-  const logout = await page.locator('.pos-more').getByRole('button', { name: 'Cerrar sesión', exact: true }).boundingBox()
+  const logout = await sessionActions.getByRole('button', { name: 'Cerrar sesión', exact: true }).boundingBox()
   expect(logout).not.toBeNull()
   const navigation = page.getByRole('navigation', { name: 'Navegación principal' })
   if (await navigation.isVisible()) {

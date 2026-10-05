@@ -30,6 +30,17 @@ describe('operational HTTP command boundary',()=>{
   expect(parseAccountRequest({...access,...prepare})).toMatchObject(prepare)
   expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...prepare})).toMatchObject(prepare)
  })
+ it('preserves legacy order payloads and accepts only the explicit immutable order kinds',()=>{
+  expect(parseAccountRequest({...access,...order})).not.toHaveProperty('orderKind')
+  for(const orderKind of ['counter','service'] as const) {
+   const typed={...order,orderKind}
+   expect(parseAccountRequest({...access,...typed})).toHaveProperty('orderKind',orderKind)
+   expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...typed})).toHaveProperty('orderKind',orderKind)
+  }
+  for(const orderKind of [null,undefined,'legacy','Counter',true,1,{}]) expect(()=>parseAccountRequest({...access,...order,orderKind})).toThrow()
+  expect(()=>parseAccountRequest({...access,...order,orderKind:'counter',tableId:lineId})).toThrow()
+  expect(()=>parseAccountRequest({...access,...order,orderType:'counter'})).toThrow()
+ })
  it('rejects unknown keys, noninteger units/cents, repeated lines and oversized operational carts',()=>{
   for(const patch of [{unknown:1},{items:[]},{items:[line,line]},{items:Array.from({length:41},(_,i)=>({...line,lineId:`00000000-0000-4000-8000-${String(i).padStart(12,'0')}`}))},
    {items:[{...line,quantity:0}]},{items:[{...line,quantity:1000}]},{items:[{...line,quantity:1.5}]},{items:[{...line,unitPriceCents:10.01}]},{items:[{...line,unitPriceCents:100_000_000}]},
@@ -61,5 +72,11 @@ describe('operational HTTP command boundary',()=>{
   expect(parseAccountRequest({...access,...report})).toMatchObject(report)
   expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...report})).toMatchObject(report)
   for(const patch of [{period:'year'},{period:null},{date:'1999-12-31'},{date:'2101-01-01'},{date:'2026-02-29'},{timezone:'UTC'},{operationId}]) expect(()=>parseAccountRequest({...access,...report,...patch})).toThrow()
+ })
+ it('personal metrics resolve the actor server-side and reject employee selectors on both transports',()=>{
+  const report={command:'report_own_period',date:'2028-02-29',period:'month'}
+  expect(parseAccountRequest({...access,...report})).toMatchObject(report)
+  expect(parseAccountRequest({action:'device_pos',deviceToken:'cd'.repeat(32),operatorToken:access.operatorToken,...report})).toMatchObject(report)
+  for(const patch of [{employeeId:businessId},{operatorName:'Otra persona'},{businessScope:'all'},{period:'year'},{date:'2026-02-29'},{asOf:'2026-10-04T00:00:00Z'}]) expect(()=>parseAccountRequest({...access,...report,...patch})).toThrow()
  })
 })

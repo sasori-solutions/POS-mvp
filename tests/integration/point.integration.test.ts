@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { createHmac, randomUUID } from 'node:crypto'
+import { createHmac, randomInt, randomUUID } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { OperatorSession } from '../../src/lib/contracts'
@@ -7,6 +7,7 @@ import type { OperationalOrder, CheckoutAttempt } from '../../src/lib/operations
 import type { PointCheckout, PointCommand, PointSettings, PointReport, PointSimulationStatus } from '../../src/lib/point-contracts'
 import type { Product } from '../../src/lib/pos-contracts'
 import { signedRequest } from './device-proof-fixture'
+import { assertFinancialResponse } from '../../src/lib/financial-response'
 
 const url = process.env.TEST_SUPABASE_URL, simulator = process.env.TEST_POINT_SIMULATOR_URL
 const enabled = Boolean(url && simulator)
@@ -17,7 +18,11 @@ type Actor = { userId: string; jwt: string; operator: OperatorSession }
 let owner: Actor, other: Actor, product: Product
 const users: string[] = [], businesses: string[] = []
 const admin = enabled ? createClient(url!,service,{ auth:{persistSession:false,autoRefreshToken:false} }) : null
-const terminalId = 'NEWLAND_N950__SERIAL-1'
+// Each run owns its provider account and physical-terminal identity. The developer's
+// persisted OAuth account (900001), orders and scenarios must remain untouched.
+const receiverId = `91${String(randomInt(10_000_000)).padStart(7, '0')}`
+const oauthCode = `sim-code-${receiverId}`
+const terminalId = `NEWLAND_N950__TST${receiverId}`
 function sql(statement: string) {
   return execFileSync('docker',['exec','-i',process.env.TEST_LOCAL_DB_CONTAINER ?? 'supabase_db_pos-mexico-pwa','psql','-U','postgres','-d','postgres','-X','-v','ON_ERROR_STOP=1','-Atq'],{input:statement,encoding:'utf8',stdio:['pipe','pipe','pipe']}).trim()
 }
@@ -33,10 +38,10 @@ function data<T>(reply:{status:number;data?:T;error?:{code:string}}):T { expect(
 function access(actor:Actor) { return {businessId:actor.operator.business.id,operatorToken:actor.operator.operatorToken} }
 async function point<T>(actor:Actor,command:PointCommand) { return call<T>(actor,{action:'point',...access(actor),...command}) }
 async function pos<T>(actor:Actor,command:Record<string,unknown>) { return call<T>(actor,{action:'pos',...access(actor),...command}) }
-async function control(payload:Record<string,unknown>) { const response=await fetch(`${simulator}/__control`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});expect(response.status).toBe(200);return response.json() }
-async function stats() { return (await fetch(`${simulator}/__control`)).json() }
+async function control(payload:Record<string,unknown>) { const response=await fetch(`${simulator}/__control`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...payload,receiverId})});expect(response.status).toBe(200);return response.json() }
+async function stats() { return (await fetch(`${simulator}/__control?receiverId=${receiverId}`)).json() }
 async function simulateRemote(checkout:PointCheckout,status:PointSimulationStatus) {
-  const response=await fetch(`${simulator}/v1/orders/${checkout.remoteOrderId}/events`,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer sim-access-local-fixture'},body:JSON.stringify({status})})
+  const response=await fetch(`${simulator}/v1/orders/${checkout.remoteOrderId}/events`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer sim-access-${receiverId}-local-fixture`},body:JSON.stringify({status})})
   expect(response.status).toBe(204);expect(await response.text()).toBe('')
 }
 function ageReconciliation(checkout:PointCheckout) {
@@ -77,6 +82,10 @@ async function reserve(actor=owner,quantity=1,selectedQuantity=quantity) {
 
 describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider simulator',()=>{
   beforeAll(async()=>{
+    // Never reuse an existing synthetic/development provider account, even on a
+    // random identity collision. Abort before changing its scenarios or resources.
+    expect(sql(`select exists(select 1 from app_private.point_connections where receiver_id=${literal(receiverId)});`)).toBe('f')
+    expect(await stats()).toMatchObject({creates:0,refunds:0,refreshes:0,version:1})
     await control({reset:process.env.TEST_POINT_PERSISTENT !== 'true',scenario:'approved',terminalMode:'PDV'})
     owner=await actor();other=await actor()
     data(await pos(owner,{command:'activate_operations',operationId:randomUUID()}))
@@ -100,25 +109,25 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     const expired=data(await point<{authorizationUrl:string}>(owner,{command:'oauth_start',operationId:randomUUID()}))
     const expiredState=new URL(expired.authorizationUrl).searchParams.get('state')!
     sql(`update app_private.point_oauth_states set expires_at=clock_timestamp()-interval '1 second' where state_hash=extensions.digest(${literal(expiredState)},'sha256');`)
-    expect(await point(owner,{command:'oauth_callback',code:'sim-code',state:expiredState})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
+    expect(await point(owner,{command:'oauth_callback',code:oauthCode,state:expiredState})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
     const denied=data(await point<{authorizationUrl:string}>(owner,{command:'oauth_start',operationId:randomUUID()}))
     const deniedState=new URL(denied.authorizationUrl).searchParams.get('state')!
     data(await point(owner,{command:'oauth_callback',error:'access_denied',state:deniedState}))
-    expect(await point(owner,{command:'oauth_callback',code:'sim-code',state:deniedState})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
+    expect(await point(owner,{command:'oauth_callback',code:oauthCode,state:deniedState})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
     const begin=data(await point<{authorizationUrl:string;expiresAt:string}>(owner,{command:'oauth_start',operationId:randomUUID(),environment:'sandbox'}))
     const state=new URL(begin.authorizationUrl).searchParams.get('state')!
     expect(new URL(begin.authorizationUrl).searchParams.get('code_challenge_method')).toBe('S256')
-    expect(await point(other,{command:'oauth_callback',code:'sim-code',state})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
-    expect(await point(owner,{command:'oauth_callback',code:'sim-code',state:'x'.repeat(43)})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
-    const connected=data(await point<PointSettings>(owner,{command:'oauth_callback',code:'sim-code',state}))
+    expect(await point(other,{command:'oauth_callback',code:oauthCode,state})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
+    expect(await point(owner,{command:'oauth_callback',code:oauthCode,state:'x'.repeat(43)})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
+    const connected=data(await point<PointSettings>(owner,{command:'oauth_callback',code:oauthCode,state}))
     expect(connected.connection?.environment).toBe('sandbox')
     expect(JSON.stringify(connected)).not.toMatch(/sim-access|sim-refresh|ciphertext|clientSecret|backendDirective/)
-    expect(await point(owner,{command:'oauth_callback',code:'sim-code',state})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
+    expect(await point(owner,{command:'oauth_callback',code:oauthCode,state})).toMatchObject({status:400,error:{code:'POINT_OAUTH_INVALID'}})
     const verified=data(await point<PointSettings>(owner,{command:'verify_connection'}))
     expect(verified.connection?.verifiedAt).toBeTruthy()
     const resources=data(await point<{branches:{id:string}[];registers:{id:string}[]}>(owner,{command:'resources'}))
     expect(resources.branches[0].id).toBe('STORE-1');expect(resources.registers[0].id).toBe('POS-1')
-    data(await point(owner,{command:'link_terminal',operationId:randomUUID(),serial:'SERIAL-1',branchId:'STORE-1',registerId:'POS-1'}))
+    data(await point(owner,{command:'link_terminal',operationId:randomUUID(),serial:`TST${receiverId}`,branchId:'STORE-1',registerId:'POS-1'}))
     expect(await point(owner,{command:'activate',enabled:true})).toMatchObject({status:409,error:{code:'POINT_TERMINAL_NOT_READY'}})
     data(await point(owner,{command:'test_terminal',terminalId}))
     expect(data(await point<PointSettings>(owner,{command:'activate',enabled:true})).enabled).toBe(true)
@@ -149,7 +158,7 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(data(await point(owner,branchCommand))).toEqual(branch)
     const branchAfter=await stats()
     expect(branchAfter.branches.length-branchBefore.branches.length).toBe(1)
-    expect(branchAfter.calls.slice(branchBefore.calls.length).filter((entry:{method:string;path:string})=>entry.method==='POST'&&entry.path==='/users/900001/stores')).toHaveLength(1)
+    expect(branchAfter.calls.slice(branchBefore.calls.length).filter((entry:{method:string;path:string})=>entry.method==='POST'&&entry.path===`/users/${receiverId}/stores`)).toHaveLength(1)
     const command={command:'create_register' as const,operationId:randomUUID(),branchId:'STORE-1',name:'Caja idempotente'}
     const before=await stats()
     const first=data(await point<{id:string;branchId:string;name:string}>(owner,command))
@@ -242,6 +251,43 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(await orderFor(complete)).toMatchObject({paidCents:3003,balanceCents:0})
   },60000)
 
+  it('sends each amount part to the linked terminal and changes the balance only after verified approval',async()=>{
+    const item=data(await pos<Product>(owner,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Cuenta por cantidades',category:'',priceCents:76068}))
+    let order=data(await pos<OperationalOrder>(owner,{command:'save_order',operationId:randomUUID(),orderId:randomUUID(),expectedRevision:null,orderKind:'counter',name:'Venta directa',tableId:null,items:[{lineId:randomUUID(),productId:item.id,version:item.version,unitPriceCents:item.priceCents,quantity:1,note:''}]}))
+    order=data(await pos<OperationalOrder>(owner,{command:'begin_order_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision}))
+    const parts=[50000,4000,22068], receipts:PointCheckout[]=[]
+    for(let index=0;index<parts.length;index++) {
+      await control({scenario:index===0?'pending':'approved'})
+      const attempt=data(await pos<CheckoutAttempt>(owner,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[],amountsCents:parts.slice(index),paymentMethod:'card_integrated'}))
+      const prepared=data(await point<PointCheckout>(owner,{command:'prepare',operationId:randomUUID(),checkoutAttemptId:attempt.id,terminalId}))
+      const start={command:'start' as const,operationId:randomUUID(),checkoutId:prepared.id}
+      data(await point(owner,start))
+      if(index===0) {
+        const pending=await runUntil(prepared.id,result=>result.remoteOrderId!==null)
+        expect(pending.totalCents).toBe(parts[index])
+        expect(await orderFor(pending)).toMatchObject({paidCents:0,balanceCents:76068})
+        await simulateRemote(pending,'processed')
+        expect(await orderFor(pending)).toMatchObject({paidCents:0,balanceCents:76068})
+        ageReconciliation(pending)
+      }
+      const paid=await runUntil(prepared.id,result=>result.saleState==='materialized')
+      expect(paid).toMatchObject({totalCents:parts[index],sale:{paymentMethod:'card_integrated',totalCents:parts[index],itemCount:index===2?1:0}})
+      const next=await orderFor(paid)
+      assertFinancialResponse({command:'order',orderId:next.id},next)
+      assertFinancialResponse({command:'sale',saleId:paid.sale!.id},paid.sale)
+      expect(next.balanceCents).toBe(order.balanceCents-parts[index])
+      expect(next.amountParts).toEqual(parts.slice(index+1))
+      expect(data(await point<PointCheckout>(owner,start)).attemptId).toBe(paid.attemptId)
+      expect((await orderFor(paid)).balanceCents).toBe(next.balanceCents)
+      receipts.push(paid);order=next
+    }
+    expect(order).toMatchObject({orderKind:'counter',status:'closed',paidCents:76068,balanceCents:0})
+    expect(new Set(receipts.map(receipt=>receipt.sale!.id)).size).toBe(3)
+    data(await point(owner,{command:'refund',operationId:randomUUID(),checkoutId:receipts[0].id,amountCents:50000,merchandiseCents:50000,tipCents:0,reason:'Devolver la primera parte'}))
+    expect(await runUntil(receipts[0].id,result=>result.state==='refunded')).toMatchObject({refundedCents:50000})
+    expect(await orderFor(receipts[2])).toMatchObject({paidCents:76068,balanceCents:0})
+  },60000)
+
   it('uses separate PostgreSQL connections for double send and terminal competition, materializing once',async()=>{
     await control({scenario:'approved'})
     const first=await reserve(),second=await reserve()
@@ -318,7 +364,7 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(data(await point<{checkouts:PointCheckout[]}>(owner,{command:'recover'})).checkouts.some(c=>c.id===checkout.id)).toBe(true)
     expect(await point(owner,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})).toMatchObject({status:200,data:{attemptId:review.attemptId}})
     // Authoritative remote evidence resolves the old attempt even when charging is off.
-    await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',last_updated_date:new Date().toISOString(),transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited',reference_id:String(700000 + Number(review.remoteOrderId!.slice(3)))}],refunds:[]}}})
+    await control({orderId:review.remoteOrderId,order:{status:'processed',status_detail:'processed',last_updated_date:new Date().toISOString(),transactions:{payments:[{...(await stats()).orders.find((o:{id:string})=>o.id===review.remoteOrderId).transactions.payments[0],status:'processed',status_detail:'accredited',reference_id:`${receiverId}${String(Number(review.remoteOrderId!.split('_').at(-1))).padStart(6,'0')}`}],refunds:[]}}})
     ageReconciliation(review)
     await runUntil(checkout.id,c=>c.saleState==='materialized')
     data(await point(owner,{command:'activate',enabled:true}))
@@ -330,9 +376,9 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     const paid=await runUntil(checkout.id,c=>c.saleState==='materialized')
     const ts='1742505638683',requestId='independent-signature-fixture',id=paid.remoteOrderId!
     const signature=createHmac('sha256','simulator-webhook-secret').update(`id:${id.toLowerCase()};request-id:${requestId};ts:${ts};`).digest('hex')
-    const webhook=()=>fetch(`${url}/functions/v1/point-webhook?data.id=${id}&type=order`,{method:'POST',headers:{'content-type':'application/json',apikey:anon,'x-request-id':requestId,'x-signature':`ts=${ts},v1=${signature}`},body:JSON.stringify({type:'order',user_id:900001,live_mode:false,data:{id}})})
+    const webhook=()=>fetch(`${url}/functions/v1/point-webhook?data.id=${id}&type=order`,{method:'POST',headers:{'content-type':'application/json',apikey:anon,'x-request-id':requestId,'x-signature':`ts=${ts},v1=${signature}`},body:JSON.stringify({type:'order',user_id:Number(receiverId),live_mode:false,data:{id}})})
     expect((await webhook()).status).toBe(200);expect((await webhook()).status).toBe(200)
-    const bad=await fetch(`${url}/functions/v1/point-webhook?data.id=${id}X&type=order`,{method:'POST',headers:{'content-type':'application/json',apikey:anon,'x-request-id':requestId,'x-signature':`ts=${ts},v1=${signature}`},body:JSON.stringify({type:'order',user_id:900001,live_mode:false,data:{id}})})
+    const bad=await fetch(`${url}/functions/v1/point-webhook?data.id=${id}X&type=order`,{method:'POST',headers:{'content-type':'application/json',apikey:anon,'x-request-id':requestId,'x-signature':`ts=${ts},v1=${signature}`},body:JSON.stringify({type:'order',user_id:Number(receiverId),live_mode:false,data:{id}})})
     expect(bad.status).toBe(401)
     const refund={command:'refund' as const,operationId:randomUUID(),checkoutId:checkout.id,amountCents:paid.totalCents,merchandiseCents:paid.totalCents,tipCents:0,reason:'Devolución sintética'}
     const refunds=await Promise.all([point(owner,refund),point(owner,{...refund,operationId:randomUUID()})])

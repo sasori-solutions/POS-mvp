@@ -83,7 +83,7 @@ describe.skipIf(!config)('business profile, personal employees and shared device
     const created = await account<BusinessSession & { business: { profile: typeof profile } }>(owner, request);
     expect(created.status).toBe(200);
     const session = created.body.data!; rememberBusiness(session.business.id);
-    expect(session.business.profile).toEqual(profile);
+    expect(session.business.profile).toEqual({ ...profile, accountsEnabled: true, defaultVatTreatment: 'vat_16', logoImageId: null });
     const changed = await account(owner, { action: 'update_business', businessId: session.business.id, operatorToken: session.operatorToken, name: 'Perfil actualizado', businessType: 'restaurant', timezone: 'America/Cancun', profile: { ...profile, paymentMethods: ['transfer'] } });
     expect(changed.status).toBe(200);
     expect(changed.body.data).toMatchObject({ name: 'Perfil actualizado', timezone: 'America/Cancun', profile: { paymentMethods: ['transfer'] } });

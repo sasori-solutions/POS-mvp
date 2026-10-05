@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest'
 import ReportDashboard, { type ReportTab } from '../../src/features/operations/ReportDashboard'
 import type { ReportController } from '../../src/features/operations/usePeriodReport'
 import type { BusinessDayReport, BusinessPeriodReport } from '../../src/lib/operations-contracts'
@@ -56,6 +56,10 @@ function controller(overrides: Partial<ReportController> = {}): ReportController
 
 const card = (title: string) => within(screen.getByRole('heading', { name: title }).closest('section')!)
 const rangeLabel = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString('es-MX', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' })
+
+// Transform the real chart library before timed DOM assertions. Cold module
+// compilation under concurrent builds is unrelated to the UI loading state.
+beforeAll(async () => { await import('../../src/features/operations/AnalyticsCharts') })
 
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })

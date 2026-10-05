@@ -81,13 +81,15 @@ test('legacy card preferences convert only after an explicit save and remain unc
   expect(calls.filter(call => call.action === 'update_business')).toHaveLength(1)
 })
 
-test('employee More retains access and session groups within the viewport', async ({ page }) => {
+test('employee access and session actions stay available in More or the desktop account menu', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true, role: 'cashier' })
   await unlock(page)
-  await openOperationalMore(page)
-  await expect(page.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Sesión', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Cambiar mi PIN', exact: true })).toBeVisible()
+  const actions = await openOperationalMore(page)
+  if (await page.getByRole('region', { name: 'Más', exact: true }).isVisible()) {
+    await expect(actions.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
+    await expect(actions.getByRole('heading', { name: 'Sesión', exact: true })).toBeVisible()
+  } else await expect(actions).toHaveAccessibleName('Opciones de cuenta')
+  for (const name of ['Cambiar mi PIN', 'Cambiar negocio', 'Cerrar sesión']) await expect(actions.getByRole('button', { name, exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).toHaveCount(0)
   await noOverflow(page)
 })

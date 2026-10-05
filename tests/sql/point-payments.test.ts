@@ -4,7 +4,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { emptyDetails } from '../../src/lib/product-details'
-import type { CheckoutAttempt, OperationalOrder } from '../../src/lib/operations-contracts'
+import type { BusinessPeriodReport, CheckoutAttempt, OperationalOrder } from '../../src/lib/operations-contracts'
 import type { Product } from '../../src/lib/pos-contracts'
 import type { BusinessContext } from '../../src/lib/contracts'
 import type { CommissionStatement, PointCheckout, PointReport, PointSettings } from '../../src/lib/point-contracts'
@@ -78,7 +78,7 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external', 'transfer', 'card_integrated'] }
     const payload = { action: 'update_business', businessId: actor.businessId, operatorToken: actor.token, name: 'Comercio ficticio', businessType: 'cafe', timezone: 'America/Mexico_City', profile }
     const result = (await db.query<{ result: { data: BusinessContext } }>("select public.account_secure($1,$2,'update_business',$3::jsonb) result", [actor.userId, actor.sessionId, JSON.stringify(payload)])).rows[0].result.data
-    expect(result.profile).toEqual(profile)
+    expect(result.profile).toEqual({ ...profile, accountsEnabled: true, defaultVatTreatment: 'vat_16', logoImageId: null })
     expect((await db.query<{ profile: unknown }>('select profile from app_private.businesses where id=$1', [actor.businessId])).rows[0].profile).toEqual(profile)
     expect((await pos<{ paymentMethods: string[] }>(actor, { command: 'catalog' })).paymentMethods).toEqual(profile.paymentMethods)
     const settings = await point<PointSettings>(actor, { command: 'settings' })
@@ -266,6 +266,11 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     expect(await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ state: 'partially_refunded', refundedCents: 600, sale: { totalCents: 1001 } })
     await service('apply_order', { ...evidence, state: 'refunded', refunds: [...confirmed.refunds, { id: 'synthetic-refund-2', amountCents: 401, confirmedAt: new Date().toISOString() }] })
     expect((await db.query<{ n: string }>('select sum(exact_numerator)::text n from app_private.point_fee_ledger where business_id=$1', [actor.businessId])).rows[0].n).toBe('0')
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const personal = await pos<BusinessPeriodReport>(actor, { command: 'report_own_period', date, period: 'day' })
+    expect(personal.totals).toMatchObject({ salesCents: 1001, reversalCents: 1001, netCents: 0, unallocatedRefundCents: 1001, operators: [], cashDifferences: [] })
+    expect(personal.series.reduce((sum, point) => sum + point.reversalCents, 0)).toBe(1001)
+    expect(personal.series.reduce((sum, point) => sum + point.netCents, 0)).toBe(0)
   })
 
   it('closes reproducible exact monthly statements, late refund residuals and partial commission payments', async () => {
@@ -587,6 +592,30 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     } while(cursor)
     expect(rows).toBeGreaterThan(100);expect(total).toBe(expected)
   })
+
+  it('sends only the current person amount to Point and changes balance only after verified approval', async () => {
+    const { actor, reservation, checkout } = await setup(76068, 'sandbox', false, randomUUID(), 1, 0, 1, [50000, 4000, 22068])
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    expect(evidence.amountCents).toBe(50000)
+    expect(await pos(actor, { command: 'order', orderId: reservation.orderId })).toMatchObject({ orderKind: 'counter', balanceCents: 76068, paidCents: 0 })
+    await service('apply_order', { ...evidence, state: 'unknown_review' })
+    expect(await pos(actor, { command: 'order', orderId: reservation.orderId })).toMatchObject({ balanceCents: 76068, paidCents: 0 })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    const current = await pos<OperationalOrder>(actor, { command: 'order', orderId: reservation.orderId })
+    expect(current).toMatchObject({ orderKind: 'counter', balanceCents: 26068, paidCents: 50000, status: 'open', amountParts: [4000, 22068] })
+    const next = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: current.id, expectedRevision: current.revision, items: [], amountsCents: [4000, 22068], paymentMethod: 'cash' })
+    expect(next.totalCents).toBe(4000)
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    for (const command of ['report_period', 'report_own_period']) {
+      const report = await pos<BusinessPeriodReport>(actor, { command, date, period: 'day' })
+      expect(report.totals).toMatchObject({ grossCents: 50000, discountCents: 0, salesCents: 50000 })
+      expect(report.totals.products[0]).toMatchObject({ quantity: 0, salesCents: 50000 })
+    }
+    const ledger = (await db.query<{ result: Record<string, number> }>('select app_private.ops_financial_ledger_check() result')).rows[0].result
+    expect(Object.values(ledger).every(value => value === 0)).toBe(true)
+  })
 })
 
 async function newActor(): Promise<Actor> {
@@ -607,7 +636,7 @@ async function point<T = unknown>(actor: Actor, command: Record<string, unknown>
 async function service<T = unknown>(action: string, payload: Record<string, unknown>): Promise<T> {
   return (await db.query<{ result: T }>('select public.point_service($1,$2::jsonb) result', [action, JSON.stringify(payload)])).rows[0].result
 }
-async function setup(price = 1001, environment = 'live', official = false, receiverId = randomUUID(), quantity = 1, discountCents = 0, collectQuantity = 1) {
+async function setup(price = 1001, environment = 'live', official = false, receiverId = randomUUID(), quantity = 1, discountCents = 0, collectQuantity = 1, amountsCents?: number[]) {
   const actor = await newActor(); await pos(actor, { command: 'activate_operations', operationId: randomUUID() }); await pos(actor, { command: 'open_shift', operationId: randomUUID(), openingCents: 0 })
   if (official) await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId, tokensCiphertext: 'synthetic-test-token', expiresAt: '2099-01-01T00:00:00Z' })
   const connection = official ? (await point<PointSettings>(actor, { command: 'settings' })).connection! : await service<{ id: string }>('connection_save', { businessId: actor.businessId, environment, receiverId: randomUUID(), tokensCiphertext: 'encrypted-synthetic-tokens', expiresAt: new Date(Date.now() + 60_000).toISOString() })
@@ -615,9 +644,9 @@ async function setup(price = 1001, environment = 'live', official = false, recei
   if (!official) await service('terminal_save', { connectionId: connection.id, terminalId, serial: terminalId, storeId: 'STORE-1', posId: 'POS-1', mode: 'PDV', verified: true, physicallyConfirmed: true })
   await point(actor, { command: 'activate', enabled: true })
   const product = await pos<Product>(actor, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Producto ficticio', category: 'Bebidas', priceCents: price, details: { ...emptyDetails(), taxTreatment: 'vat_16', taxBps: 1600 } })
-  let order = await pos<OperationalOrder>(actor, { command: 'save_order', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, name: 'Cuenta ficticia', tableId: null, items: [{ lineId: randomUUID(), productId: product.id, quantity, unitPriceCents: price, version: product.version, note: '' }] })
+  let order = await pos<OperationalOrder>(actor, { command: 'save_order', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, name: 'Cuenta ficticia', tableId: null, ...(amountsCents ? { orderKind: 'counter' } : {}), items: [{ lineId: randomUUID(), productId: product.id, quantity, unitPriceCents: price, version: product.version, note: '' }] })
   if (discountCents) order = await pos<OperationalOrder>(actor, { command: 'set_order_discount', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, discount: { kind: 'fixed', value: discountCents, reason: 'Redondeo sintético' } })
-  const reservation = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, items: [{ lineId: order.items[0].lineId, quantity: collectQuantity }], paymentMethod: 'card_integrated' })
+  const reservation = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, items: amountsCents ? [] : [{ lineId: order.items[0].lineId, quantity: collectQuantity }], ...(amountsCents ? { amountsCents } : {}), paymentMethod: 'card_integrated' })
   const checkout = await point<PointCheckout>(actor, { command: 'prepare', operationId: randomUUID(), checkoutAttemptId: reservation.id, terminalId })
   return { actor, checkout, reservation, connectionId: connection.id }
 }

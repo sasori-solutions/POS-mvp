@@ -6,21 +6,21 @@ Public app: [pos-mexico-mvp.pages.dev](https://pos-mexico-mvp.pages.dev).
 
 ## Work together and ship
 
-**Own worktree → branch → PR → other developer reviews → merge to `main` → automatic Cloudflare deployment.** Opening a PR runs checks; merging it publishes after **Basic checks** succeeds. The production job reuses that run's checked build. Backend migrations and Edge Functions require a compatible release before merging a dependent frontend.
+**Own worktree → branch → PR → other developer reviews → merge to `main` → automatic Cloudflare deployment.** Opening a PR runs checks; merging it publishes after **Basic checks** and **Required financial checks** succeed. The production job reuses that run's checked build. Backend migrations and Edge Functions require a compatible release before merging a dependent frontend.
 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) for the shared workflow and [DEPLOYMENT.md](DEPLOYMENT.md) for configuration, deployment verification and recovery. Codex reads [AGENTS.md](AGENTS.md). A merged commit or this README is not evidence of a successful production release; check the deployment for that commit.
 
 ## What the current code supports
 
-- Google sign-in, business creation/settings, a personal six-digit PIN, lock/logout and recovery through a single-use email link. Recovery changes the PIN without granting a login session.
+- Google sign-in, business creation/settings with service-account preferences, VAT defaults and logos, a personal six-digit PIN, lock/logout and recovery through a single-use email link. Recovery changes the PIN without granting a login session.
 - Owner-managed employee invitations and grouped permission checkboxes. Employees use `/employee`, sign in with Google and choose their own PIN. Access binds to their browser; the owner approves a replacement. Deleting an employee permanently removes that business's employee access. Reinvitation creates a new employee identity and PIN.
 - Shared-register pairing at `/register` for existing PIN-only employees. Google-linked employees use their personal linked browser.
-- Product creation, editing, activation and manual product/variant availability; online sale registration in MXN for cash, external card terminals and confirmed transfers; sales history with explicit access grants. Finalized sales preserve their snapshots and uncertain registrations can be retried without registering twice.
+- Product creation, editing, activation and manual product/variant availability; online sale registration in MXN for cash, card through a linked Mercado Pago Point terminal and confirmed transfers; sales history with explicit access grants. Historical external-card records remain readable. Finalized sales preserve their snapshots and uncertain registrations can be retried without registering twice.
 - Shared cash shifts, entries/withdrawals, collection recovery and a closing count that freezes money activity before counting. Unpaid accounts carry across shifts.
-- Persistent accounts, immutable preparation batches and a shared kitchen queue; whole-account discounts, unpaid cancellation, owner-approved waivers and linked full refunds.
-- Named tables with explicit move/close, final checkout and item splitting with exact discount/IVA allocations. Server reports show business-local daily sales, adjustments, known IVA and cash differences.
+- Persistent accounts, immutable preparation batches and a shared kitchen queue with pending, preparing and completed states; whole-account discounts, unpaid cancellation, owner-approved waivers and linked full refunds.
+- Named tables with explicit move/close, final checkout, item splitting and amount splitting with exact discount/IVA allocations. Amount splits reserve one part at a time and reduce the balance only after confirmed payment. Server reports show business-local daily sales, adjustments, known IVA and cash differences; employees can receive a separate permission for their own metrics.
 
-Operational checkout starts only after the owner activates it in Caja, following device updates and reconciliation of pending legacy registrations. See [Lean POS MVP](docs/lean-pos-mvp.md) for the implementation and staged review boundaries. Automatic inventory quantities, amount-based bill splitting, invoicing, automatic payment processing and offline sales remain outside the MVP. Branch/register names configure the initial location; they do not provide multiple-location operation. These statements describe source behavior, not a confirmed hosted release or physical-device verification.
+Operational checkout starts only after the owner activates it in Caja, following device updates and reconciliation of pending legacy registrations. See [Lean POS MVP](docs/lean-pos-mvp.md) and [amount splitting](docs/amount-split-checkout.md) for the implementation boundaries. Automatic inventory quantities, invoicing, bank settlement reconciliation and offline sales remain outside the MVP. Branch/register names configure the initial location; they do not provide multiple-location operation. These statements describe source behavior, not a confirmed hosted release or physical-device verification.
 
 ## Local development
 

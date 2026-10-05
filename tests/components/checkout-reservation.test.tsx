@@ -10,7 +10,108 @@ import { checkoutTotals } from '../../src/lib/checkout-selection'
 vi.mock('../../src/lib/pos', async original => ({...await original<object>(),posRequest:vi.fn()}))
 afterEach(() => {cleanup();vi.resetAllMocks()})
 const business={id:'business',name:'Sintético',role:'owner',permissions:[],profile:{paymentMethods:['cash','transfer']}} as unknown as BusinessContext
-const order:OperationalOrder={id:'order',revision:1,name:'Cuenta',tableId:null,status:'open',phase:'service',frozen:false,createdAt:'2026-10-03T12:00:00Z',updatedAt:'2026-10-03T12:00:00Z',operatorName:'Sintético',items:[{lineId:'line',productId:'product',version:1,name:'Café',kitchenName:'Café',category:'',selectionLabel:'',note:'',quantity:3,paidQuantity:0,sentQuantity:0,unitPriceCents:1001,grossCents:3003,discountCents:2,totalCents:3001,taxCents:414,taxBps:1600,taxTreatment:'vat_16'}],discount:{kind:'fixed',value:2,reason:'Centavos'},grossCents:3003,discountCents:2,totalCents:3001,taxCents:414,paidCents:0,waivedCents:0,cancelledCents:0,balanceCents:3001}
+const order:OperationalOrder={id:'order',revision:1,name:'Cuenta',orderKind:'service',tableId:null,status:'open',phase:'service',frozen:false,createdAt:'2026-10-03T12:00:00Z',updatedAt:'2026-10-03T12:00:00Z',operatorName:'Sintético',items:[{lineId:'line',productId:'product',version:1,name:'Café',kitchenName:'Café',category:'',selectionLabel:'',note:'',quantity:3,paidQuantity:0,sentQuantity:0,unitPriceCents:1001,grossCents:3003,discountCents:2,totalCents:3001,taxCents:414,taxBps:1600,taxTreatment:'vat_16'}],discount:{kind:'fixed',value:2,reason:'Centavos'},grossCents:3003,discountCents:2,totalCents:3001,taxCents:414,paidCents:0,waivedCents:0,cancelledCents:0,balanceCents:3001}
+
+test('a saved account stays in service until its explicit collection action',()=>{
+ const request:OperationalMutation={execute:vi.fn(),busy:false,pending:null,error:'',notice:'',lastResult:null,clearNotice:vi.fn()},onStartCheckout=vi.fn()
+ render(<OrderDetail order={order} business={business} methods={['cash']} attempts={[]} mutation={request} onSaved={vi.fn()} onEdit={vi.fn()} onStartCheckout={onStartCheckout} refresh={vi.fn()} collectionAllowed />)
+ expect(screen.queryByRole('button',{name:'Registrar pago'})).toBeNull()
+ expect(screen.queryByRole('radio',{name:'Dividir cuenta'})).toBeNull()
+ expect(request.execute).not.toHaveBeenCalled()
+ fireEvent.click(screen.getByRole('button',{name:'Cobrar $30.01'}))
+ expect(onStartCheckout).toHaveBeenCalledOnce()
+})
+
+test('an unpaid service account sends its remaining preparation with one guarded action and no reservation',async()=>{
+ const request:OperationalMutation={execute:vi.fn(),busy:false,pending:null,error:'',notice:'',lastResult:null,clearNotice:vi.fn()},onSaved=vi.fn(),onStartCheckout=vi.fn()
+ let accept!:(value:OperationalOrder)=>void
+ vi.mocked(request.execute).mockImplementationOnce(()=>new Promise(resolve=>{accept=resolve}) as never)
+ const partiallySent={...order,items:[{...order.items[0],sentQuantity:1}]},sent={...partiallySent,revision:2,items:[{...order.items[0],sentQuantity:3}]}
+ const props={order:partiallySent,business:{...business,profile:{...business.profile,accountsEnabled:false}},methods:['cash' as const],attempts:[],mutation:request,onSaved,onEdit:vi.fn(),onStartCheckout,refresh:vi.fn().mockResolvedValue(undefined),collectionAllowed:false}
+ const view=render(<OrderDetail {...props} />)
+ const send=screen.getByRole('button',{name:'Enviar a cocina'}) as HTMLButtonElement
+ expect(send.disabled).toBe(false)
+ expect(send.classList.contains('pos-primary')).toBe(true)
+ expect(screen.getByRole('button',{name:'Cobrar $30.01'}).classList.contains('pos-secondary')).toBe(true)
+ const summary=screen.getByRole('list')
+ fireEvent.click(send);fireEvent.click(send)
+ expect(request.execute).toHaveBeenCalledOnce()
+ expect(request.execute).toHaveBeenCalledWith({command:'send_order',operationId:expect.any(String),orderId:order.id,expectedRevision:order.revision})
+ expect(send.disabled).toBe(true)
+ expect(screen.getByRole('list')).toBe(summary)
+ expect(onSaved).not.toHaveBeenCalled()
+ await act(async()=>accept(sent))
+ expect(onSaved).toHaveBeenCalledWith(sent)
+ view.rerender(<OrderDetail {...props} order={sent} collectionAllowed />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ expect(screen.getByRole('button',{name:'Cobrar $30.01'}).classList.contains('pos-primary')).toBe(true)
+ expect(request.execute).toHaveBeenCalledOnce()
+})
+
+test('sending preparation is absent for counter, frozen, finalized and read-only service views',()=>{
+ const request:OperationalMutation={execute:vi.fn(),busy:false,pending:null,error:'',notice:'',lastResult:null,clearNotice:vi.fn()}
+ const props={order,business,methods:['cash' as const],attempts:[],mutation:request,onSaved:vi.fn(),onEdit:vi.fn(),onStartCheckout:vi.fn(),refresh:vi.fn(),collectionAllowed:false}
+ const view=render(<OrderDetail {...props} serviceAccount={false} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ view.rerender(<OrderDetail {...props} serviceAccount order={{...order,orderKind:'counter'}} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ view.rerender(<OrderDetail {...props} order={{...order,orderKind:null,name:'Mostrador'}} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ view.rerender(<OrderDetail {...props} order={{...order,frozen:true}} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ view.rerender(<OrderDetail {...props} order={{...order,phase:'checkout'}} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ view.rerender(<OrderDetail {...props} business={{...business,role:'cashier',permissions:['catalog.read','sales.create']}} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ view.rerender(<OrderDetail {...props} order={{...order,status:'paid',balanceCents:0,paidCents:order.totalCents}} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ expect(request.execute).not.toHaveBeenCalled()
+})
+
+test('adding new units to an already sent service account restores preparation as the primary action',()=>{
+ const request:OperationalMutation={execute:vi.fn(),busy:false,pending:null,error:'',notice:'',lastResult:null,clearNotice:vi.fn()}
+ const sent={...order,items:[{...order.items[0],sentQuantity:3}]},props={order:sent,business,methods:['cash' as const],attempts:[],mutation:request,onSaved:vi.fn(),onEdit:vi.fn(),onStartCheckout:vi.fn(),refresh:vi.fn(),collectionAllowed:true}
+ const view=render(<OrderDetail {...props} />)
+ expect(screen.queryByRole('button',{name:'Enviar a cocina'})).toBeNull()
+ const extended={...sent,revision:2,grossCents:4004,totalCents:4002,balanceCents:4002,taxCents:552,items:[{...sent.items[0],quantity:4,grossCents:4004,totalCents:4002,taxCents:552}]}
+ view.rerender(<OrderDetail {...props} order={extended} />)
+ expect(screen.getByRole('button',{name:'Enviar a cocina'}).classList.contains('pos-primary')).toBe(true)
+ expect(screen.getByRole('button',{name:'Cobrar $40.02'}).classList.contains('pos-secondary')).toBe(true)
+ expect(request.execute).not.toHaveBeenCalled()
+})
+
+test('rapid quantity edits keep their DOM, focus and newest value while a prior reservation is pending',async()=>{
+ const request:OperationalMutation={execute:vi.fn(),busy:false,pending:null,error:'',notice:'',lastResult:null,clearNotice:vi.fn()}
+ const makeQuote=(quantity:number,revision:number):CheckoutAttempt=>{
+  const items=[{lineId:'line',quantity}],totals=checkoutTotals(order,items)
+  return {id:'reservation',revision,kind:'payment',status:'prepared',orderId:order.id,shiftId:'shift',paymentMethod:'cash',...totals,items:[{...order.items[0],quantity,...totals}],saleId:null,originalSaleId:null,operatorName:'Sintético',resolverName:null,createdAt:order.createdAt,resolvedAt:null,reason:''}
+ }
+ const initial=makeQuote(1,1)
+ let acceptFirst!:(value:CheckoutAttempt)=>void
+ vi.mocked(request.execute).mockImplementationOnce(()=>new Promise(resolve=>{acceptFirst=resolve}) as never).mockImplementation(async command=>{
+  if(command.command!=='update_checkout')throw new Error('Unexpected command')
+  return makeQuote(command.items[0].quantity,command.expectedRevision+1)
+ })
+ render(<OrderDetail checkoutView order={order} business={business} methods={['cash']} attempts={[initial]} mutation={request} onSaved={vi.fn()} onEdit={vi.fn()} refresh={vi.fn().mockResolvedValue(undefined)} collectionAllowed />)
+ const input=screen.getByRole('spinbutton',{name:'Cantidad a cobrar de Café'}) as HTMLInputElement
+ const summary=document.querySelector('.checkout-summary'),progress=document.querySelector('.checkout-action-progress')
+ input.focus()
+ fireEvent.click(screen.getByRole('button',{name:'Añadir Café a este cobro'}))
+ await waitFor(()=>expect(request.execute).toHaveBeenCalledOnce())
+ fireEvent.click(screen.getByRole('button',{name:'Añadir Café a este cobro'}))
+ expect(input.value).toBe('3')
+ expect(screen.getByRole('spinbutton',{name:'Cantidad a cobrar de Café'})).toBe(input)
+ expect(document.querySelector('.checkout-summary')).toBe(summary)
+ expect(document.querySelector('.checkout-action-progress')).toBe(progress)
+ expect(document.activeElement).toBe(input)
+ expect(screen.queryByRole('status',{name:'Cargando'})).toBeNull()
+ expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(true)
+ await act(async()=>acceptFirst(makeQuote(2,2)))
+ expect(input.value).toBe('3')
+ await waitFor(()=>expect(request.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'update_checkout',expectedRevision:2,items:[{lineId:'line',quantity:3}]})))
+ await waitFor(()=>expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
+ expect(input.value).toBe('3')
+})
 
 test('automatically reserves and updates selected money while keeping a single final payment action',async()=>{
  const request:OperationalMutation={execute:vi.fn(),busy:false,pending:null,error:'',notice:'',lastResult:null,clearNotice:vi.fn()}

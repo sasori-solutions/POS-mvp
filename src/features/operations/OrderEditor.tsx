@@ -9,7 +9,7 @@ import type { OperationalMutation } from './useOperations'
 import LoadingPlaceholder from '../../components/LoadingPlaceholder'
 import './operations-polish.css'
 
-export default function OrderEditor({ order, products, mutation, onSaved, onCancel, catalogLoading = false, catalogError = '', onRetryCatalog }: { order?: OperationalOrder; products: Product[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onCancel: () => void; catalogLoading?: boolean; catalogError?: string; onRetryCatalog?: () => void | Promise<void> }) {
+export default function OrderEditor({ order, products, mutation, onSaved, onCancel, serviceAccount = true, catalogLoading = false, catalogError = '', onRetryCatalog }: { order?: OperationalOrder; products: Product[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onCancel: () => void; serviceAccount?: boolean; catalogLoading?: boolean; catalogError?: string; onRetryCatalog?: () => void | Promise<void> }) {
   const [name, setName] = useState(order?.name ?? '')
   const [query, setQuery] = useState('')
   const [choosing, setChoosing] = useState<Product | null>(null)
@@ -21,10 +21,12 @@ export default function OrderEditor({ order, products, mutation, onSaved, onCanc
   const subtotal = lines.reduce((total, line) => total + line.quantity * line.unitPriceCents, 0)
   function add(product: Product, selection?: ItemSelection) { if (lines.length >= 40) return; setLines(previous => [...previous, { lineId: crypto.randomUUID(), productId: product.id, quantity: 1, unitPriceCents: selectedPrice(product, selection), version: product.version, note: '', ...(selection ? { selection } : {}) }]) }
   async function save() {
-    try { onSaved(await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: order?.revision ?? null, name: name.trim() || 'Mostrador', tableId: order?.tableId ?? null, items: lines })) } catch { /* Shell recovery. */ }
+    if (disabled) return
+    const orderKind = order ? order.orderKind ?? undefined : serviceAccount ? 'service' : 'counter'
+    try { onSaved(await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: order?.revision ?? null, name: name.trim() || (serviceAccount ? 'Cuenta' : 'Mostrador'), tableId: order?.tableId ?? null, items: lines, ...(orderKind ? { orderKind } : {}) }, orderKind === 'counter' || !orderKind && !serviceAccount ? 'counter' : 'service')) } catch { /* Shell recovery. */ }
   }
   return <div className="ops-form operations-polish order-editor">
-    <label className="order-editor-name">Nombre de la cuenta<input value={name} placeholder="Mostrador" maxLength={80} onChange={e => setName(e.target.value)} disabled={disabled} /></label>
+    <label className="order-editor-name">Nombre de la cuenta<input value={name} placeholder={serviceAccount ? 'Cuenta' : 'Mostrador'} maxLength={80} onChange={e => setName(e.target.value)} disabled={disabled} /></label>
     <div className="order-editor-layout">
       <section className="order-editor-catalog" aria-label="Añadir productos">
         {catalogLoading ? <LoadingPlaceholder variant="catalog" rows={4} label="Cargando productos" /> : catalogError ? <div className="operations-error" role="alert"><p>{catalogError}</p>{onRetryCatalog && <button className="pos-button pos-secondary" onClick={() => void onRetryCatalog()}>Reintentar catálogo</button>}</div> : <>

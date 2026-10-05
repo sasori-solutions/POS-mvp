@@ -5,29 +5,50 @@ import { posRequest, type PosAccess } from '../../lib/pos'
 import { accessErrorCodes } from '../../components/useCatalog'
 
 type Mutation = Extract<OperationsCommand, { operationId: string }>
+export type OperationOrigin = 'counter' | 'service'
+type PendingOperation = { pending: Mutation | null; pendingOrigin: OperationOrigin | null }
 const commands = new Set(['activate_operations', 'open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'set_kitchen_status', 'save_table', 'move_order', 'close_order', 'begin_order_checkout', 'resume_order_service', 'update_checkout','record_checkout','record_payment','prepare_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal', 'prepare_waiver', 'confirm_waiver'])
+const credentials = /"(?:operatorToken|deviceToken|pin|currentPin|confirmation|access_token|refresh_token|deviceProof|access|businessId|authSessionId|authorization|Authorization)"\s*:/
 
-/** The only durable operational payload is a mutation, never its access envelope. */
-export function readOperation(key: string): Mutation | null {
-  const value = localStorage.getItem(key)
-  if (!value) return null
-  const command: unknown = JSON.parse(value)
-  if (!command || typeof command !== 'object' || Array.isArray(command)) throw new Error('El reintento guardado necesita revisión.')
+function parseOperation(value: string): PendingOperation {
+  const record: unknown = JSON.parse(value)
+  const invalid = () => new Error('El reintento guardado necesita revisión.')
+  if (!record || typeof record !== 'object' || Array.isArray(record) || credentials.test(value) || credentials.test(JSON.stringify(record))) throw invalid()
+  const saved = record as Record<string, unknown>
+  let command: unknown = record
+  let origin: OperationOrigin | null = null
+  if ('payload' in saved || 'origin' in saved) {
+    if (Object.keys(saved).length !== 2 || !Object.hasOwn(saved, 'payload') || !Object.hasOwn(saved, 'origin')
+      || saved.origin !== 'counter' && saved.origin !== 'service') throw invalid()
+    command = saved.payload
+    origin = saved.origin
+  }
+  if (!command || typeof command !== 'object' || Array.isArray(command)) throw invalid()
   const item = command as Record<string, unknown>
-  if (!commands.has(String(item.command)) || typeof item.operationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(item.operationId)
-    || /"(?:operatorToken|deviceToken|pin|access_token|deviceProof)"\s*:/.test(value)) throw new Error('El reintento guardado necesita revisión.')
-  return command as Mutation
+  if (typeof item.command !== 'string' || !commands.has(item.command) || typeof item.operationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(item.operationId)
+    || origin !== null && item.command !== 'save_order' || 'payload' in item || 'origin' in item) throw invalid()
+  return { pending: command as Mutation, pendingOrigin: origin }
+}
+function readPendingOperation(key: string): PendingOperation {
+  const value = localStorage.getItem(key)
+  return value ? parseOperation(value) : { pending: null, pendingOrigin: null }
+}
+
+/** Recovery may carry local navigation origin; HTTP still receives the exact mutation. */
+export function readOperation(key: string): Mutation | null {
+  return readPendingOperation(key).pending
 }
 
 type MutationState = {
   scope: string
   pending: Mutation | null
+  pendingOrigin: OperationOrigin | null
   busy: boolean
   error: string
   notice: string
   lastResult: { command: Mutation['command']; result: unknown } | null
 }
-const mutationState = (scope: string): MutationState => ({ scope, pending: null, busy: false, error: '', notice: '', lastResult: null })
+const mutationState = (scope: string): MutationState => ({ scope, pending: null, pendingOrigin: null, busy: false, error: '', notice: '', lastResult: null })
 const uncertainErrorCodes = new Set(['NETWORK_ERROR', 'SERVER_ERROR', 'OPERATION_CONFLICT', ...accessErrorCodes])
 
 export function useOperationalMutation(access: PosAccess, employeeId: string, onSessionError?: (error: AccountClientError) => void) {
@@ -45,19 +66,19 @@ export function useOperationalMutation(access: PosAccess, employeeId: string, on
     alive.current = true
     const run = { scope, generation: ++generation.current }
     const initial = mutationState(scope)
-    try { initial.pending = readOperation(key) } catch { initial.error = 'No pudimos leer el reintento guardado. Conserva este dispositivo y pide ayuda.' }
+    try { Object.assign(initial, readPendingOperation(key)) } catch { initial.error = 'No pudimos leer el reintento guardado. Conserva este dispositivo y pide ayuda.' }
     setState(initial)
     const stored = (event: StorageEvent) => {
       if (event.key !== key || !isCurrent(run) || submitting.current?.generation === run.generation) return
       try {
-        const pending = readOperation(key)
-        setState(previous => previous.scope === scope ? { ...previous, pending } : previous)
+        const pending = readPendingOperation(key)
+        setState(previous => previous.scope === scope ? { ...previous, ...pending } : previous)
       } catch { setState(previous => previous.scope === scope ? { ...previous, error: 'No pudimos leer el reintento guardado.' } : previous) }
     }
     window.addEventListener('storage', stored)
     return () => { alive.current = false; generation.current++; window.removeEventListener('storage', stored) }
   }, [key, scope])
-  async function execute<C extends Mutation['command']>(input: Extract<Mutation, { command: C }>): Promise<OperationsResponses[C]> {
+  async function execute<C extends Mutation['command']>(input: Extract<Mutation, { command: C }>, origin?: OperationOrigin): Promise<OperationsResponses[C]> {
     // Capture the exact JSON payload before a queued browser lock or caller edit can change it.
     const command = JSON.parse(JSON.stringify(input)) as Extract<Mutation, { command: C }>
     const run = { scope, generation: generation.current }
@@ -71,24 +92,33 @@ export function useOperationalMutation(access: PosAccess, employeeId: string, on
     try {
       if (!navigator.onLine) throw new AccountClientError('NETWORK_ERROR', 'Sin conexión. Vuelve a conectar antes de continuar.')
       if (!navigator.locks) throw new Error('Abre el POS en un navegador actualizado para proteger los reintentos entre pestañas.')
+      let persisted: PendingOperation | undefined
       await navigator.locks.request(key, () => {
         assertCurrent()
-        const stored = readOperation(key)
+        const saved = readPendingOperation(key), stored = saved.pending
         if (stored && JSON.stringify(stored) !== JSON.stringify(command)) throw new Error('Resuelve el reintento pendiente antes de iniciar otra acción.')
-        localStorage.setItem(key, JSON.stringify(command))
+        if (origin !== undefined && (command.command !== 'save_order' || origin !== 'counter' && origin !== 'service')) throw new Error('El origen del reintento necesita revisión.')
+        if (origin !== undefined && saved.pendingOrigin !== null && saved.pendingOrigin !== origin) throw new Error('Conserva el origen de la solicitud guardada para reintentarla.')
+        const pendingOrigin = saved.pendingOrigin ?? origin ?? null
+        const value = JSON.stringify(pendingOrigin === null ? command : { payload: command, origin: pendingOrigin })
+        const recovery = parseOperation(value)
+        // One durable write couples origin to this exact UUID. Access never enters storage.
+        localStorage.setItem(key, value)
+        persisted = recovery
       })
       assertCurrent()
-      update({ pending: command })
+      if (!persisted) throw new Error('No pudimos guardar el reintento. Conserva este dispositivo y pide ayuda.')
+      update(persisted)
       const result = await posRequest(access, command)
       // A closed scope cannot deliver money results or remove the recovery record it can no longer show.
       assertCurrent()
       const pending = await navigator.locks.request(key, () => {
         assertCurrent()
         if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key)
-        return readOperation(key)
+        return readPendingOperation(key)
       })
       assertCurrent()
-      update({ pending, notice: '', lastResult: { command: command.command, result } })
+      update({ ...pending, notice: '', lastResult: { command: command.command, result } })
       return result as OperationsResponses[C]
     } catch (caught) {
       if (active()) {
@@ -100,10 +130,10 @@ export function useOperationalMutation(access: PosAccess, employeeId: string, on
             const pending = await navigator.locks?.request(key, () => {
               assertCurrent()
               if (readOperation(key)?.operationId === command.operationId) localStorage.removeItem(key)
-              return readOperation(key)
+              return readPendingOperation(key)
             })
             assertCurrent()
-            if (pending !== undefined) update({ pending })
+            if (pending !== undefined) update(pending)
           } catch { /* Preserve recovery on storage failure or scope change. */ }
         }
         if (active() && caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) errorHandler.current?.(caught)
@@ -114,36 +144,47 @@ export function useOperationalMutation(access: PosAccess, employeeId: string, on
       update({ busy: false })
     }
   }
-  return { execute, pending: visible.pending, busy: visible.busy, error: visible.error, notice: visible.notice, lastResult: visible.lastResult, clearNotice: () => setState(previous => previous.scope === scope ? { ...previous, notice: '' } : previous) }
+  return { execute, pending: visible.pending, pendingOrigin: visible.pendingOrigin, busy: visible.busy, error: visible.error, notice: visible.notice, lastResult: visible.lastResult, clearNotice: () => setState(previous => previous.scope === scope ? { ...previous, notice: '' } : previous) }
 }
-export type OperationalMutation = ReturnType<typeof useOperationalMutation>
+// Optional for existing consumers/fixtures; the live hook always returns the paired value.
+export type OperationalMutation = Omit<ReturnType<typeof useOperationalMutation>, 'pendingOrigin'> & { pendingOrigin?: OperationOrigin | null }
+
+type OperationsState = { scope: string; snapshot: OperationsSnapshot | null; error: string; refreshing: boolean }
 
 export function useOperations(access: PosAccess, enabled: boolean, onSessionError?: (error: AccountClientError) => void) {
-  const [snapshot, setSnapshot] = useState<OperationsSnapshot | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(enabled)
+  const scope = JSON.stringify([access.businessId, access.operatorToken, access.deviceToken ?? null])
+  const [state, setState] = useState<OperationsState>({ scope, snapshot: null, error: '', refreshing: enabled })
   const sequence = useRef(0)
+  const alive = useRef(false)
+  const currentScope = useRef(scope); currentScope.current = scope
+  const currentEnabled = useRef(enabled); currentEnabled.current = enabled
   const errorHandler = useRef(onSessionError); errorHandler.current = onSessionError
   const refresh = useCallback(async () => {
-    if (!enabled) return
+    if (!enabled || !alive.current || !currentEnabled.current || currentScope.current !== scope) return
     const request = ++sequence.current
-    setLoading(true)
+    const current = () => alive.current && currentEnabled.current && currentScope.current === scope && sequence.current === request
+    setState(previous => ({ scope, snapshot: previous.scope === scope ? previous.snapshot : null, error: previous.scope === scope ? previous.error : '', refreshing: true }))
     try {
       const result = await posRequest(access, { command: 'operations' })
-      if (sequence.current === request) { setSnapshot(result); setError('') }
+      if (current()) setState({ scope, snapshot: result, error: '', refreshing: false })
     } catch (caught) {
-      if (sequence.current !== request) return
-      setError(caught instanceof Error ? caught.message : 'No pudimos cargar la operación.')
-      if (caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)) errorHandler.current?.(caught)
-    } finally { if (sequence.current === request) setLoading(false) }
-  }, [access.businessId, access.operatorToken, access.deviceToken, enabled])
+      if (!current()) return
+      const sessionError = caught instanceof AccountClientError && accessErrorCodes.includes(caught.code)
+      setState(previous => ({ scope, snapshot: sessionError || previous.scope !== scope ? null : previous.snapshot, error: caught instanceof Error ? caught.message : 'No pudimos cargar la operación.', refreshing: false }))
+      if (sessionError) errorHandler.current?.(caught as AccountClientError)
+    }
+  }, [scope, enabled])
   useEffect(() => {
-    setSnapshot(null)
+    alive.current = true
     void refresh()
     const focus = () => { if (document.visibilityState !== 'hidden') void refresh() }
     const timer = window.setInterval(focus, 10_000)
     window.addEventListener('online', focus); window.addEventListener('focus', focus); document.addEventListener('visibilitychange', focus)
-    return () => { sequence.current++; window.clearInterval(timer); window.removeEventListener('online', focus); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
+    return () => { alive.current = false; sequence.current++; window.clearInterval(timer); window.removeEventListener('online', focus); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
   }, [refresh])
-  return { snapshot, error, loading, refresh }
+  // Data is never visible for a new operator, revoked scope, or disabled module.
+  const visible = enabled && state.scope === scope ? state : null
+  const snapshot = visible?.snapshot ?? null
+  const refreshing = enabled && (visible?.refreshing ?? true)
+  return { snapshot, error: visible?.error ?? '', loading: refreshing && !snapshot, refreshing, refresh }
 }

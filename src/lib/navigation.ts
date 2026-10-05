@@ -10,7 +10,7 @@ export type Destination = WorkSection | 'Inicio' | 'Caja' | 'Reportes' | 'Más'
 export function availableDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>): Destination[] {
   return [...(business.role === 'owner' ? ['Inicio' as const] : []), ...businessWorkSections(business),
     ...(hasPermission(business, 'cash.read') ? ['Caja' as const] : []),
-    ...(hasPermission(business, 'reports.read') ? ['Reportes' as const] : []),
+    ...(hasPermission(business, 'reports.read') || hasPermission(business, 'reports.read_own') ? ['Reportes' as const] : []),
     ...(business.role === 'owner' ? [] : ['Más' as const])]
 }
 
@@ -35,4 +35,10 @@ export function businessWorkSections(business: Pick<BusinessContext, 'role' | 'p
       case 'Productos': return hasPermission(business, 'catalog.read') || hasPermission(business, 'catalog.manage') || hasPermission(business, 'catalog.availability')
     }
   })
+}
+
+/** Desktop and the mobile drawer expose every permitted operational module. */
+export function sidebarDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>, operating: boolean): Destination[] {
+  if (business.role === 'owner' && !operating) return ['Inicio', 'Ventas', 'Productos', 'Caja', 'Reportes']
+  return availableDestinations(business).filter(destination => destination !== 'Inicio' && destination !== 'Más')
 }

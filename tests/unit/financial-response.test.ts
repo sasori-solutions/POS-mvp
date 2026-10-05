@@ -60,6 +60,19 @@ describe('authoritative financial response boundary', () => {
     }
   })
 
+  it('preserves absent legacy order kinds and validates authoritative typed save results', () => {
+    const order = account(), read = { command: 'order' as const, orderId: order.id }
+    assertFinancialResponse(read, order)
+    assertFinancialResponse(read, { ...order, orderKind: null })
+    for (const orderKind of ['counter', 'service'] as const) assertFinancialResponse(read, { ...order, orderKind })
+    for (const orderKind of ['legacy', true, 1, {}]) serverError(read, { ...order, orderKind })
+    serverError(read, { ...order, orderKind: 'counter', tableId: id(20) })
+    const command: Extract<PosCommand, { command: 'save_order' }> = { command: 'save_order', operationId: id(9), orderId: order.id, expectedRevision: null, name: order.name, tableId: null, orderKind: 'counter', items: order.items.map(line => ({ lineId: line.lineId, productId: line.productId, quantity: line.quantity, version: line.version, unitPriceCents: line.unitPriceCents, note: line.note })) }
+    assertFinancialResponse(command, { ...order, orderKind: 'counter' })
+    serverError(command, { ...order, orderKind: 'service' })
+    serverError(command, order)
+  })
+
   it('accepts an existing empty service order and a zero-total paid account', () => {
     const empty = account()
     Object.assign(empty, { phase: 'service', items: [], discount: null, grossCents: 0, discountCents: 0, totalCents: 0, taxCents: 0, balanceCents: 0 })

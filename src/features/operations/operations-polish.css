@@ -27,6 +27,8 @@
 .operations-status { display: inline-flex; width: fit-content; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; background: var(--operations-surface, #f6f6f6); color: var(--operations-muted, #626262); font-size: 12px; font-weight: 500; line-height: 1.4; }
 .operations-status-active { color: #17694f; background: #edf7f1; }
 .operations-status-active::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
+.operations-status-preparing { color: var(--operations-ink); background: var(--operations-surface); }
+.operations-status-preparing::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ''; }
 .operations-empty { display: flex; min-height: 200px; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 32px 16px; text-align: center; color: var(--operations-muted, #626262); }
 .operations-polish .operations-empty h2 { color: var(--operations-ink, #111111); font-size: 16px; font-weight: 500; }
 .operations-empty-inline { padding: 16px 0; color: var(--operations-muted, #626262); font-size: 14px; }
@@ -95,6 +97,11 @@
 .cash-history-list .ops-totals { margin: 0 0 16px; padding: 16px; border-radius: 8px; background: var(--operations-surface); font-size: 13px; }
 
 .orders-workspace .orders-sections { align-self: flex-start; }
+.comanda-stage-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 640px; gap: 12px; border-bottom: 1px solid var(--operations-line); }
+.comanda-stage-tabs > button { display: flex; min-height: 52px; align-items: center; justify-content: center; gap: 8px; padding: 12px 4px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: transparent; color: var(--operations-muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.comanda-stage-tabs > button[aria-pressed=true] { border-bottom-color: var(--operations-ink); color: var(--operations-ink); }
+.comanda-stage-count { min-width: 20px; padding-inline: 4px; font-size: 12px; color: var(--operations-muted); font-variant-numeric: tabular-nums; }
+.comanda-stage-tabs > button:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 .orders-account-list > li { margin-bottom: 12px; border: 1px solid var(--operations-line); border-radius: 12px; }
 .orders-account-list .operations-record-button { min-height: 88px; padding: 16px; }
 .orders-account-list .operations-record-button > div > strong { font-size: 16px; }
@@ -219,6 +226,12 @@
   .sales-workspace .sales-history-list button > svg { width: 16px; }
   .attempt-cash { gap: 12px; }
   .attempt-cash dd { font-size: 22px; }
+}
+
+@media (max-width: 400px) {
+  .comanda-stage-tabs { gap: 0; }
+  .comanda-stage-tabs > button { gap: 4px; padding-inline: 2px; font-size: 13px; }
+  .comanda-stage-count { min-width: 14px; padding-inline: 0; font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
