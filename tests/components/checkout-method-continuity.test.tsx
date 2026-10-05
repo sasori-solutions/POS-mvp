@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OrderDetail from '../../src/features/operations/OrderDetail'
 import PointPayment from '../../src/components/PointPayment'
 import type { OperationalMutation } from '../../src/features/operations/useOperations'
-import type { CheckoutAttempt, OperationalOrder, OperationsCommandPayload } from '../../src/lib/operations-contracts'
+import type { CheckoutAttempt, OperationalOrder, OperationsCommand } from '../../src/lib/operations-contracts'
 import type { BusinessContext, PaymentMethod } from '../../src/lib/contracts'
 import { posRequest } from '../../src/lib/pos'
 import { pointRequest } from '../../src/lib/point-client'
@@ -25,6 +25,7 @@ const order: OperationalOrder = {
 }
 const emptyAttempts: CheckoutAttempt[] = []
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done }); return { promise, resolve } }
+type OperationsCommandPayload = Extract<OperationsCommand, { operationId: string }>
 type Run = (command: OperationsCommandPayload) => Promise<unknown>
 function Harness({ initialAttempt, run, recovered = false }: { initialAttempt: CheckoutAttempt; run: Run; recovered?: boolean }) {
   const [snapshot, setSnapshot] = useState(order), [blocked, setBlocked] = useState(false)

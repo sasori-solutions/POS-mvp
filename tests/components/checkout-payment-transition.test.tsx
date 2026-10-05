@@ -21,7 +21,7 @@ beforeEach(() => {
     removeEventListener: vi.fn(),
   })))
   const original = HTMLElement.prototype.getBoundingClientRect
-  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     if (!this.classList.contains('checkout-payment-transition') && !this.classList.contains('checkout-payment-content')) return original.call(this)
     const renderedHeight = this.classList.contains('checkout-payment-transition') && this.style.height ? parseFloat(this.style.height) : height
     return { x: 0, y: 0, width, height: renderedHeight, top: 0, right: width, bottom: renderedHeight, left: 0, toJSON: () => ({}) }
