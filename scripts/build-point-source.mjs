@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const namespaces = { crypto: 'PointCrypto', provider: 'PointProvider', service: 'PointService', http: 'PointHttp', webhook: 'PointWebhook' }
 const aliases = {
-  service: "const { challenge, digest, randomSecret, TokenVault } = PointCrypto; type TokenVault = PointCrypto.TokenVault; const { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, verifyOrder } = PointProvider; type Environment = PointProvider.Environment; type ExpectedOrder = PointProvider.ExpectedOrder; type PointAdapter = PointProvider.PointAdapter; type TokenSet = PointProvider.TokenSet;",
+  service: "const { challenge, digest, randomSecret, TokenVault } = PointCrypto; type TokenVault = PointCrypto.TokenVault; const { cents, identifier, MercadoPagoPoint, officialVirtualOrder, ProviderError, record, validateCreatePayload, verifyOrder } = PointProvider; type Environment = PointProvider.Environment; type ExpectedOrder = PointProvider.ExpectedOrder; type PointAdapter = PointProvider.PointAdapter; type TokenSet = PointProvider.TokenSet;",
   webhook: 'const { digest } = PointCrypto;',
 }
 export function buildPointModules(modules = ['crypto', 'provider', 'service']) {
@@ -25,7 +25,7 @@ export function buildPointSource(endpoint) {
   const modules = endpoint === 'point' ? ['http'] : endpoint === 'point-webhook' ? ['crypto', 'provider', 'service', 'http', 'webhook'] : ['crypto', 'provider', 'service', 'http']
   const imports = endpoint === 'point' ? '' : "import { createClient } from 'npm:@supabase/supabase-js@2.117.2'\n"
   const alias = endpoint === 'point' ? 'const { boundedBody, HttpError, json } = PointHttp;' : endpoint === 'point-webhook'
-    ? 'const { boundedBody, HttpError, json, serviceKey } = PointHttp; const { serviceRpc } = PointService; const { SignatureError, verifySignature } = PointWebhook;'
+    ? 'const { boundedBody, HttpError, json, serviceKey } = PointHttp; const { serviceRpc } = PointService; const { SignatureError, verifySignature, webhookSecrets } = PointWebhook;'
     : 'const { json, serviceKey, workerAuthorized } = PointHttp; const { runWorker } = PointService;'
   return `${imports}${buildPointModules(modules)}\n${alias}\n// Source: ${path}; SHA-256 ${hash(original)}\n${body}`
 }

@@ -22,6 +22,7 @@ export interface PointCheckout {
   cancelCapability: 'backend' | 'terminal' | 'unavailable'; updatedAt: string; statusDetail: string | null; remoteOrderId: string | null
 }
 export interface PointSettings {
+  chargesEnabled?: boolean
   availableEnvironment?: PointEnvironment | null
   sandbox?: { available: boolean; official: boolean; testBusiness: boolean }
   actorId: string; enabled: boolean; connection: PointConnection | null; terminals: PointTerminal[]; pending: PointCheckout[]
@@ -84,4 +85,4 @@ export interface PointResponses {
   merchant_report: PointReport; admin_report: PointAdminReport; statements: { statements: CommissionStatement[] }
   close_statement: CommissionStatement; mark_statement_invoiced: CommissionStatement; record_commission_payment: CommissionStatement
 }
-export type PointErrorCode = 'POINT_DISABLED' | 'POINT_CONNECTION_REQUIRED' | 'POINT_TERMINAL_NOT_READY' | 'POINT_TERMINAL_BUSY' | 'POINT_CHECKOUT_NOT_FOUND' | 'POINT_RESULT_UNCERTAIN' | 'POINT_STATE_INVALID' | 'POINT_FACT_MISMATCH' | 'POINT_REFUND_LIMIT' | 'POINT_REFUND_ALLOCATION_REQUIRED' | 'POINT_ADMIN_DENIED' | 'POINT_PERIOD_CLOSED' | 'POINT_LEASE_LOST' | 'POINT_OAUTH_INVALID' | 'POINT_CONFIGURATION_REQUIRED' | 'POINT_SERVICE_UNAVAILABLE' | 'POINT_REFRESH_BUSY' | 'POINT_IDEMPOTENCY_WINDOW_EXPIRED'
+export type PointErrorCode = 'POINT_DISABLED' | 'POINT_CONNECTION_REQUIRED' | 'POINT_TERMINAL_NOT_READY' | 'POINT_TERMINAL_BUSY' | 'POINT_CHECKOUT_NOT_FOUND' | 'POINT_RESULT_UNCERTAIN' | 'POINT_STATE_INVALID' | 'POINT_AMOUNT_INVALID' | 'POINT_FACT_MISMATCH' | 'POINT_REFUND_LIMIT' | 'POINT_REFUND_ALLOCATION_REQUIRED' | 'POINT_ADMIN_DENIED' | 'POINT_PERIOD_CLOSED' | 'POINT_LEASE_LOST' | 'POINT_OAUTH_INVALID' | 'POINT_CONFIGURATION_REQUIRED' | 'POINT_SERVICE_UNAVAILABLE' | 'POINT_REFRESH_BUSY' | 'POINT_IDEMPOTENCY_WINDOW_EXPIRED'

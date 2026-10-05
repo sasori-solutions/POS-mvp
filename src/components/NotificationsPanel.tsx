@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, Check } from "lucide-react";
+import { Bell, Check, CheckCheck } from "lucide-react";
 import LoadingPlaceholder from "./LoadingPlaceholder";
 import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
@@ -34,10 +34,13 @@ export default function NotificationsPanel({
   const [notices, setNotices] = useState<Notice[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [unreadTotal, setUnreadTotal] = useState(0);
+  const [confirmedReadIds, setConfirmedReadIds] = useState<Set<string>>(() => new Set());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const unreadCounter = useRef(0);
   const alive = useRef(true);
   const pending = useRef(false);
   const mutationBusy = useRef(false);
@@ -66,7 +69,7 @@ export default function NotificationsPanel({
   }, []);
   const refresh = useCallback(
     async (force = false) => {
-      if (pending.current && !force) return;
+      if (mutationBusy.current || pending.current && !force) return;
       const current = generation.current;
       const sequence = ++requestSequence.current;
       pending.current = true;
@@ -85,6 +88,9 @@ export default function NotificationsPanel({
         )
           return;
         setNotices(data.notifications);
+        unreadCounter.current = data.unreadCount;
+        setUnreadTotal(data.unreadCount);
+        setConfirmedReadIds(new Set());
         callbacks.current.onUnreadCount(data.unreadCount);
         setError("");
       } catch (problem) {
@@ -115,6 +121,9 @@ export default function NotificationsPanel({
     pending.current = false;
     mutationBusy.current = false;
     setNotices([]);
+    unreadCounter.current = 0;
+    setUnreadTotal(0);
+    setConfirmedReadIds(new Set());
     setLoading(true);
     setBusy("");
     setConfirm(null);
@@ -133,9 +142,19 @@ export default function NotificationsPanel({
       document.removeEventListener("visibilitychange", update);
     };
   }, [refresh]);
+  function confirmRead(notificationId: string) {
+    setConfirmedReadIds(previous => new Set([...previous, notificationId]));
+    unreadCounter.current = Math.max(0, unreadCounter.current - 1);
+    setUnreadTotal(unreadCounter.current);
+    callbacks.current.onUnreadCount(unreadCounter.current);
+  }
   async function act(notice: Notice, decision?: "approve" | "reject") {
-    if (mutationBusy.current || pending.current) return;
+    if (mutationBusy.current || loading) return;
     const current = generation.current;
+    // A deliberate action supersedes a background read, without hiding valid rows.
+    requestSequence.current += 1;
+    pending.current = false;
+    setRefreshing(false);
     mutationBusy.current = true;
     setBusy(notice.id);
     setMessage("");
@@ -157,6 +176,7 @@ export default function NotificationsPanel({
           notificationId: notice.id,
         });
       if (!alive.current || current !== generation.current) return;
+      if (!decision) confirmRead(notice.id);
       mutationBusy.current = false;
       setConfirm(null);
       setMessage(
@@ -182,7 +202,40 @@ export default function NotificationsPanel({
       }
     }
   }
-  const actionsDisabled = loading || refreshing || Boolean(busy);
+  const unread = notices.filter(notice => !notice.readAt && !confirmedReadIds.has(notice.id));
+  async function markAllRead() {
+    if (loading || mutationBusy.current || !unread.length) return;
+    const current = generation.current;
+    requestSequence.current += 1;
+    pending.current = false;
+    setRefreshing(false);
+    mutationBusy.current = true;
+    setBusy('all');
+    setError('');
+    setMessage('');
+    let problem: unknown;
+    try {
+      // Existing authorized, idempotent API; each row changes only after its confirmation.
+      for (const notice of unread) {
+        if (!alive.current || current !== generation.current) return;
+        await accountRequest({ action: 'mark_notification_read', businessId, operatorToken, notificationId: notice.id });
+        if (!alive.current || current !== generation.current) return;
+        confirmRead(notice.id);
+      }
+      setMessage('Notificaciones marcadas como leídas.');
+    } catch (caught) { problem = caught; }
+    finally {
+      if (alive.current && current === generation.current) {
+        mutationBusy.current = false;
+        await refresh(true);
+        if (alive.current && current === generation.current) {
+          setBusy('');
+          if (problem) fail(problem);
+        }
+      }
+    }
+  }
+  const actionsDisabled = loading || Boolean(busy);
   return (
     <section className="screen management-polish notifications-screen">
       <h1 className="sr-only">Notificaciones</h1>
@@ -201,6 +254,13 @@ export default function NotificationsPanel({
           {message}
         </p>
       )}
+      {!loading && notices.length > 0 && <div className="notification-toolbar">
+        <span><strong>{unreadTotal}</strong> sin leer</span>
+        {unread.length > 0 && <button type="button" className="notification-read-button" disabled={actionsDisabled} aria-busy={busy === 'all'} onClick={() => void markAllRead()}>
+          <AccessButtonContent busy={busy === 'all'}><CheckCheck size={18} aria-hidden="true" />{unread.length === unreadTotal ? 'Marcar todas como leídas' : 'Marcar visibles como leídas'}</AccessButtonContent>
+        </button>}
+      </div>}
+      {refreshing && !loading && <span className="sr-only" role="status">Actualizando notificaciones</span>}
       {loading ? (
         <LoadingPlaceholder variant="list" rows={3} label="Cargando notificaciones" />
       ) : notices.length === 0 && !error ? (
@@ -211,10 +271,12 @@ export default function NotificationsPanel({
         </div>
       ) : (
         <ul className="notification-list mt-6 grid list-none gap-4 p-0">
-          {notices.map((notice) => (
+          {notices.map((notice) => {
+            const read = Boolean(notice.readAt || confirmedReadIds.has(notice.id));
+            return (
             <li
               key={notice.id}
-              className={`notification-card ${notice.readAt ? "" : "unread"}`}
+              className={`notification-card ${read ? "" : "unread"}`}
             >
               <div className="notification-meta flex flex-wrap justify-between gap-2 text-[13px] text-muted">
                 <span className={`notification-status notification-status-${notice.status}`}>{statuses[notice.status]}</span>
@@ -236,11 +298,6 @@ export default function NotificationsPanel({
                     Acceso bloqueado. Confirma que el empleado reconoce este dispositivo.
                   </p>
                 )}
-              {!notice.readAt && (
-                <span className="notification-unread my-3 block text-[13px] font-semibold text-brand">
-                  Sin leer
-                </span>
-              )}
               {notice.status === "pending" ? (
                 confirm === notice.id ? (
                   <div className="notification-confirm mt-5 grid gap-3">
@@ -284,18 +341,20 @@ export default function NotificationsPanel({
                   </div>
                 )
               ) : null}
-              {!notice.readAt && (
-                <button
-                  className="text-button min-h-12 cursor-pointer border-0 bg-transparent text-ink underline underline-offset-4 hover:text-brand"
+              <div className="notification-reading">
+                <span className={read ? "notification-read-state" : "notification-unread"}>{read ? <><Check size={16} aria-hidden="true" />Leída</> : "Sin leer"}</span>
+                {!read && <button
+                  type="button"
+                  className="notification-read-button"
                   disabled={actionsDisabled}
                   aria-busy={busy === notice.id}
                   onClick={() => void act(notice)}
                 >
-                  <AccessButtonContent busy={busy === notice.id}>Marcar como leída</AccessButtonContent>
-                </button>
-              )}
+                  <AccessButtonContent busy={busy === notice.id}><Check size={18} aria-hidden="true" />Marcar como leída</AccessButtonContent>
+                </button>}
+              </div>
             </li>
-          ))}
+          ); })}
         </ul>
       )}
     </section>

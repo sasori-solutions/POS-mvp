@@ -1,5 +1,6 @@
 import type { PosCommand, PosResponses, PosErrorCode } from './pos-contracts.ts'
 import type { PointCommand, PointResponses, PointErrorCode } from './point-contracts.ts'
+import type { VatTreatment } from './pos-contracts.ts'
 
 export type BusinessType = 'cafe' | 'restaurant' | 'other'
 export type BusinessRole = 'owner' | 'manager' | 'cashier' | 'kitchen'
@@ -8,7 +9,7 @@ export const businessPermissions = [
   'catalog.read', 'catalog.manage', 'catalog.availability',
   'sales.create', 'sales.read_own', 'sales.read_all', 'sales.discount', 'sales.reverse',
   'orders.read', 'orders.manage', 'orders.cancel', 'kitchen.read', 'kitchen.operate',
-  'cash.read', 'cash.open', 'cash.move', 'cash.close', 'reports.read', 'tables.manage',
+  'cash.read', 'cash.open', 'cash.move', 'cash.close', 'reports.read', 'reports.read_own', 'tables.manage',
 ] as const
 export type BusinessPermission = typeof businessPermissions[number]
 export const permissionPrerequisites: Partial<Record<BusinessPermission, BusinessPermission>> = {
@@ -29,6 +30,10 @@ export interface BusinessProfile {
   state: string
   contactPhone: string
   paymentMethods: PaymentMethod[]
+  /** Missing values retain the behavior of existing businesses. */
+  accountsEnabled?: boolean
+  defaultVatTreatment?: VatTreatment
+  logoImageId?: string | null
 }
 
 /** The only business data available before a successful PIN unlock. */
@@ -92,8 +97,11 @@ export interface BusinessContext extends BusinessSummary {
   /** Explicit live grants. Only the protected owner role grants implicit access. */
   permissions?: BusinessPermission[]
   createdAt: string
-  /** Owner-only details; blank projection for employees. */
+  /** Contact details are owner-only; employees receive operational preferences. */
   profile: BusinessProfile
+  /** Private, post-unlock image projections; never part of the public summary. */
+  logoUrl?: string | null
+  accountAvatarUrl?: string | null
   employee?: { id: string; name: string; role: BusinessRole; permissions?: BusinessPermission[] }
   /** Live operator sessions visible only in the owner's business context. */
   connectedEmployees?: { id: string; name: string; role: BusinessRole; lastSeenAt: string }[]
@@ -153,6 +161,8 @@ type AccountRequestBody =
   | { action: 'status' }
   | { action: 'create_business'; name: string; businessType: BusinessType; timezone: string; operationId: string; pin: string; profile?: BusinessProfile }
   | ({ action: 'update_business'; name: string; businessType: BusinessType; timezone: string; profile: BusinessProfile } & OwnerRequest)
+  | ({ action: 'upload_profile_image'; subject: 'business' | 'account'; imageId: string; operationId: string; part: number; parts: number; data: string } & OwnerRequest)
+  | ({ action: 'remove_profile_image'; subject: 'business' | 'account'; operationId: string } & OwnerRequest)
   | { action: 'unlock'; businessId: string; pin: string; deviceName?: string }
   | ({ action: 'context' } & OwnerRequest)
   | ({ action: 'lock' } & OwnerRequest)
@@ -197,6 +207,8 @@ export interface AccountResponses {
   status: { businesses: BusinessSummary[] }
   create_business: OperatorSession
   update_business: BusinessContext
+  upload_profile_image: { imageId: string; complete: boolean; business?: BusinessContext }
+  remove_profile_image: { removed: true; business: BusinessContext }
   unlock: OperatorSession
   context: AccountContext
   lock: { locked: true }

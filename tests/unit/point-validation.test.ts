@@ -52,4 +52,9 @@ describe('Point HTTP trust boundary', () => {
     const request = { action: 'pos', businessId: owner.businessId, operatorToken: owner.operatorToken, command: 'record_payment', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: 1, paymentMethod: 'card_integrated', confirmed: true, items: [{ lineId: randomUUID(), quantity: 1 }] }
     expect(() => parseAccountRequest(request)).toThrow(RequestValidationError)
   })
+  it('uses the provider POS name constraints before a remote create', () => {
+    const request = { ...owner, command: 'create_register', operationId: randomUUID(), branchId: '123456', name: 'Caja-1 principal' }
+    expect(parseAccountRequest(request)).toEqual(request)
+    for (const name of ['-Caja', 'Caja_', 'Caja/1', 'Caja 😊', 'Caja\n1']) expect(() => parseAccountRequest({ ...request, name })).toThrow(RequestValidationError)
+  })
 })

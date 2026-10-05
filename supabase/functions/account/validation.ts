@@ -38,11 +38,17 @@ function businessDetails(input: Record<string, unknown>) {
 function profile(value: unknown): BusinessProfile {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid()
   const input = value as Record<string, unknown>
-  exactKeys(input, ['branchName', 'registerName', 'address', 'city', 'state', 'contactPhone', 'paymentMethods'])
-  if (!Array.isArray(input.paymentMethods) || input.paymentMethods.length < 1 || input.paymentMethods.length > 3 || new Set(input.paymentMethods).size !== input.paymentMethods.length || input.paymentMethods.some((value) => !['cash', 'card_external', 'transfer'].includes(value))) invalid()
+  exactKeys(input, ['branchName', 'registerName', 'address', 'city', 'state', 'contactPhone', 'paymentMethods'], ['accountsEnabled', 'defaultVatTreatment', 'logoImageId'])
+  if (!Array.isArray(input.paymentMethods) || input.paymentMethods.length < 1 || input.paymentMethods.length > 4 || new Set(input.paymentMethods).size !== input.paymentMethods.length || input.paymentMethods.some((value) => !['cash', 'card_external', 'transfer', 'card_integrated'].includes(value))) invalid()
   const contactPhone = name(input.contactPhone, 0, 30)
   if (contactPhone && !/^[+0-9() -]{5,30}$/.test(contactPhone)) invalid()
-  return { branchName: name(input.branchName, 1), registerName: name(input.registerName, 1), address: name(input.address, 0, 300), city: name(input.city, 0), state: name(input.state, 0), contactPhone, paymentMethods: input.paymentMethods as PaymentMethod[] }
+  if (Object.hasOwn(input, 'accountsEnabled') && typeof input.accountsEnabled !== 'boolean') invalid()
+  if (Object.hasOwn(input, 'defaultVatTreatment') && !['vat_16', 'vat_0', 'exempt', 'border_8', 'unconfigured'].includes(input.defaultVatTreatment as string)) invalid()
+  if (Object.hasOwn(input, 'logoImageId') && input.logoImageId !== null && !isUuid(input.logoImageId)) invalid()
+  return { ...(Object.hasOwn(input, 'accountsEnabled') ? { accountsEnabled: input.accountsEnabled as boolean } : {}),
+    ...(Object.hasOwn(input, 'defaultVatTreatment') ? { defaultVatTreatment: input.defaultVatTreatment as BusinessProfile['defaultVatTreatment'] } : {}),
+    ...(Object.hasOwn(input, 'logoImageId') ? { logoImageId: input.logoImageId as string | null } : {}),
+    branchName: name(input.branchName, 1), registerName: name(input.registerName, 1), address: name(input.address, 0, 300), city: name(input.city, 0), state: name(input.state, 0), contactPhone, paymentMethods: input.paymentMethods as PaymentMethod[] }
 }
 export function parseAccountRequest(value: unknown): AccountRequest {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) invalid()
@@ -64,6 +70,18 @@ export function parseAccountRequest(value: unknown): AccountRequest {
     case 'create_business':
       exactKeys(input, ['action', 'name', 'businessType', 'timezone', 'operationId', 'pin'], ['profile'])
       return { action: input.action, ...businessDetails(input), operationId: uuid(input, 'operationId'), pin: pin(input), ...(Object.hasOwn(input, 'profile') ? { profile: profile(input.profile) } : {}) }
+    case 'upload_profile_image': {
+      exactKeys(input, [...owner, 'subject', 'imageId', 'operationId', 'part', 'parts', 'data'])
+      if (input.subject !== 'business' && input.subject !== 'account') invalid()
+      if (!Number.isSafeInteger(input.part) || !Number.isSafeInteger(input.parts) || (input.parts as number) < 1 || (input.parts as number) > 60 || (input.part as number) < 0 || (input.part as number) >= (input.parts as number)) invalid()
+      if (typeof input.data !== 'string' || input.data.length < 4 || input.data.length > 4096 || input.data.length % 4 !== 0
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(input.data)
+        || ((input.part as number) < (input.parts as number) - 1 && (input.data.length !== 4096 || input.data.includes('=')))) invalid()
+      return { action: input.action, ...ownerArgs(), subject: input.subject, imageId: uuid(input, 'imageId'), operationId: uuid(input, 'operationId'), part: input.part as number, parts: input.parts as number, data: input.data }
+    }
+    case 'remove_profile_image':
+      exactKeys(input, [...owner, 'subject', 'operationId']); if (input.subject !== 'business' && input.subject !== 'account') invalid()
+      return { action: input.action, ...ownerArgs(), subject: input.subject, operationId: uuid(input, 'operationId') }
     case 'update_business':
       exactKeys(input, [...owner, 'name', 'businessType', 'timezone', 'profile']); return { action: input.action, ...ownerArgs(), ...businessDetails(input), profile: profile(input.profile) }
     case 'unlock':

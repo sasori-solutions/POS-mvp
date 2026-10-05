@@ -59,6 +59,7 @@ function checkout(value: unknown): asserts value is PointCheckout {
 }
 function settings(value: unknown): asserts value is PointSettings {
   const data = object(value), permissions = object(data.permissions)
+  requireValue(data.chargesEnabled === undefined || typeof data.chargesEnabled === 'boolean')
   requireValue(uuid(data.actorId) && typeof data.enabled === 'boolean' && Array.isArray(data.terminals) && Array.isArray(data.pending))
   for (const name of ['manage', 'charge', 'refund', 'reports', 'admin']) requireValue(typeof permissions[name] === 'boolean')
   data.terminals.forEach(terminal); data.pending.forEach(checkout)

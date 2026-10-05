@@ -1,11 +1,11 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.117.2'
 import { boundedBody, HttpError, json, serviceKey } from '../point/http.ts'
 import { serviceRpc } from '../point/service.ts'
-import { SignatureError, verifySignature } from '../point/webhook.ts'
+import { SignatureError, verifySignature, webhookSecrets } from '../point/webhook.ts'
 export async function handleWebhook(request: Request): Promise<Response> {
   if (request.method !== 'POST') return json({ error: { code: 'METHOD_NOT_ALLOWED' } }, 405)
   try {
-    const secrets = [Deno.env.get('MP_WEBHOOK_SECRET'), Deno.env.get('MP_WEBHOOK_PREVIOUS_SECRET')].filter((secret): secret is string => !!secret)
+    const secrets = webhookSecrets(name => Deno.env.get(name))
     if (secrets.length === 0) return json({ error: { code: 'SERVER_ERROR' } }, 503)
     const evidence = await verifySignature(request, secrets)
     const payload = await boundedBody(request)

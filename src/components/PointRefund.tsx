@@ -73,7 +73,7 @@ function PointRefundSession({ access, saleId, onSessionError }: Props) {
     } catch (caught) { failure(caught) }
     finally { running.current = false; if (alive.current) setBusy(false) }
   }
-  return <section className="ops-form mt-6" aria-label="Devolución bancaria integrada"><h3>Devolución de tarjeta integrada</h3>
+  return <section className="ops-form mt-6" aria-label="Devolución de tarjeta"><h3>Devolución de tarjeta</h3>
     {error && <p role="alert">{error}</p>}
     {!online && <p role="status">Sin conexión. La devolución permanece guardada.</p>}
     {!checkout && !error && <LoadingPlaceholder variant="form" rows={2} label="Cargando devolución" />}

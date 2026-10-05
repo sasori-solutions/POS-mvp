@@ -15,8 +15,25 @@ export async function enterOperations(page: Page) {
 export async function openOperationalMore(page: Page) {
   await expect(page.locator('#pos-section-title')).toBeVisible()
   const more = page.getByRole('button',{name:'Más',exact:true}).filter({visible:true}).first()
-  if (!await more.isVisible()) await enterOperations(page)
-  await more.click()
+  if (await more.isVisible()) {
+    await more.click()
+    return page.getByRole('region', { name: 'Más', exact: true })
+  }
+  // Desktop employee sessions live in the sidebar account menu.
+  await page.getByRole('button', { name: /^Opciones de cuenta:/ }).filter({ visible: true }).first().click()
+  const account = page.getByRole('group', { name: 'Opciones de cuenta', exact: true }).filter({ visible: true })
+  await expect(account).toBeVisible()
+  return account
+}
+
+export async function openOperationalTask(page: Page, name: string) {
+  await expect(page.locator('#pos-section-title')).toBeVisible()
+  const direct = page.getByRole('navigation').getByRole('button', { name, exact: true }).filter({ visible: true }).first()
+  if (await direct.isVisible()) await direct.click()
+  else {
+    await page.getByRole('button', { name: 'Abrir menú', exact: true }).click()
+    await page.getByRole('navigation', { name: 'Menú de operación', exact: true }).getByRole('button', { name, exact: true }).click()
+  }
 }
 export async function ownerAccountMenu(page: Page) {
   await openOwnerNavigation(page)

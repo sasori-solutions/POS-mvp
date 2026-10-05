@@ -1,0 +1,21 @@
+.personal-metrics { display: grid; gap: 20px; }
+.personal-metrics-filters { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.personal-metrics-date input { min-height: 48px; padding: 0 12px; border: 1px solid var(--color-line); border-radius: 10px; background: var(--color-surface); color: var(--color-ink); }
+.personal-metrics-date[data-pending] input { border-color: var(--color-brand); }
+.personal-metrics-range { margin: -8px 0 0; color: var(--color-muted); font-size: 13px; }
+.personal-metrics-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.personal-metrics-kpis .analytics-kpi { display: grid; align-content: start; gap: 10px; }
+.personal-metrics-kpis strong { font-size: clamp(26px, 3vw, 40px); font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -0.04em; }
+.personal-metrics-kpis small { color: var(--color-muted); font-size: 12px; }
+.personal-metrics-trend { min-width: 0; }
+.personal-metrics-updating { width: 7px; height: 7px; border-radius: 50%; background: var(--color-muted); animation: personal-metrics-pulse 0.8s ease-in-out infinite alternate; }
+@keyframes personal-metrics-pulse { to { opacity: 0.3; } }
+@media (max-width: 639px) {
+ .personal-metrics-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+ .personal-metrics-kpis > :first-child { grid-column: 1 / -1; }
+ .personal-metrics-filters { align-items: stretch; }
+ .personal-metrics-filters .analytics-periods { flex: 1; }
+ .personal-metrics-date { flex: 1; }
+ .personal-metrics-date input { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .personal-metrics-updating { animation: none; } }

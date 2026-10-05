@@ -2,6 +2,7 @@ import { submitPinIfPresent } from './workspace-flow'
 import { openOwnerTask } from './workspace-flow'
 import { expect, test, type Page } from '@playwright/test'
 import jsQR from 'jsqr'
+import { businessPermissions } from '../../src/lib/contracts'
 import { fixturePin } from './account-fixture'
 import { fixtureInvitation, fixturePairingCode, mockOnboarding } from './onboarding-fixture'
 
@@ -40,12 +41,14 @@ test('grouped permissions start empty and work by keyboard with prerequisites', 
   if (info.project.name === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
   await openCreation(page)
   const permissions = page.getByRole('group', { name: 'Permisos', exact: true })
-  await expect(permissions.getByRole('checkbox')).toHaveCount(19)
+  await expect(permissions.getByRole('checkbox')).toHaveCount(businessPermissions.length)
   await expect(permissions.getByRole('checkbox', { checked: true })).toHaveCount(0)
   await expect(page.getByRole('radio')).toHaveCount(0)
-  for (const name of ['Catálogo', 'Ventas', 'Órdenes', 'Comandas', 'Caja', 'Reportes']) {
+  for (const name of ['Catálogo', 'Ventas', 'Órdenes', 'Comandas', 'Caja', 'Métricas']) {
     await expect(permissions.getByRole('group', { name, exact: true })).toBeVisible()
   }
+  await expect(permissions.getByRole('checkbox', { name: 'Consultar solo sus métricas', exact: true })).not.toBeChecked()
+  await expect(permissions.getByRole('checkbox', { name: 'Consultar métricas del negocio', exact: true })).not.toBeChecked()
   await expect(permissions.getByText('Administrar empleados y el negocio corresponde al dueño.', { exact: false })).toBeVisible()
   const catalogRead = permissions.getByRole('checkbox', { name: 'Consultar productos', exact: true })
   const catalogManage = permissions.getByRole('checkbox', { name: 'Crear y editar productos', exact: true })

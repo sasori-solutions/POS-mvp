@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { requireLoopback } from './local-development.mjs'
 
-// Only this checkout's stack and synthetic tenants. The simulator's persisted
-// identities and the development business are preserved between runs.
+// Only this checkout's stack and synthetic tenants. The suite uses its own OAuth
+// receiver/terminal instead of receiver 900001, already bound to the persistent
+// development business. Its simulator identities and orders survive every run.
 const root = resolve(import.meta.dirname, '..')
 try {
   const configuration = readFileSync(join(root, '.local-dev/supabase/config.toml'), 'utf8')

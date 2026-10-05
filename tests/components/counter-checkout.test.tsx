@@ -17,7 +17,7 @@ vi.mock('../../src/components/useCatalog', async original => ({ ...await origina
 vi.mock('../../src/features/operations/useOperations', async original => ({ ...await original<object>(), useOperations: vi.fn(), useOperationalMutation: vi.fn() }))
 const business: BusinessContext = { id: 'business', name: 'Mostrador sintético', businessType: 'cafe', timezone: 'America/Mexico_City', currency: 'MXN', role: 'owner', createdAt: '2026-10-02T12:00:00Z', profile: { branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash'] } }
 const product: Product = { id: 'product', name: 'Café', category: 'Bebidas', priceCents: 3500, version: 1, active: true }
-const order: OperationalOrder = { id: 'saved-order', revision: 1, name: 'Mostrador', tableId: null, status: 'open', phase: 'service', frozen: false, createdAt: business.createdAt, updatedAt: business.createdAt, operatorName: 'Persona sintética', items: [{ lineId: 'accepted-line', productId: product.id, version: 1, name: product.name, kitchenName: product.name, category: product.category, selectionLabel: 'Chico', note: '', quantity: 1, paidQuantity: 0, sentQuantity: 0, unitPriceCents: 3500, grossCents: 3500, discountCents: 0, totalCents: 3500, taxCents: 483, taxBps: 1600, taxTreatment: 'vat_16' }], discount: null, grossCents: 3500, discountCents: 0, totalCents: 3500, taxCents: 483, paidCents: 0, waivedCents: 0, cancelledCents: 0, balanceCents: 3500 }
+const order: OperationalOrder = { id: 'saved-order', revision: 1, name: 'Mostrador', orderKind: 'counter', tableId: null, status: 'open', phase: 'service', frozen: false, createdAt: business.createdAt, updatedAt: business.createdAt, operatorName: 'Persona sintética', items: [{ lineId: 'accepted-line', productId: product.id, version: 1, name: product.name, kitchenName: product.name, category: product.category, selectionLabel: 'Chico', note: '', quantity: 1, paidQuantity: 0, sentQuantity: 0, unitPriceCents: 3500, grossCents: 3500, discountCents: 0, totalCents: 3500, taxCents: 483, taxBps: 1600, taxTreatment: 'vat_16' }], discount: null, grossCents: 3500, discountCents: 0, totalCents: 3500, taxCents: 483, paidCents: 0, waivedCents: 0, cancelledCents: 0, balanceCents: 3500 }
 let catalog: CatalogState, snapshot: OperationsSnapshot, mutation: OperationalMutation
 const refresh = vi.fn().mockResolvedValue(undefined)
 const props = { destination: 'Venta' as const, business, operatorToken: 'synthetic-memory-only', onLock: vi.fn(), onLogout: vi.fn(), busy: false, error: '' }
@@ -41,7 +41,7 @@ beforeEach(() => {
       return quote;
     }
     if (command.command !== 'save_order') throw new Error('Unexpected mutation')
-    return { ...order, id: command.orderId }
+    return { ...order, id: command.orderId, orderKind: command.orderKind ?? null }
   })
   vi.mocked(useCatalog).mockImplementation(() => catalog)
   vi.mocked(useOperations).mockImplementation(() => ({ snapshot, loading: false, error: '', refresh }))
@@ -76,9 +76,36 @@ test('opening checkout shows payment methods immediately and has no manual edit,
   fireEvent.click(screen.getByRole('button', { name: 'Cobrar' }))
   const dialog = within(await screen.findByRole('dialog', { name: 'Cobrar' }))
   expect((dialog.getByRole('radio', { name: 'Efectivo' }) as HTMLInputElement).checked).toBe(true)
-  for (const name of ['Editar artículos', 'Enviar nuevos artículos a cocina', 'Finalizar cuenta para cobrar']) expect(dialog.queryByRole('button', { name })).toBeNull()
+  for (const name of ['Editar artículos', 'Enviar nuevos artículos a cocina', 'Enviar a cocina', 'Finalizar cuenta para cobrar']) expect(dialog.queryByRole('button', { name })).toBeNull()
   expect(mutation.execute).toHaveBeenCalledTimes(1)
   expect(vi.mocked(mutation.execute).mock.calls[0][0].command).toBe('save_order')
+})
+
+test('saving and editing a restaurant account opens its service detail to send preparation before collecting', async () => {
+  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  vi.mocked(mutation.execute).mockImplementation(async command => {
+    if (command.command !== 'save_order') throw new Error('A service account must not reserve collection')
+    return { ...order, id: command.orderId, name: command.name, orderKind: command.orderKind ?? null, revision: (command.expectedRevision ?? 0) + 1 }
+  })
+  render(<HomeScreen {...props} destination="Comandas" business={{ ...business, businessType: 'restaurant', profile: { ...business.profile, accountsEnabled: true } }} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Cuentas' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir cuenta' }))
+  const editor = within(await screen.findByRole('dialog', { name: 'Abrir cuenta' }))
+  fireEvent.change(editor.getByRole('textbox', { name: 'Nombre de la cuenta' }), { target: { value: 'Mesa 7' } })
+  fireEvent.click(editor.getByRole('button', { name: /Café/ }))
+  fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
+  let service = within(await screen.findByRole('dialog', { name: 'Mesa 7' }))
+  expect(service.getByRole('button', { name: 'Enviar a cocina' }).classList.contains('pos-primary')).toBe(true)
+  expect(service.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
+  expect(service.queryByRole('radio', { name: 'Efectivo' })).toBeNull()
+  expect(mutation.execute).toHaveBeenCalledOnce()
+  fireEvent.click(service.getByRole('button', { name: 'Editar artículos' }))
+  const editing = within(await screen.findByRole('dialog', { name: 'Editar cuenta' }))
+  fireEvent.click(editing.getByRole('button', { name: 'Guardar cuenta' }))
+  service = within(await screen.findByRole('dialog', { name: 'Mesa 7' }))
+  expect(service.getByRole('button', { name: 'Enviar a cocina' })).toBeTruthy()
+  expect(mutation.execute).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(mutation.execute).mock.calls.every(([command]) => command.command === 'save_order')).toBe(true)
 })
 
 test('a closed shift disables checkout without discarding the draft or registering a payment', () => {
@@ -108,7 +135,7 @@ test('closing before reservation starts cancels its debounce throughout the exit
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull())
   expect(mutation.execute).toHaveBeenCalledTimes(1)
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'save_order' }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'save_order' }), 'counter')
   expect((currentSale().getByRole('button', { name: 'Aumentar Café' }) as HTMLButtonElement).disabled).toBe(false)
 })
 
@@ -375,8 +402,8 @@ test('the draft survives management screens and clearing asks for confirmation',
   expect(currentSale().getByText('Cuenta vacía')).toBeTruthy()
 })
 
-test('an exact retry after a lost save response restores the accepted account and can resume it', async () => {
-  const command = { command: 'save_order' as const, operationId: 'original-operation', orderId: order.id, expectedRevision: null, name: 'Mostrador', tableId: null, items: [] }
+test('an exact retry after a lost typed counter response restores the accepted account and can resume it', async () => {
+  const command = { command: 'save_order' as const, operationId: 'original-operation', orderId: order.id, expectedRevision: null, name: 'Mostrador', orderKind: 'counter' as const, tableId: null, items: [] }
   mutation = { ...mutation, pending: command }
   const view = render(<HomeScreen {...props} />)
   fireEvent.click(screen.getByRole('button', { name: 'Reintentar solicitud guardada' }))
@@ -388,6 +415,140 @@ test('an exact retry after a lost save response restores the accepted account an
   fireEvent.click(currentSale().getByRole('button', { name: 'Cobrar' }))
   expect(await screen.findByRole('dialog', { name: 'Cobrar' })).toBeTruthy()
   expect(mutation.execute).toHaveBeenCalledTimes(1)
+})
+
+test('a saved service account named Mostrador restores service after a lost response and remount', async () => {
+  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  vi.mocked(mutation.execute).mockRejectedValueOnce(new Error('Respuesta perdida'))
+  const accountProps = { ...props, destination: 'Comandas' as const, business: { ...business, businessType: 'restaurant' as const, profile: { ...business.profile, accountsEnabled: true } } }
+  const first = render(<HomeScreen {...accountProps} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Cuentas' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir cuenta' }))
+  const editor = within(await screen.findByRole('dialog', { name: 'Abrir cuenta' }))
+  fireEvent.change(editor.getByRole('textbox', { name: 'Nombre de la cuenta' }), { target: { value: 'Mostrador' } })
+  fireEvent.click(editor.getByRole('button', { name: /Café/ }))
+  fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
+  await waitFor(() => expect(mutation.execute).toHaveBeenCalledOnce())
+  const command = vi.mocked(mutation.execute).mock.calls[0][0]
+  expect(command).toMatchObject({ command: 'save_order', expectedRevision: null, name: 'Mostrador' })
+  expect(vi.mocked(mutation.execute).mock.calls[0][1]).toBe('service')
+  const accepted = { ...order, id: command.command === 'save_order' ? command.orderId : '', orderKind: 'service' as const, name: 'Mostrador' }
+  first.unmount()
+  mutation = { ...mutation, pending: command, pendingOrigin: 'service', error: 'Respuesta perdida' }
+  vi.mocked(mutation.execute).mockResolvedValueOnce(accepted)
+  const next = render(<HomeScreen {...accountProps} destination="Venta" />)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar solicitud guardada' }))
+  await waitFor(() => expect(mutation.execute).toHaveBeenCalledTimes(2))
+  expect(vi.mocked(mutation.execute).mock.calls[1]).toEqual([command, 'service'])
+  mutation = { ...mutation, pending: null, pendingOrigin: null, error: '', lastResult: { command: 'save_order', result: accepted } }
+  next.rerender(<HomeScreen {...accountProps} destination="Venta" />)
+  const service = within(await screen.findByRole('dialog', { name: 'Mostrador' }))
+  expect(service.getByRole('button', { name: 'Enviar a cocina' })).toBeTruthy()
+  expect(service.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
+  expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull()
+  expect(currentSale().queryByText('1 × Café')).toBeNull()
+})
+
+test('editing a known direct counter preserves its type after a lost response and remount without exposing preparation', async () => {
+  const first = render(<HomeScreen {...props} />)
+  await saveAndClose()
+  const saved = await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
+  snapshot = { ...snapshot, orders: [saved] }
+  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  first.rerender(<HomeScreen {...props} destination="Comandas" />)
+  fireEvent.click(screen.getByRole('button', { name: 'Cuentas' }))
+  fireEvent.click(screen.getByRole('button', { name: /Mostrador.*Por cobrar/ }))
+  const service = within(await screen.findByRole('dialog', { name: 'Mostrador' }))
+  expect(service.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+  fireEvent.click(service.getByRole('button', { name: 'Editar artículos' }))
+  const editor = within(await screen.findByRole('dialog', { name: 'Editar cuenta' }))
+  fireEvent.click(editor.getByRole('button', { name: 'Añadir Café' }))
+  vi.mocked(mutation.execute).mockRejectedValueOnce(new Error('Respuesta perdida'))
+  fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
+  await waitFor(() => expect(mutation.execute).toHaveBeenCalledTimes(2))
+  const command = vi.mocked(mutation.execute).mock.calls[1][0]
+  expect(command).toMatchObject({ command: 'save_order', orderId: saved.id, expectedRevision: saved.revision, items: [expect.objectContaining({ lineId: saved.items[0].lineId, quantity: 2 })] })
+  expect(vi.mocked(mutation.execute).mock.calls[1][1]).toBe('counter')
+  first.unmount()
+  const accepted = { ...saved, revision: saved.revision + 1, grossCents: 7000, totalCents: 7000, balanceCents: 7000, taxCents: 966, items: [{ ...saved.items[0], quantity: 2, grossCents: 7000, totalCents: 7000, taxCents: 966 }] }
+  mutation = { ...mutation, pending: command, pendingOrigin: 'counter', error: 'Respuesta perdida' }
+  vi.mocked(mutation.execute).mockResolvedValueOnce(accepted)
+  const next = render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar solicitud guardada' }))
+  await waitFor(() => expect(mutation.execute).toHaveBeenCalledTimes(3))
+  expect(vi.mocked(mutation.execute).mock.calls[2]).toEqual([command, 'counter'])
+  mutation = { ...mutation, pending: null, pendingOrigin: null, error: '', lastResult: { command: 'save_order', result: accepted } }
+  next.rerender(<HomeScreen {...props} />)
+  await waitFor(() => expect(currentSale().getByText('2 × Café')).toBeTruthy())
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+  fireEvent.click(currentSale().getByRole('button', { name: 'Cobrar' }))
+  const checkout = within(await screen.findByRole('dialog', { name: 'Cobrar' }))
+  expect(checkout.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+})
+
+test('a canonical counter remains direct through repeated remounts, editing and returning from collection without local hints', async () => {
+  const persisted = { ...order, name: 'Venta guardada' }
+  snapshot = { ...snapshot, orders: [persisted] }
+  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  for (let reload = 0; reload < 3; reload++) {
+    const view = render(<HomeScreen {...props} destination="Comandas" />)
+    fireEvent.click(screen.getByRole('button', { name: 'Cuentas' }))
+    fireEvent.click(screen.getByRole('button', { name: /Venta guardada.*Por cobrar/ }))
+    let detail = within(await screen.findByRole('dialog', { name: 'Venta guardada' }))
+    expect(detail.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+    expect(mutation.pendingOrigin).toBeUndefined()
+    if (reload === 1) {
+      vi.mocked(mutation.execute).mockResolvedValueOnce({ ...persisted, revision: 2 })
+      fireEvent.click(detail.getByRole('button', { name: 'Editar artículos' }))
+      const editor = within(await screen.findByRole('dialog', { name: 'Editar cuenta' }))
+      fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
+      detail = within(await screen.findByRole('dialog', { name: 'Venta guardada' }))
+      expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'save_order', orderKind: 'counter', orderId: persisted.id }), 'counter')
+      expect(detail.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+    }
+    fireEvent.click(detail.getByRole('button', { name: 'Cobrar $35.00' }))
+    const checkout = within(await screen.findByRole('dialog', { name: 'Cobrar' }))
+    expect(checkout.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+    fireEvent.click(checkout.getByRole('button', { name: 'Cerrar' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByRole('textbox', { name: 'Nombre de la cuenta' })).toBeNull()
+    view.unmount()
+  }
+  expect(vi.mocked(posRequest).mock.calls.some(([, command]) => command.command === 'order')).toBe(false)
+})
+
+test('a legacy raw save without a durable type is recovered exactly without guessing from Mostrador', async () => {
+  const command = { command: 'save_order' as const, operationId: 'legacy-operation', orderId: order.id, expectedRevision: null, name: 'Mostrador', tableId: null, items: [] }
+  const legacy = { ...order, orderKind: null }
+  mutation = { ...mutation, pending: command }
+  vi.mocked(mutation.execute).mockResolvedValueOnce(legacy)
+  const view = render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar solicitud guardada' }))
+  const detail = within(await screen.findByRole('dialog', { name: 'Mostrador' }))
+  expect(vi.mocked(mutation.execute).mock.calls[0]).toEqual([command])
+  mutation = { ...mutation, pending: null }
+  view.rerender(<HomeScreen {...props} />)
+  expect(detail.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+  expect(detail.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
+  expect(detail.getByRole('button', { name: 'Cobrar $35.00' })).toBeTruthy()
+  fireEvent.click(detail.getByRole('button', { name: 'Editar artículos' }))
+  const editor = within(await screen.findByRole('dialog', { name: 'Editar cuenta' }))
+  fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
+  await screen.findByRole('dialog', { name: 'Mostrador' })
+  expect(vi.mocked(mutation.execute).mock.calls[1][0]).not.toHaveProperty('orderKind')
+})
+
+test('the canonical service response overrides a stale local counter hint', async () => {
+  const command = { command: 'save_order' as const, operationId: 'old-operation', orderId: order.id, expectedRevision: null, name: 'Mostrador', tableId: null, items: [] }
+  mutation = { ...mutation, pending: command, pendingOrigin: 'counter' }
+  vi.mocked(mutation.execute).mockResolvedValueOnce({ ...order, orderKind: 'service' })
+  render(<HomeScreen {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar solicitud guardada' }))
+  const detail = within(await screen.findByRole('dialog', { name: 'Mostrador' }))
+  expect(detail.getByRole('button', { name: 'Enviar a cocina' })).toBeTruthy()
+  expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull()
+  expect(currentSale().queryByText('1 × Café')).toBeNull()
 })
 
 test('a zero-balance open account remains visible until its status is explicitly resolved', async () => {
@@ -455,11 +616,11 @@ test('after closing collection, additions and quantity changes update the same a
   })
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   await waitFor(() => expect(currentSale().getByRole('button', { name: 'Cobrar' })).toBeTruthy())
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 1, items: [expect.objectContaining({ lineId: saved.items[0].lineId, quantity: 2, unitPriceCents: 3500, version: 1 })] }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 1, items: [expect.objectContaining({ lineId: saved.items[0].lineId, quantity: 2, unitPriceCents: 3500, version: 1 })] }), 'counter')
   expect(screen.queryByRole('dialog')).toBeNull()
   fireEvent.click(currentSale().getByRole('button', { name: 'Disminuir Café' }))
   await waitFor(() => expect(currentSale().getByRole('button', { name: 'Cobrar' })).toBeTruthy())
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 2, items: [expect.objectContaining({ lineId: saved.items[0].lineId, quantity: 1 })] }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 2, items: [expect.objectContaining({ lineId: saved.items[0].lineId, quantity: 1 })] }), 'counter')
 })
 
 test('adding a different product preserves accepted line IDs, prices, notes and selections', async () => {
@@ -470,7 +631,7 @@ test('adding a different product preserves accepted line IDs, prices, notes and 
   const saved = await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Agua, $25.00' }))
   await waitFor(() => expect(mutation.execute).toHaveBeenCalledTimes(2))
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 1, items: [expect.objectContaining({ lineId: saved.items[0].lineId, productId: product.id, quantity: 1, unitPriceCents: 3500, version: 1, note: '' }), expect.objectContaining({ productId: water.id, quantity: 1, unitPriceCents: 2500, version: 1 })] }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 1, items: [expect.objectContaining({ lineId: saved.items[0].lineId, productId: product.id, quantity: 1, unitPriceCents: 3500, version: 1, note: '' }), expect.objectContaining({ productId: water.id, quantity: 1, unitPriceCents: 2500, version: 1 })] }), 'counter')
   expect(screen.queryByRole('dialog')).toBeNull()
 })
 
@@ -508,7 +669,7 @@ test('removing the original item preserves newer items and the same account iden
   fireEvent.click(currentSale().getByRole('button', { name: 'Quitar Café' }))
   await waitFor(() => expect(currentSale().queryByText('Café')).toBeNull())
   expect(currentSale().getByRole('button', { name: 'Cobrar' })).toBeTruthy()
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 2, items: [waterLine] }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 2, items: [waterLine] }), 'counter')
   expect(screen.queryByRole('dialog')).toBeNull()
 })
 
@@ -519,7 +680,7 @@ test.each(['Quitar Café', 'Disminuir Café'])('the last item can be removed wit
   acceptCounterEdits(saved)
   fireEvent.click(currentSale().getByRole('button', { name: action }))
   await waitFor(() => expect(currentSale().getByText('Cuenta vacía')).toBeTruthy())
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 1, items: [] }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 1, items: [] }), 'counter')
   expect((currentSale().getByRole('button', { name: 'Cobrar' }) as HTMLButtonElement).disabled).toBe(true)
   snapshot = { ...snapshot, orders: [saved] } // A delayed old snapshot must not restore removed items.
   view.rerender(<HomeScreen {...props} />)
@@ -553,7 +714,7 @@ test('retrying a lost removal response keeps the same operation and restores the
   view.rerender(<HomeScreen {...props} />)
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   await waitFor(() => expect(currentSale().getByRole('button', { name: 'Cobrar' })).toBeTruthy())
-  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 2, items: [expect.objectContaining({ quantity: 1 })] }))
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ orderId: saved.id, expectedRevision: 2, items: [expect.objectContaining({ quantity: 1 })] }), 'counter')
 })
 
 test('sent items cannot be removed or reduced below their sent quantity', async () => {

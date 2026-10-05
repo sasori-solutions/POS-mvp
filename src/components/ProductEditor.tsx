@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Plus, Trash2 } from "lucide-react";
 import { AccountClientError } from "../lib/account";
-import type { PosCommand, Product, ProductDetails } from "../lib/pos-contracts";
+import type { PosCommand, Product, ProductDetails, VatTreatment } from "../lib/pos-contracts";
 import { emptyDetails, productDetails } from "../lib/product-details";
 import { parsePrice, posRequest, priceInput, type PosAccess } from "../lib/pos";
 import { PosDialog } from "./PosShared";
@@ -21,6 +21,7 @@ const sections = [
 
 export default function ProductEditor({
   product,
+  defaultVatTreatment = 'vat_16',
   products,
   access,
   onClose,
@@ -29,6 +30,7 @@ export default function ProductEditor({
   onSessionError,
 }: {
   product: Product | null;
+  defaultVatTreatment?: VatTreatment;
   products: Product[];
   access: PosAccess;
   onClose: () => void;
@@ -50,7 +52,7 @@ export default function ProductEditor({
           variablePrice: false,
           taxTreatment: productVat(productDetails(product)),
         }
-      : { ...emptyDetails(), taxBps: 1600, taxTreatment: "vat_16" },
+      : { ...emptyDetails(), taxBps: vatRates[defaultVatTreatment], taxTreatment: defaultVatTreatment },
   );
   const [image, setImage] = useState(product?.image ?? "");
 

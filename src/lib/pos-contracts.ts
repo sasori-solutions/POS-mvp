@@ -55,6 +55,7 @@ export interface SaleInputLine {
 }
 
 export interface SaleItem {
+  allocatedGrossCents?: number
   productId: string
   name: string
   category: string

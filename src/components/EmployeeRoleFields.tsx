@@ -7,7 +7,7 @@ const permissionGroups: { name: string; choices: [BusinessPermission, string][] 
   { name: "Órdenes", choices: [["orders.read", "Consultar cuentas"], ["orders.manage", "Crear y editar cuentas"], ["orders.cancel", "Cancelar cuentas"], ["tables.manage", "Administrar mesas"]] },
   { name: "Comandas", choices: [["kitchen.read", "Consultar comandas"], ["kitchen.operate", "Actualizar preparación"]] },
   { name: "Caja", choices: [["cash.read", "Consultar caja"], ["cash.open", "Abrir caja"], ["cash.move", "Registrar entradas y salidas"], ["cash.close", "Cerrar caja"]] },
-  { name: "Reportes", choices: [["reports.read", "Consultar reportes"]] },
+  { name: "Métricas", choices: [["reports.read_own", "Consultar solo sus métricas"], ["reports.read", "Consultar métricas del negocio"]] },
 ];
 
 export default function EmployeeRoleFields({

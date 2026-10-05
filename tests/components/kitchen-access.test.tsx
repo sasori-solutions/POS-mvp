@@ -28,11 +28,11 @@ test('a current kitchen permission refusal invalidates loaded access through the
 
 test('pending and completed views stay separate and read-only staff cannot complete orders', async () => {
   const batch = (id: string, status: KitchenBatch['status']) => ({ id, orderName: id, status, createdAt: '2026-10-03T12:00:00Z', revision: 1, kind: 'items', items: [] }) as KitchenBatch
-  vi.mocked(posRequest).mockResolvedValueOnce({ batches: [batch('Pendiente 1', 'new'), batch('Entregada 2', 'delivered')] })
+  vi.mocked(posRequest).mockResolvedValueOnce({ batches: [batch('Pendiente 1', 'queued'), batch('Entregada 2', 'delivered')] })
   render(<OrdersScreen business={business} access={{ businessId: business.id, operatorToken: 'synthetic-memory-only' }} snapshot={{ ...snapshot, enabled: true }} mutation={mutation} onOrder={vi.fn()} onNew={vi.fn()} refresh={vi.fn()} />)
   await screen.findByRole('heading', { name: 'Pendiente 1' })
   expect(screen.queryByRole('heading', { name: 'Entregada 2' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Marcar como completada' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Comenzar' })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Completadas' }))
   expect(screen.getByRole('heading', { name: 'Entregada 2' })).toBeTruthy()
   expect(screen.queryByRole('heading', { name: 'Pendiente 1' })).toBeNull()

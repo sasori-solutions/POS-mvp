@@ -4,20 +4,108 @@ import { PGlite } from '@electric-sql/pglite'
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { emptyDetails } from '../../src/lib/product-details'
-import type { CheckoutAttempt, OperationalOrder } from '../../src/lib/operations-contracts'
+import type { BusinessPeriodReport, CheckoutAttempt, OperationalOrder } from '../../src/lib/operations-contracts'
 import type { Product } from '../../src/lib/pos-contracts'
+import type { BusinessContext } from '../../src/lib/contracts'
 import type { CommissionStatement, PointCheckout, PointReport, PointSettings } from '../../src/lib/point-contracts'
 
 let db: PGlite
+let legacySandboxConnection: string
+let legacyPartial: Awaited<ReturnType<typeof setup>>
+let legacyReceipt: PointCheckout
 type Actor = { userId: string; sessionId: string; businessId: string; employeeId: string; token: string }
 describe('Point private ledger and server reservations (single PostgreSQL session)', () => {
   beforeAll(async () => {
     db = new PGlite({ extensions: { pgcrypto } })
     await db.exec(`create schema auth; create schema extensions; create role anon; create role authenticated; create role service_role;
       create table auth.users(id uuid primary key); create table auth.sessions(id uuid primary key,user_id uuid references auth.users(id) on delete cascade,created_at timestamptz default now(),not_after timestamptz);`)
-    for (const file of readdirSync('supabase/migrations').filter(f => f.endsWith('.sql')).sort()) await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    for (const file of readdirSync('supabase/migrations').filter(f => f.endsWith('.sql')).sort()) {
+      if (file.endsWith('_point_shared_official_sandbox.sql')) {
+        const actor = await newActor()
+        await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token,
+          operationId: randomUUID(), receiverId: randomUUID(), tokensCiphertext: 'synthetic-legacy-vault', expiresAt: '2099-01-01T00:00:00Z' })
+        legacySandboxConnection = (await point<PointSettings>(actor, { command: 'settings' })).connection!.id
+      }
+      if (file.endsWith('_point_sale_item_identity.sql')) {
+        legacyPartial = await setup(1001, 'sandbox', false, randomUUID(), 3, 2)
+        const started = await point<PointCheckout>(legacyPartial.actor, { command: 'start', operationId: randomUUID(), checkoutId: legacyPartial.checkout.id })
+        await service('apply_order', { ...await facts(started.attemptId!), state: 'approved_verified' })
+        legacyReceipt = await point<PointCheckout>(legacyPartial.actor, { command: 'status', checkoutId: started.id })
+      }
+      await db.exec(readFileSync(`supabase/migrations/${file}`, 'utf8'))
+    }
   }, 60_000)
   afterAll(async () => { await db?.close() })
+
+  it('preserves an existing partial receipt and collects the same line again with exact discount and IVA', async () => {
+    const { actor, reservation, checkout } = legacyPartial
+    const sourceLineId = reservation.items[0].lineId
+    const historical = (await db.query('select * from app_private.sale_items where business_id=$1 and sale_id=$2', [actor.businessId, legacyReceipt.sale!.id])).rows
+    expect(historical).toHaveLength(1)
+    expect(historical[0].line_id).toBe(sourceLineId)
+    const current = await pos<OperationalOrder>(actor, { command: 'order', orderId: reservation.orderId })
+    const remaining = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: current.id,
+      expectedRevision: current.revision, items: [{ lineId: sourceLineId, quantity: 2 }], paymentMethod: 'card_integrated' })
+    const next = await point<PointCheckout>(actor, { command: 'prepare', operationId: randomUUID(), checkoutAttemptId: remaining.id, terminalId: checkout.terminal.id })
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: next.id })
+    const evidence = { ...await facts(started.attemptId!), state: 'approved_verified' }
+    await service('apply_order', evidence)
+    await service('apply_order', evidence)
+    await service('apply_order', { ...await facts(legacyReceipt.attemptId!), state: 'approved_verified' })
+    const final = await point<PointCheckout>(actor, { command: 'status', checkoutId: next.id })
+    expect(final).toMatchObject({ saleState: 'materialized', sale: { totalCents: remaining.totalCents } })
+    expect(reservation.totalCents + remaining.totalCents).toBe(3001)
+    expect((await pos<OperationalOrder>(actor, { command: 'order', orderId: current.id })).balanceCents).toBe(0)
+    const receipts = (await db.query<{ line_id: string; total: number; discount: number; tax: number }>('select line_id,total_cents::int total,discount_cents::int discount,tax_cents::int tax from app_private.sale_items where business_id=$1', [actor.businessId])).rows
+    expect(receipts).toHaveLength(2)
+    expect(new Set(receipts.map(r => r.line_id)).size).toBe(2)
+    expect(receipts.reduce((sum, r) => sum + r.total, 0)).toBe(3001)
+    expect(receipts.reduce((sum, r) => sum + r.discount, 0)).toBe(2)
+    expect(receipts.reduce((sum, r) => sum + r.tax, 0)).toBe(reservation.taxCents + remaining.taxCents)
+    expect((await db.query('select * from app_private.sale_items where business_id=$1 and sale_id=$2', [actor.businessId, legacyReceipt.sale!.id])).rows).toEqual(historical)
+    expect((await pos<CheckoutAttempt>(actor, { command: 'attempt', attemptId: remaining.id })).items[0].lineId).toBe(sourceLineId)
+    await service('apply_order', { ...await facts(legacyReceipt.attemptId!), state: 'refunded', refunds: [{ id: 'first-receipt-return', amountCents: reservation.totalCents, confirmedAt: new Date().toISOString() }] })
+    expect(await point<PointCheckout>(actor, { command: 'status', checkoutId: legacyReceipt.id })).toMatchObject({ refundedCents: reservation.totalCents })
+    expect(await point<PointCheckout>(actor, { command: 'status', checkoutId: next.id })).toMatchObject({ state: 'approved_verified', refundedCents: 0 })
+    for (const role of ['anon', 'authenticated', 'service_role']) expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'app_private.point_materialize(app_private.point_attempts)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+    // This suite's direct apply_order fixtures do not execute queue leases. Keep
+    // their finished jobs out of the following global claim_jobs regression.
+    await db.query('delete from app_private.point_jobs where business_id=$1', [actor.businessId])
+  })
+
+  it('saves and returns Mercado Pago alongside all existing profile methods without activating Point', async () => {
+    const actor = await newActor()
+    const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external', 'transfer', 'card_integrated'] }
+    const payload = { action: 'update_business', businessId: actor.businessId, operatorToken: actor.token, name: 'Comercio ficticio', businessType: 'cafe', timezone: 'America/Mexico_City', profile }
+    const result = (await db.query<{ result: { data: BusinessContext } }>("select public.account_secure($1,$2,'update_business',$3::jsonb) result", [actor.userId, actor.sessionId, JSON.stringify(payload)])).rows[0].result.data
+    expect(result.profile).toEqual({ ...profile, accountsEnabled: true, defaultVatTreatment: 'vat_16', logoImageId: null })
+    expect((await db.query<{ profile: unknown }>('select profile from app_private.businesses where id=$1', [actor.businessId])).rows[0].profile).toEqual(profile)
+    expect((await pos<{ paymentMethods: string[] }>(actor, { command: 'catalog' })).paymentMethods).toEqual(profile.paymentMethods)
+    const settings = await point<PointSettings>(actor, { command: 'settings' })
+    expect(settings.enabled).toBe(false)
+    expect(settings.connection).toBeNull()
+    expect((await db.query<{ count: number }>('select count(*)::integer count from app_private.sales where business_id=$1', [actor.businessId])).rows[0].count).toBe(0)
+    await db.query('delete from auth.sessions where id=$1', [actor.sessionId])
+    await expect(db.query("select public.account_secure($1,$2,'update_business',$3::jsonb)", [actor.userId, actor.sessionId, JSON.stringify({ ...payload, profile: { ...profile, paymentMethods: ['cash'] } })])).rejects.toThrow()
+    expect((await db.query<{ profile: unknown }>('select profile from app_private.businesses where id=$1', [actor.businessId])).rows[0].profile).toEqual(profile)
+  })
+
+  it('validates integrated-only profiles and rejects malformed method lists in SQL', async () => {
+    const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['card_integrated'] }
+    expect((await db.query<{ profile: unknown }>('select app_private.validate_profile($1::jsonb) profile', [JSON.stringify(profile)])).rows[0].profile).toEqual(profile)
+    for (const paymentMethods of [[], ['card_integrated', 'card_integrated'], ['unknown'], ['cash', 'card_external', 'transfer', 'card_integrated', 'crypto'], [null], [42], 'cash', null]) {
+      await expect(db.query('select app_private.validate_profile($1::jsonb)', [JSON.stringify({ ...profile, paymentMethods })])).rejects.toThrow('VALIDATION_ERROR')
+    }
+    for (const role of ['anon', 'authenticated']) expect((await db.query<{ allowed: boolean }>("select has_schema_privilege($1,'app_private','USAGE') allowed", [role])).rows[0].allowed).toBe(false)
+  })
+
+  it('preserves an already linked official sandbox when migrating receiver ownership', async () => {
+    expect((await db.query('select official_sandbox,status,tokens_ciphertext,token_version from app_private.point_connections where id=$1', [legacySandboxConnection])).rows[0])
+      .toEqual({ official_sandbox: true, status: 'connected', tokens_ciphertext: 'synthetic-legacy-vault', token_version: 1 })
+    for (const role of ['anon', 'authenticated', 'service_role']) {
+      expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'public.point_service_before_shared_sandbox(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+    }
+  })
 
   it('enrolls only an empty dedicated sandbox business and permanently blocks live reconnection', async () => {
     const actor = await newActor()
@@ -43,6 +131,54 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     await expect(db.query("select app_private.point_command($1,$2,$3::jsonb)", [employee.businessId, employee.employeeId, JSON.stringify({ command: 'connect_sandbox', operationId: randomUUID() })])).rejects.toThrow('PERMISSION_DENIED')
   })
 
+  it('shares only the official virtual receiver while keeping each test business isolated', async () => {
+    const first = await newActor(), second = await newActor()
+    const receiverId = randomUUID()
+    const payload = (actor: Actor) => ({ businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token,
+      operationId: randomUUID(), receiverId, tokensCiphertext: `synthetic-encrypted-${actor.businessId}`, expiresAt: '2099-01-01T00:00:00Z' })
+    await service('official_sandbox_connect', payload(first))
+    await service('official_sandbox_connect', payload(second))
+    const one = await point<PointSettings>(first, { command: 'settings' }), two = await point<PointSettings>(second, { command: 'settings' })
+    expect(one.connection!.id).not.toBe(two.connection!.id)
+    for (const result of [one, two]) expect(result).toMatchObject({ sandbox: { testBusiness: true }, connection: { environment: 'sandbox', receiverId }, terminals: [{ id: 'NEWLAND_N950__SBX0000001', verified: true, active: true }] })
+    const before = await service('connection_get', { connectionId: two.connection!.id })
+    await service('official_sandbox_connect', payload(first))
+    expect(await service('connection_get', { connectionId: two.connection!.id })).toEqual(before)
+    await point(first, { command: 'disconnect' })
+    expect((await point<PointSettings>(second, { command: 'settings' })).connection!.status).toBe('connected')
+    await expect(service('connection_save', { ...payload(first), environment: 'sandbox' })).rejects.toThrow('POINT_FACT_MISMATCH')
+    const third = await newActor()
+    await expect(service('connection_save', { ...payload(third), environment: 'sandbox' })).rejects.toThrow('POINT_FACT_MISMATCH')
+    // Ordinary OAuth sandbox credentials retain the original one-business boundary.
+    const ordinary = { ...payload(first), receiverId: randomUUID(), environment: 'sandbox' }
+    await service('connection_save', { ...ordinary, businessId: third.businessId })
+    await expect(service('connection_save', { ...ordinary, businessId: second.businessId })).rejects.toThrow('POINT_FACT_MISMATCH')
+    const fourth = await newActor()
+    await expect(service('official_sandbox_connect', { ...payload(fourth), receiverId: ordinary.receiverId })).rejects.toThrow('POINT_FACT_MISMATCH')
+    expect((await point<PointSettings>(fourth, { command: 'settings' })).sandbox!.testBusiness).toBe(false)
+    await expect(db.query('update app_private.point_connections set official_sandbox=false where id=$1', [two.connection!.id])).rejects.toThrow('POINT_STATE_INVALID')
+    const live = { ...payload(fourth), receiverId: randomUUID(), environment: 'live' }
+    await service('connection_save', live)
+    await expect(service('connection_save', { ...live, businessId: third.businessId })).rejects.toThrow('POINT_FACT_MISMATCH')
+  })
+
+  it('never mixes payments or simulation permissions between businesses sharing the virtual receiver', async () => {
+    const receiverId = randomUUID()
+    const first = await setup(500, 'sandbox', true, receiverId), second = await setup(76068, 'sandbox', true, receiverId)
+    const one = await point<PointCheckout>(first.actor, { command: 'start', operationId: randomUUID(), checkoutId: first.checkout.id })
+    // The shared terminal still accepts only one unresolved checkout at a time.
+    await expect(point(second.actor, { command: 'start', operationId: randomUUID(), checkoutId: second.checkout.id })).rejects.toThrow('POINT_TERMINAL_BUSY')
+    await expect(point(first.actor, { command: 'status', checkoutId: second.checkout.id })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
+    await expect(point(first.actor, { command: 'simulate', checkoutId: second.checkout.id, status: 'processed' })).rejects.toThrow('POINT_CHECKOUT_NOT_FOUND')
+    await service('apply_order', { ...await facts(one.attemptId!), state: 'approved_verified' })
+    expect(await point<PointCheckout>(first.actor, { command: 'status', checkoutId: one.id })).toMatchObject({ saleState: 'materialized', sale: { totalCents: 500 } })
+    expect(await point<PointCheckout>(second.actor, { command: 'status', checkoutId: second.checkout.id })).toMatchObject({ saleState: 'pending', sale: null })
+    const two = await point<PointCheckout>(second.actor, { command: 'start', operationId: randomUUID(), checkoutId: second.checkout.id })
+    await service('apply_order', { ...await facts(two.attemptId!), state: 'approved_verified' })
+    expect(await point<PointCheckout>(second.actor, { command: 'status', checkoutId: two.id })).toMatchObject({ saleState: 'materialized', sale: { totalCents: 76068 } })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id in ($1,$2)", [one.attemptId, two.attemptId])
+  })
+
   it('authorizes simulation only for own official sandbox checkout, never writes a payment result', async () => {
     const { actor, checkout } = await setup(1001, 'sandbox', true)
     const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
@@ -66,6 +202,18 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
       expect((await db.query<{ allowed: boolean }>(`select has_table_privilege($1,'app_private.point_attempts','SELECT') allowed`, [role])).rows[0].allowed).toBe(false)
     }
     expect((await db.query<{ n: number }>('select count(*)::int n from app_private.sasori_admins')).rows[0].n).toBe(0)
+  })
+
+  it('rejects unsupported amounts before creating a Point checkout or queue job', async () => {
+    const count = async (table: string) => (await db.query<{ n: number }>(`select count(*)::int n from app_private.${table}`)).rows[0].n
+    const checkouts = await count('point_checkouts'), attempts = await count('point_attempts'), jobs = await count('point_jobs')
+    await expect(setup(499, 'sandbox', true)).rejects.toThrow('POINT_AMOUNT_INVALID')
+    await expect(setup(99_999_999, 'live', false, randomUUID(), 11, 0, 11)).rejects.toThrow('POINT_AMOUNT_INVALID')
+    expect(await count('point_checkouts')).toBe(checkouts)
+    expect(await count('point_attempts')).toBe(attempts)
+    expect(await count('point_jobs')).toBe(jobs)
+    expect((await setup(500, 'sandbox', true)).checkout.totalCents).toBe(500)
+    expect((await setup(99_999_999, 'live', false, randomUUID(), 10, 0, 10)).checkout.totalCents).toBe(999_999_990)
   })
 
   it('persists single exact attempt/payload/terminal lock and prevents every manual result path', async () => {
@@ -118,6 +266,11 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     expect(await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ state: 'partially_refunded', refundedCents: 600, sale: { totalCents: 1001 } })
     await service('apply_order', { ...evidence, state: 'refunded', refunds: [...confirmed.refunds, { id: 'synthetic-refund-2', amountCents: 401, confirmedAt: new Date().toISOString() }] })
     expect((await db.query<{ n: string }>('select sum(exact_numerator)::text n from app_private.point_fee_ledger where business_id=$1', [actor.businessId])).rows[0].n).toBe('0')
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const personal = await pos<BusinessPeriodReport>(actor, { command: 'report_own_period', date, period: 'day' })
+    expect(personal.totals).toMatchObject({ salesCents: 1001, reversalCents: 1001, netCents: 0, unallocatedRefundCents: 1001, operators: [], cashDifferences: [] })
+    expect(personal.series.reduce((sum, point) => sum + point.reversalCents, 0)).toBe(1001)
+    expect(personal.series.reduce((sum, point) => sum + point.netCents, 0)).toBe(0)
   })
 
   it('closes reproducible exact monthly statements, late refund residuals and partial commission payments', async () => {
@@ -365,6 +518,60 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     expect((await db.query<{ status: string; last_error: string }>('select status,last_error from app_private.point_jobs where id=$1', [job.id])).rows[0]).toEqual({ status: 'queued', last_error: 'UNCERTAIN' })
   })
 
+  it.each(['pending', 'sent_to_terminal', 'processing', 'unknown_review'])('reconciles a recent %s virtual attempt without a webhook or an open browser', async state => {
+    // Earlier isolation cases deliberately retain a virtual-terminal lock.
+    // Finish only those synthetic attempts before this independent scenario.
+    const prior = (await db.query<{ id: string; remote_order_id: string | null }>("select id,remote_order_id from app_private.point_attempts where terminal_id='NEWLAND_N950__SBX0000001' and sale_state<>'materialized' and state in ('pending','sent_to_terminal','processing','unknown_review')")).rows
+    for (const attempt of prior) {
+      const evidence = await facts(attempt.id)
+      await service('apply_order', { ...evidence, remoteOrderId: attempt.remote_order_id ?? evidence.remoteOrderId, state: 'cancelled' })
+    }
+    const { actor, checkout } = await setup(1000, 'sandbox', true)
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    await service('apply_order', { ...evidence, state })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    await db.query("update app_private.point_attempts set observed_at=clock_timestamp()-interval '30 seconds',last_reconciled_at=clock_timestamp()-interval '30 seconds' where id=$1", [started.attemptId])
+    await service('pending_sweep', { limit: 500 })
+    await service('pending_sweep', { limit: 500 })
+    const jobs = (await db.query<{ id: string; kind: string }>("select id,kind from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows
+    expect(jobs).toHaveLength(1)
+    expect(jobs[0].kind).toBe('reconcile_order')
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ state, saleState: 'pending', totalCents: 1000, remoteOrderId: evidence.remoteOrderId })
+    // Isolate this synthetic queue entry; claiming it uses the original identity
+    // and GET reconciliation, never another create/collection request.
+    await db.query("update app_private.point_jobs set status='done' where id<>$1", [jobs[0].id])
+    const claimed = await service<{ jobs: { id: string; kind: string; leaseToken: string; payload: { remoteOrderId: string; amountCents: number } }[] }>('claim_jobs', { limit: 1, leaseToken: randomUUID(), chargesEnabled: false })
+    expect(claimed.jobs[0]).toMatchObject({ id: jobs[0].id, kind: 'reconcile', payload: { remoteOrderId: evidence.remoteOrderId, amountCents: 1000 } })
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status in ('queued','leased')", [started.attemptId])).rows[0].n).toBe(1)
+    await service('apply_order', { ...evidence, state: 'approved_verified', jobId: jobs[0].id, leaseToken: claimed.jobs[0].leaseToken })
+    await service('complete_job', { id: jobs[0].id, leaseToken: claimed.jobs[0].leaseToken })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    expect(await point(actor, { command: 'status', checkoutId: checkout.id })).toMatchObject({ state: 'approved_verified', saleState: 'materialized', totalCents: 1000 })
+    expect((await db.query<{ n: number }>('select count(*)::integer n from app_private.sales where business_id=$1', [actor.businessId])).rows[0].n).toBe(1)
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status in ('queued','leased')", [started.attemptId])).rows[0].n).toBe(0)
+  })
+
+  it('throttles recent live reads and preserves queued-job backoff and terminal locks', async () => {
+    const { actor, checkout } = await setup(1000)
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'pending' })
+    await db.query("update app_private.point_jobs set status='done' where attempt_id=$1", [started.attemptId])
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows[0].n).toBe(0)
+    await db.query("update app_private.point_attempts set observed_at=clock_timestamp()-interval '30 seconds',last_reconciled_at=clock_timestamp()-interval '30 seconds' where id=$1", [started.attemptId])
+    await service('pending_sweep', { limit: 500 })
+    const job = (await db.query<{ id: string }>("select id from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows[0]
+    expect(job).toBeDefined()
+    await db.query("update app_private.point_jobs set available_at=clock_timestamp()+interval '10 minutes',last_error='UNCERTAIN' where id=$1", [job.id])
+    await service('pending_sweep', { limit: 500 })
+    expect((await db.query<{ n: number }>("select count(*)::integer n from app_private.point_jobs where attempt_id=$1 and status='queued'", [started.attemptId])).rows[0].n).toBe(1)
+    expect((await db.query<{ reserved: boolean }>('select exists(select 1 from app_private.point_terminal_reservations where attempt_id=$1) reserved', [started.attemptId])).rows[0].reserved).toBe(true)
+    for (const role of ['anon', 'authenticated', 'service_role']) expect((await db.query<{ allowed: boolean }>("select has_function_privilege($1,'public.point_service_before_prompt_reconciliation(text,jsonb)','EXECUTE') allowed", [role])).rows[0].allowed).toBe(false)
+  })
+
   it('uses inclusive local dates at midnight and preserves complete global detail across pages', async () => {
     const {actor,checkout}=await setup(1001)
     const started=await point<PointCheckout>(actor,{command:'start',operationId:randomUUID(),checkoutId:checkout.id})
@@ -384,6 +591,30 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
       expect(page.cohorts.reduce((s,c)=>s+c.grossCents,0)).toBe(page.grossCents)
     } while(cursor)
     expect(rows).toBeGreaterThan(100);expect(total).toBe(expected)
+  })
+
+  it('sends only the current person amount to Point and changes balance only after verified approval', async () => {
+    const { actor, reservation, checkout } = await setup(76068, 'sandbox', false, randomUUID(), 1, 0, 1, [50000, 4000, 22068])
+    const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })
+    const evidence = await facts(started.attemptId!)
+    expect(evidence.amountCents).toBe(50000)
+    expect(await pos(actor, { command: 'order', orderId: reservation.orderId })).toMatchObject({ orderKind: 'counter', balanceCents: 76068, paidCents: 0 })
+    await service('apply_order', { ...evidence, state: 'unknown_review' })
+    expect(await pos(actor, { command: 'order', orderId: reservation.orderId })).toMatchObject({ balanceCents: 76068, paidCents: 0 })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    await service('apply_order', { ...evidence, state: 'approved_verified' })
+    const current = await pos<OperationalOrder>(actor, { command: 'order', orderId: reservation.orderId })
+    expect(current).toMatchObject({ orderKind: 'counter', balanceCents: 26068, paidCents: 50000, status: 'open', amountParts: [4000, 22068] })
+    const next = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: current.id, expectedRevision: current.revision, items: [], amountsCents: [4000, 22068], paymentMethod: 'cash' })
+    expect(next.totalCents).toBe(4000)
+    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    for (const command of ['report_period', 'report_own_period']) {
+      const report = await pos<BusinessPeriodReport>(actor, { command, date, period: 'day' })
+      expect(report.totals).toMatchObject({ grossCents: 50000, discountCents: 0, salesCents: 50000 })
+      expect(report.totals.products[0]).toMatchObject({ quantity: 0, salesCents: 50000 })
+    }
+    const ledger = (await db.query<{ result: Record<string, number> }>('select app_private.ops_financial_ledger_check() result')).rows[0].result
+    expect(Object.values(ledger).every(value => value === 0)).toBe(true)
   })
 })
 
@@ -405,16 +636,17 @@ async function point<T = unknown>(actor: Actor, command: Record<string, unknown>
 async function service<T = unknown>(action: string, payload: Record<string, unknown>): Promise<T> {
   return (await db.query<{ result: T }>('select public.point_service($1,$2::jsonb) result', [action, JSON.stringify(payload)])).rows[0].result
 }
-async function setup(price = 1001, environment = 'live', official = false) {
+async function setup(price = 1001, environment = 'live', official = false, receiverId = randomUUID(), quantity = 1, discountCents = 0, collectQuantity = 1, amountsCents?: number[]) {
   const actor = await newActor(); await pos(actor, { command: 'activate_operations', operationId: randomUUID() }); await pos(actor, { command: 'open_shift', operationId: randomUUID(), openingCents: 0 })
-  if (official) await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId: randomUUID(), tokensCiphertext: 'synthetic-test-token', expiresAt: '2099-01-01T00:00:00Z' })
+  if (official) await service('official_sandbox_connect', { businessId: actor.businessId, userId: actor.userId, authSessionId: actor.sessionId, operatorToken: actor.token, operationId: randomUUID(), receiverId, tokensCiphertext: 'synthetic-test-token', expiresAt: '2099-01-01T00:00:00Z' })
   const connection = official ? (await point<PointSettings>(actor, { command: 'settings' })).connection! : await service<{ id: string }>('connection_save', { businessId: actor.businessId, environment, receiverId: randomUUID(), tokensCiphertext: 'encrypted-synthetic-tokens', expiresAt: new Date(Date.now() + 60_000).toISOString() })
   const terminalId = official ? 'NEWLAND_N950__SBX0000001' : `SYNTHETIC-${randomUUID()}`
-  await service('terminal_save', { connectionId: connection.id, terminalId, serial: terminalId, storeId: 'STORE-1', posId: 'POS-1', mode: 'PDV', verified: true, physicallyConfirmed: true })
+  if (!official) await service('terminal_save', { connectionId: connection.id, terminalId, serial: terminalId, storeId: 'STORE-1', posId: 'POS-1', mode: 'PDV', verified: true, physicallyConfirmed: true })
   await point(actor, { command: 'activate', enabled: true })
   const product = await pos<Product>(actor, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Producto ficticio', category: 'Bebidas', priceCents: price, details: { ...emptyDetails(), taxTreatment: 'vat_16', taxBps: 1600 } })
-  const order = await pos<OperationalOrder>(actor, { command: 'save_order', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, name: 'Cuenta ficticia', tableId: null, items: [{ lineId: randomUUID(), productId: product.id, quantity: 1, unitPriceCents: price, version: product.version, note: '' }] })
-  const reservation = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, items: [{ lineId: order.items[0].lineId, quantity: 1 }], paymentMethod: 'card_integrated' })
+  let order = await pos<OperationalOrder>(actor, { command: 'save_order', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, name: 'Cuenta ficticia', tableId: null, ...(amountsCents ? { orderKind: 'counter' } : {}), items: [{ lineId: randomUUID(), productId: product.id, quantity, unitPriceCents: price, version: product.version, note: '' }] })
+  if (discountCents) order = await pos<OperationalOrder>(actor, { command: 'set_order_discount', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, discount: { kind: 'fixed', value: discountCents, reason: 'Redondeo sintético' } })
+  const reservation = await pos<CheckoutAttempt>(actor, { command: 'prepare_checkout', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, items: amountsCents ? [] : [{ lineId: order.items[0].lineId, quantity: collectQuantity }], ...(amountsCents ? { amountsCents } : {}), paymentMethod: 'card_integrated' })
   const checkout = await point<PointCheckout>(actor, { command: 'prepare', operationId: randomUUID(), checkoutAttemptId: reservation.id, terminalId })
   return { actor, checkout, reservation, connectionId: connection.id }
 }

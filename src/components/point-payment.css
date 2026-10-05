@@ -111,6 +111,9 @@
 .point-payment .point-payment-message.is-error { color: var(--color-danger); }
 .point-payment .point-payment-send { display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding-inline: 16px; }
 .point-payment-send > strong { margin-left: auto; font-size: 16px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.point-payment-send-progress { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 18px; width: 18px; height: 18px; opacity: 0; transition: opacity 100ms ease-out 180ms; }
+.point-payment-send-progress[data-active=true] { opacity: 1; }
+.point-payment-send-progress:not([data-active=true]) { transition-delay: 0ms; }
 .point-payment-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 20px; }
 .point-payment-actions button { min-height: 48px; padding: 0; border: 0; background: transparent; color: var(--color-muted); font-size: 14px; cursor: pointer; }
 .point-payment-actions button:enabled:hover { color: var(--color-ink); }
@@ -137,6 +140,10 @@
 
 @media (width < 47.5rem) {
   .checkout-methods[data-many=true] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .point-payment-send-progress { transition: none; }
 }
 
 @media (width < 24rem) {

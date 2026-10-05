@@ -21,9 +21,7 @@ import { accountRequest, AccountClientError, accountErrorMessages } from "./lib/
 import type {
   AccountErrorCode,
   BusinessContext,
-  BusinessProfile,
   BusinessSummary,
-  BusinessType,
   InvitationDetails,
   OperatorSession,
 } from "./lib/contracts";
@@ -43,6 +41,8 @@ import {
 } from "./lib/business-access";
 const InvitationScanner = lazy(() => import("./components/InvitationScanner"));
 import type { Destination } from "./components/HomeScreen";
+import BusinessSetup, { type BusinessDraft } from "./components/BusinessSetup";
+import { newBusinessProfile } from "./lib/business-profile";
 // Capture/scrub the Point return before Auth initialization and PIN entry, including lazy Home loading.
 import "./lib/point-client";
 const HomeScreen = lazy(() => import("./components/HomeScreen"));
@@ -53,6 +53,7 @@ import "./access-polish.css";
 import RequestPinRecovery from "./components/RequestPinRecovery";
 const TeamPanel = lazy(() => import("./components/TeamPanel"));
 const BusinessSettings = lazy(() => import("./components/BusinessSettings"));
+const AccountProfileSettings = lazy(() => import("./components/AccountProfileSettings"));
 const NotificationsPanel = lazy(
   () => import("./components/NotificationsPanel"),
 );
@@ -100,26 +101,10 @@ type Screen =
   | "employee"
   | "employee-entry"
   | "notifications"
-  | "change-pin";
-interface BusinessDraft {
-  name: string;
-  businessType: BusinessType;
-  timezone: string;
-  profile: BusinessProfile;
-}
+  | "change-pin"
+  | "account-profile";
 const initialDraft: BusinessDraft = {
-  name: "",
-  businessType: "cafe",
-  timezone: "America/Mexico_City",
-  profile: {
-    branchName: "Sucursal principal",
-    registerName: "Caja 1",
-    address: "",
-    city: "",
-    state: "",
-    contactPhone: "",
-    paymentMethods: ["cash", "card_external"],
-  },
+  name: "", businessType: "cafe", timezone: "America/Mexico_City", profile: newBusinessProfile('cafe'),
 };
 const invitationKey = "pos-mexico-pending-invitation";
 function identitySessionKey(identity: Session | null | undefined) {
@@ -211,15 +196,6 @@ const accountMessages: Record<AccountErrorCode | "NETWORK_ERROR", string> = {
   EMAIL_UNAVAILABLE: "No pudimos enviar el correo. Intenta de nuevo más tarde.",
   NETWORK_ERROR: "No pudimos conectar. Revisa tu conexión e intenta de nuevo.",
 };
-const timezones = [
-  ["America/Mexico_City", "Ciudad de México"],
-  ["America/Cancun", "Cancún"],
-  ["America/Monterrey", "Monterrey"],
-  ["America/Mazatlan", "Mazatlán"],
-  ["America/Hermosillo", "Hermosillo"],
-  ["America/Tijuana", "Tijuana"],
-] as const;
-
 function GoogleMark() {
   return (
     <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24">
@@ -1188,7 +1164,7 @@ function AccountApp() {
       setConfirmation("");
       setDraft(initialDraft);
       operationDraft.current = null;
-      navigate(creatingBusiness ? "ready" : "home");
+      navigate("home");
     } catch (problem) {
       if (requestEpoch === epoch.current) showFailure(problem);
     } finally {
@@ -1283,6 +1259,7 @@ function AccountApp() {
     "team",
     "devices",
     "notifications",
+    "account-profile",
   ].includes(screen);
   const isHome = screen === "home" && Boolean(operator);
   const isReady = screen === "ready" && Boolean(operator);
@@ -1291,7 +1268,9 @@ function AccountApp() {
   const accountName = typeof identityName === 'string' && identityName.trim()
     ? identityName.trim()
     : session?.user.email ?? 'Mi cuenta';
-  const managementContent = screen === 'change-pin' && operator ? (
+  const managementContent = screen === 'account-profile' && operator ? (
+    <AccountProfileSettings business={operator.business} operatorToken={operator.operatorToken} accountName={accountName} onSaved={savedBusiness} onSessionError={showFailure} />
+  ) : screen === 'change-pin' && operator ? (
     <section className="screen management-polish access-pin-change">
       <h1 className="sr-only">Cambiar mi PIN</h1>
       <form onSubmit={(event) => void saveChangedPin(event)}>
@@ -1360,7 +1339,7 @@ function AccountApp() {
   ) : screen === 'notifications' && operator?.business.role === 'owner' ? (
     <NotificationsPanel businessId={operator.business.id} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} onUnreadCount={setUnreadCount} />
   ) : undefined;
-  const managementTitle = ({team:'Empleados', devices:'Dispositivos', settings:'Configuración', notifications:'Notificaciones', 'change-pin':'Mi acceso'} as Record<string,string>)[screen];
+  const managementTitle = ({team:'Empleados', devices:'Dispositivos', settings:'Configuración', notifications:'Notificaciones', 'change-pin':'Mi acceso', 'account-profile':'Mi cuenta'} as Record<string,string>)[screen];
 
   const back = () => {
     setError("");
@@ -1376,27 +1355,6 @@ function AccountApp() {
       </Suspense>
     );
 
-  const profileField = (
-    key: keyof Omit<BusinessProfile, "paymentMethods">,
-    label: string,
-    required = false,
-  ) => (
-    <div className="field">
-      <label htmlFor={`profile-${key}`}>{label}</label>
-      <input
-        id={`profile-${key}`}
-        value={draft.profile[key]}
-        required={required}
-        maxLength={key === "address" ? 300 : key === "contactPhone" ? 30 : 100}
-        onChange={(event) =>
-          setDraft({
-            ...draft,
-            profile: { ...draft.profile, [key]: event.target.value },
-          })
-        }
-      />
-    </div>
-  );
 
   return (
     <div
@@ -1779,115 +1737,7 @@ function AccountApp() {
               onSessionError={showFailure}
             />
           ) : screen === "business" ? (
-            <section className="access-flow screen access-business-screen">
-              <h1>Crea tu negocio</h1>
-              <form onSubmit={nextBusiness}>
-                <div className="field">
-                  <label htmlFor="business-name">Nombre del negocio</label>
-                  <input
-                    id="business-name"
-                    name="businessName"
-                    autoComplete="organization"
-                    placeholder="Nombre de tu negocio"
-                    maxLength={100}
-                    required
-                    value={draft.name}
-                    onChange={(event) =>
-                      setDraft({ ...draft, name: event.target.value })
-                    }
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="business-type">Tipo de negocio</label>
-                  <select
-                    id="business-type"
-                    value={draft.businessType}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        businessType: event.target.value as BusinessType,
-                      })
-                    }
-                  >
-                    <option value="cafe">Cafetería</option>
-                    <option value="restaurant">Restaurante</option>
-                    <option value="other">Otro</option>
-                  </select>
-                </div>
-                <div className="field">
-                  <label htmlFor="business-timezone">Zona horaria</label>
-                  <select
-                    id="business-timezone"
-                    value={draft.timezone}
-                    onChange={(event) =>
-                      setDraft({ ...draft, timezone: event.target.value })
-                    }
-                  >
-                    {timezones.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {profileField("branchName", "Sucursal", true)}
-                {profileField("registerName", "Caja", true)}
-                <details>
-                  <summary>Dirección y contacto (opcional)</summary>
-                  <div className="profile-extra flex flex-col gap-4">
-                    {profileField("address", "Dirección")}
-                    {profileField("city", "Ciudad")}
-                    {profileField("state", "Estado")}
-                    {profileField("contactPhone", "Teléfono público")}
-                  </div>
-                </details>
-                <fieldset className="payment-options flex flex-col gap-2 rounded-lg border border-line px-4 py-3">
-                  <legend>Métodos de pago</legend>
-                  {(
-                    [
-                      ["cash", "Efectivo"],
-                      ["card_external", "Tarjeta en terminal"],
-                      ["transfer", "Transferencia"],
-                    ] as const
-                  ).map(([method, label]) => (
-                    <label key={method}>
-                      <input
-                        type="checkbox"
-                        checked={draft.profile.paymentMethods.includes(method)}
-                        onChange={(event) =>
-                          setDraft({
-                            ...draft,
-                            profile: {
-                              ...draft.profile,
-                              paymentMethods: event.target.checked
-                                ? [...draft.profile.paymentMethods, method]
-                                : draft.profile.paymentMethods.filter(
-                                    (entry) => entry !== method,
-                                  ),
-                            },
-                          })
-                        }
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </fieldset>
-                {error && (
-                  <p
-                    className="error-message mt-4 border-l-3 border-danger py-0.5 pl-3 text-sm text-danger"
-                    role="alert"
-                  >
-                    {error}
-                  </p>
-                )}
-                <div className="screen-actions mt-10 flex flex-col gap-3">
-                  <button className="button primary" type="submit">
-                    Continuar
-                    <ArrowRight size={20} aria-hidden="true" />
-                  </button>
-                </div>
-              </form>
-            </section>
+            <BusinessSetup draft={draft} onChange={setDraft} onSubmit={nextBusiness} error={error} />
           ) : screen === "unlock" ? (
             <PinUnlockScreen
               businessName={selected?.name ?? ""}
@@ -1913,14 +1763,16 @@ function AccountApp() {
                 <ArrowLeft size={20} aria-hidden="true" />
                 Volver
               </button>
-              <div className="access-symbol">
-                <LockKeyhole size={24} strokeWidth={1.5} aria-hidden="true" />
-              </div>
+              <ol className="business-setup-progress" aria-label="Crear negocio">
+                <li className="current"><span aria-hidden="true">1</span>Negocio</li>
+                <li className="current"><span aria-hidden="true">2</span>Operación</li>
+                <li className="current" aria-current="step"><span aria-hidden="true">3</span>PIN</li>
+              </ol>
               <h1>Crea tu PIN</h1>
-              <p>Para entrar a {draft.name}.</p>
+              <p className="text-sm text-muted">{draft.name}</p>
               <form onSubmit={(event) => void submitPin(event)}>
                 <p id="pin-help" className="field-help text-sm text-muted">
-                  Usa 6 dígitos.
+                  Seis dígitos para entrar a tu negocio.
                 </p>
                 <PinField label="PIN" value={pin} onChange={setPin} disabled={busy || secondsLeft > 0} />
                 <PinField
@@ -1943,7 +1795,7 @@ function AccountApp() {
                 )}
                 <div className="screen-actions mt-10 flex flex-col gap-3">
                   <button className="button primary" type="submit" disabled={busy || secondsLeft > 0} aria-busy={busy}>
-                    <AccessButtonContent busy={busy}>Crear PIN<ArrowRight size={20} aria-hidden="true" /></AccessButtonContent>
+                    <AccessButtonContent busy={busy}>Crear negocio<ArrowRight size={20} aria-hidden="true" /></AccessButtonContent>
                   </button>
                 </div>
               </form>
@@ -2093,6 +1945,7 @@ function AccountApp() {
               onDevices={() => openMoreScreen("devices", "devices")}
               onSwitchBusiness={changeBusiness}
               onChangePin={(returnFocus = "pin") => changePin(returnFocus)}
+              onAccountProfile={() => openMoreScreen("account-profile", "account")}
               onNotifications={() =>
                 openMoreScreen("notifications", "notifications")
               }

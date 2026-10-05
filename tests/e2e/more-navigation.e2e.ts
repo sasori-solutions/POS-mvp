@@ -18,7 +18,7 @@ async function noOverflow(page: Page) {
 }
 
 test('owner management tasks fit the viewport and remain directly navigable', async ({ page }, info) => {
-  await mockOnboarding(page, { existingBusiness: true })
+  await mockOnboarding(page, { existingBusiness: true, paymentMethods: ['cash', 'card_integrated'] })
   if (info.project.name === 'mobile') await page.setViewportSize({ width: 390, height: 844 })
   await unlock(page)
   await expect(page.locator('#pos-section-title')).toHaveText('Inicio')
@@ -59,13 +59,37 @@ test('owner management tasks fit the viewport and remain directly navigable', as
   }
 })
 
-test('employee More retains access and session groups within the viewport', async ({ page }) => {
+test('legacy card preferences convert only after an explicit save and remain unchanged on the next visit', async ({ page }) => {
+  const { calls } = await mockOnboarding(page, { existingBusiness: true })
+  await unlock(page)
+  await openOwnerTask(page, 'Datos del negocio')
+  const save = page.getByRole('button', { name: 'Guardar cambios', exact: true })
+  await expect(page.getByRole('checkbox', { name: 'Tarjeta', exact: true })).toBeChecked()
+  await expect(page.getByRole('checkbox', { name: 'Tarjeta externa', exact: true })).toHaveCount(0)
+  await expect(save).toBeEnabled()
+  expect(calls.filter(call => call.action === 'update_business')).toHaveLength(0)
+  await save.click()
+  await expect(page.getByText('Cambios guardados.', { exact: true })).toBeVisible()
+  const updates = calls.filter(call => call.action === 'update_business')
+  expect(updates).toHaveLength(1)
+  expect(updates[0]).toMatchObject({ action: 'update_business', profile: { paymentMethods: ['cash', 'card_integrated'] } })
+  await expect(save).toBeDisabled()
+  await openOwnerTask(page, 'Inicio')
+  await openOwnerTask(page, 'Datos del negocio')
+  await expect(page.getByRole('checkbox', { name: 'Tarjeta', exact: true })).toBeChecked()
+  await expect(page.getByRole('button', { name: 'Guardar cambios', exact: true })).toBeDisabled()
+  expect(calls.filter(call => call.action === 'update_business')).toHaveLength(1)
+})
+
+test('employee access and session actions stay available in More or the desktop account menu', async ({ page }) => {
   await mockOnboarding(page, { existingBusiness: true, role: 'cashier' })
   await unlock(page)
-  await openOperationalMore(page)
-  await expect(page.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Sesión', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Cambiar mi PIN', exact: true })).toBeVisible()
+  const actions = await openOperationalMore(page)
+  if (await page.getByRole('region', { name: 'Más', exact: true }).isVisible()) {
+    await expect(actions.getByRole('heading', { name: 'Mi acceso', exact: true })).toBeVisible()
+    await expect(actions.getByRole('heading', { name: 'Sesión', exact: true })).toBeVisible()
+  } else await expect(actions).toHaveAccessibleName('Opciones de cuenta')
+  for (const name of ['Cambiar mi PIN', 'Cambiar negocio', 'Cerrar sesión']) await expect(actions.getByRole('button', { name, exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).toHaveCount(0)
   await noOverflow(page)
 })

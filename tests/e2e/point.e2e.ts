@@ -9,8 +9,8 @@ async function sell(page: Page) {
   await page.getByRole('button',{name:/^Agregar Latte,/}).click()
   const view = page.getByRole('button',{name:/^Ver cuenta/}); if (await view.isVisible()) await view.click()
   await page.getByRole('button',{name:'Cobrar',exact:true}).click()
-  await page.locator('label').filter({has:page.getByRole('radio',{name:'Mercado Pago A terminal',exact:true})}).click()
-  await expect(page.getByRole('radio',{name:'Mercado Pago A terminal',exact:true})).toBeChecked()
+  await page.locator('label').filter({has:page.getByRole('radio',{name:'Tarjeta Mercado Pago',exact:true})}).click()
+  await expect(page.getByRole('radio',{name:'Tarjeta Mercado Pago',exact:true})).toBeChecked()
   await expect(page.getByRole('button',{name:/^Enviar a terminal/})).toBeEnabled()
 }
 
@@ -33,6 +33,9 @@ test('Point linked SQL payment creates one sale and reports verified volume; own
 })
 
 test('uncertain action_required blocks cart/payment changes and restores through reload/PIN and two tabs', async ({page,context}) => {
+  // Several app boots and independent polling views share a constrained CI runner.
+  // Keep each assertion's deadline; allow the complete recovery scenario to finish.
+  test.setTimeout(60_000)
   const backend = await mockPoint(page,{state:'unknown_review',startLoss:true})
   const other = await context.newPage()
   try {
@@ -40,7 +43,11 @@ test('uncertain action_required blocks cart/payment changes and restores through
     await page.getByRole('button',{name:/^Enviar a terminal/}).click()
     await expect(page.getByRole('heading',{name:'Pago por confirmar'})).toBeVisible()
     await expect(page.getByRole('button',{name:'Cerrar',exact:true})).toBeDisabled()
-    await expect(page.getByRole('radio',{name:'Efectivo',exact:true})).toHaveCount(0)
+    await expect(page.getByRole('radio',{name:'Efectivo',exact:true})).toBeVisible()
+    await expect(page.getByRole('radio',{name:'Efectivo',exact:true})).toBeDisabled()
+    await expect(page.getByRole('radio',{name:'Tarjeta Mercado Pago',exact:true})).toBeChecked()
+    await expect(page.getByRole('radio',{name:'Tarjeta Mercado Pago',exact:true})).toBeDisabled()
+    await expect(page.getByRole('button',{name:'Registrar pago',exact:true})).toHaveCount(0)
     await page.reload(); await page.getByTestId('pin-input').fill(fixturePin)
     await expect(page.getByRole('button',{name:/^Recuperar cobro/})).toBeVisible()
     await page.getByRole('button',{name:/^Recuperar cobro/}).click()

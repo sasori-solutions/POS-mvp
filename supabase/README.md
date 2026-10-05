@@ -1,5 +1,11 @@
 # POS México account backend
 
+## Amount-based checkout — current local candidate
+
+Migration `20261005014000_amount_split_checkout.sql` adds monetary parts to the existing reserved checkout and Point materialization. It follows business preferences, employee-scoped reports and canonical order intent; it preserves their permissions, accepted receipts and immutable history. `prepare_checkout` / `update_checkout` accept exact positive integer `amountsCents` with `items: []`. Their sum must equal the pending balance. Only a confirmed checkout or verified provider approval changes that balance. Partial line receipts retain allocated gross, discount and included IVA while recording settled units once.
+
+Business and personal report scopes use those same immutable allocated amounts, including receipts with zero newly settled units. New helpers remain private, service-only RPC authorization remains intact, and older payloads/retries remain supported. See [Dividir por cantidad](../docs/amount-split-checkout.md) for the flow and contract. Apply this compatible backend before publishing the corresponding frontend; this local candidate does not establish a hosted or hardware deployment.
+
 ## Permanent employee removal — current source, 2 October 2026
 
 Agente de Larios. Migration `20261002001100_employee_permanent_unlink.sql` supersedes the restoration policy in 0004/0009. Deletion permanently unlinks the employee from one business. Returning through a fresh owner invitation creates a new employee identity, PIN and device enrollment; it does not restore archived credentials. See [permanent employee unlinking](../docs/employee-permanent-unlink.md) for migration checks, local verification and release order. Dated release evidence below retains its historical meaning and does not establish deployment of this change.

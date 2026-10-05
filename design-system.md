@@ -45,3 +45,7 @@ Products/sales correction (2 October 2026): the current human request replaces t
 ## Gestión y operación · decisión humana del 3 de octubre de 2026
 
 La imagen aportada por Larios y el plan aprobado en `docs/owner-employee-experience-plan.md` guían el diseño actual. Dueño: sidebar carbón, tarjetas blancas y cifras principales; empleado: navegación blanca, catálogo fotográfico, cuenta compacta y acciones negras. Inicio y Reportes comparten filtros Día/Semana/Mes y datos del servidor. Comandas usa Pendientes/Completadas. Teléfono usa navegación inferior según los destinos permitidos; desde 1024px aparece sidebar. Se conservan IBM Plex Sans, Lucide, objetivos táctiles de 48px y reduced motion. GSAP anima encabezados y los paneles existentes, sin retrasar el cobro. Las funciones de Clientes/CRM, impresión y envío de tickets de la imagen no forman parte de esta entrega.
+
+## Negocio y operación · decisión humana del 4 de octubre de 2026
+
+Crear negocio usa Negocio → Operación → PIN e ingreso directo a Inicio. Se mantienen tokens, tipografía y controles táctiles del módulo. Cuentas abiertas permiten servicio/cocina antes de cobrar; Comandas presenta Pendientes → En proceso → Completadas. El empleado dispone de sus módulos autorizados en sidebar y menú móvil. La carga inicial usa placeholders; las acciones y refrescos conservan datos válidos y muestran progreso localizado. [Contrato, alcance y evidencia local](docs/business-operations-review-2026-10-04.md).

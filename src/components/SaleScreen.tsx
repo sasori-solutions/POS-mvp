@@ -15,6 +15,7 @@ import { AccountClientError } from "../lib/account";
 import type { PaymentMethod } from "../lib/contracts";
 import type { OperationalOrder } from "../lib/operations-contracts";
 import { checkoutTotals } from "../lib/checkout-selection";
+import { checkoutAmountTotals } from "../lib/checkout-amounts";
 import type {
   CartLine,
   ItemSelection,
@@ -49,11 +50,13 @@ import ProductSelection from "./ProductSelection";
 import SaleAccountPanel from "./SaleAccountPanel";
 import CheckoutPanel from "./CheckoutPanel";
 import PaymentMethodPicker from "./PaymentMethodPicker";
+import { collectionPaymentMethods, isManualCollectionMethod } from '../lib/payment-methods';
 import {
   CatalogFilters,
   EmptyCatalog,
   SaleDetail,
   PosDialog,
+  paymentLabels,
 } from "./PosShared";
 import { accessErrorCodes, type CatalogState } from "./useCatalog";
 
@@ -165,10 +168,15 @@ function SaleScreenSession({
   );
   const account = savedCounter?.status === 'open' ? savedCounter : undefined;
   const remainingAccountLines = account?.items.filter(line => line.quantity > line.paidQuantity) ?? [];
-  const remainingAccountTotals = account ? remainingAccountLines.map(line => ({ ...line, ...checkoutTotals(account, [{ lineId: line.lineId, quantity: line.quantity - line.paidQuantity }]) })) : [];
+  const remainingAmounts = account?.amountSplit ? new Map(checkoutAmountTotals(account, account.balanceCents).items.map(line => [line.lineId, line])) : undefined;
+  const remainingAccountTotals = account ? remainingAccountLines.map(line => {
+    const amount = remainingAmounts?.get(line.lineId);
+    return { ...line, ...(amount ? { grossCents: amount.allocatedGrossCents, discountCents: amount.discountCents, totalCents: amount.totalCents, taxCents: amount.taxCents } : checkoutTotals(account, [{ lineId: line.lineId, quantity: line.quantity - line.paidQuantity }])) };
+  }) : [];
   const accountEditable = Boolean(account && account.phase === 'service' && !account.frozen && onAccountAdd && onAccountQuantity);
   const frozen = busy || Boolean(pending) || storageError || Boolean(account && (!accountEditable || !collectionReady));
-  const manualMethods = catalog.paymentMethods.filter(method => method !== 'card_integrated');
+  const paymentChoices = collectionPaymentMethods(catalog.paymentMethods);
+  const manualMethods: PaymentMethod[] = catalog.paymentMethods.filter(isManualCollectionMethod);
   useEffect(() => {
     if (savedCounter && savedCounter.status !== 'open') {
       setCart([]);
@@ -239,9 +247,9 @@ function SaleScreenSession({
       !pending &&
       !checkout &&
       catalog.paymentMethods.length &&
-      !catalog.paymentMethods.includes(payment)
+      !manualMethods.includes(payment)
     )
-      setPayment(catalog.paymentMethods[0]);
+      setPayment(manualMethods[0] ?? paymentChoices[0]);
   }, [catalog.paymentMethods, payment, pending, checkout]);
 
   const displayCart: CartLine[] = pending
@@ -539,10 +547,9 @@ function SaleScreenSession({
   }
 
   async function register() {
-    if (payment === 'card_integrated') return;
     if (submitting.current || storageError || !online) return;
     let command = pendingRef.current;
-    if (!command && (!collectionAllowed || !canCheckout || !catalog.paymentMethods.includes(payment)))
+    if (!command && (!isManualCollectionMethod(payment) || !collectionAllowed || !canCheckout || !manualMethods.includes(payment)))
       return;
     const draft = command ? null : JSON.parse(JSON.stringify(saleCommand(cart, payment, total, crypto.randomUUID()))) as PendingSale;
     submitting.current = true;
@@ -1123,13 +1130,9 @@ function SaleScreenSession({
             {notice && <p role="status">{notice}</p>}
             {error && <p className="checkout-error" role="alert">{error}</p>}
 
-              <PaymentMethodPicker name="sale-payment" methods={pending ? [pending.paymentMethod] : manualMethods}
-                value={payment} onChange={setPayment} disabled={frozen} />
-              {payment === "card_external" ? (
-                <p className="payment-instructions py-2 text-sm">
-                  Cobra en tu terminal y registra el pago.
-                </p>
-              ) : null}
+              {pending ? <p className="payment-instructions py-2 text-sm">{paymentLabels[pending.paymentMethod]} · Recuperar registro</p> : <PaymentMethodPicker name="sale-payment" methods={paymentChoices}
+                value={payment} onChange={setPayment} disabled={frozen} disabledMethods={['card_integrated']} />}
+              {!pending && paymentChoices.includes('card_integrated') && <p className="payment-instructions py-2 text-sm">Vincula una terminal para cobrar con tarjeta.</p>}
               <button
                 className="pos-button pos-primary checkout-confirm"
                 disabled={
@@ -1137,7 +1140,7 @@ function SaleScreenSession({
                   storageError ||
                   !online ||
                   (!pending &&
-                    (!canCheckout || !catalog.paymentMethods.includes(payment)))
+                    (!canCheckout || !manualMethods.includes(payment)))
                 }
                 aria-busy={busy}
                 onClick={() => void register()}

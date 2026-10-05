@@ -1,4 +1,4 @@
-# Employee permissions — 2 October 2026
+# Employee permissions — 4 October 2026
 
 The approved Lean POS plan replaces employee role presets with grouped action checkboxes. `owner` remains a protected identity with implicit access to every known operational permission and exclusive business/team administration. Existing employee role strings remain in memberships and invitation transport for identity compatibility; they do not authorize operations or navigation. New employees receive the internal `cashier` identity and the explicitly selected grants.
 
@@ -13,7 +13,13 @@ Migration `20261002001800_employee_permissions.sql` adds a private `employees.pe
 
 The migration does not grant the new order, kitchen, cash, discount, reversal, report or table actions to existing employees. Their owner must choose those grants. Existing PIN hashes, credentials, sessions, invitations, employee IDs and receipts are retained during the upgrade. New employee rows default to no permissions; a role value never restores a preset.
 
-The known permission groups are catalog (`read`, `manage`, `availability`), sales (`create`, `read_own`, `read_all`, `discount`, `reverse`), orders (`read`, `manage`, `cancel`), kitchen (`read`, `operate`), cash (`read`, `open`, `move`, `close`), reports (`read`) and tables (`manage`). Their exact request keys use a period, for example `orders.manage`.
+The known permission groups are catalog (`read`, `manage`, `availability`), sales (`create`, `read_own`, `read_all`, `discount`, `reverse`), orders (`read`, `manage`, `cancel`), kitchen (`read`, `operate`), cash (`read`, `open`, `move`, `close`), reports (`read`, `read_own`) and tables (`manage`). Their exact request keys use a period, for example `orders.manage`.
+
+## Personal metrics
+
+Migration `20261005012000_employee_metrics.sql` adds `reports.read_own` without granting it to existing employees. The owner selects **Consultar solo sus métricas** in Empleados. It permits `report_own_period` through either authorized personal or shared-register transport. The server resolves the current employee ID; requests cannot choose another employee. Historical names do not define identity. Refunds, including Point refunds, belong to the original receipt's seller. The result excludes other operators and business cash differences.
+
+`reports.read` remains the explicit grant for business-wide reports. Granting only `reports.read_own` never permits `report_period`, Point merchant analytics, or all-sales history. When an employee has both report grants, the interface opens their personal metrics; the wider server grant still exists. Changes revoke the employee's existing operators as before. The owner must select grants deliberately; a role string does not add them.
 
 Selecting an action includes its prerequisite: catalog editing/availability and sale creation require catalog reading; discounts require sale creation; reversals require all-sales reading; order editing/cancellation, kitchen operations and cash operations require their respective reading grants. Clearing a prerequisite clears dependent checkboxes. HTTP validation, SQL mutation validation and the employee table constraint reject unknown/duplicate keys and incomplete prerequisites. Valid arrays are canonicalized before retry fingerprinting.
 

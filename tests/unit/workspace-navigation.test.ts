@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { availableDestinations, initialDestination, primaryDestinations } from '../../src/lib/navigation'
+import { availableDestinations, initialDestination, primaryDestinations, sidebarDestinations } from '../../src/lib/navigation'
 import type { BusinessContext } from '../../src/lib/contracts'
 
 test('the protected owner enters management and can use the same operational workspace', () => {
@@ -27,4 +27,12 @@ test.each([
 test('role titles never grant access and previously granted special modules remain reachable', () => {
   expect(initialDestination({ role: 'manager' })).toBe('Más')
   expect(availableDestinations({ role: 'cashier', permissions: ['catalog.read', 'sales.create', 'cash.read', 'reports.read'] })).toEqual(['Venta', 'Productos', 'Caja', 'Reportes', 'Más'])
+})
+
+
+test('the employee sidebar directly exposes all granted modules and personal reports', () => {
+  const business = { role: 'cashier', permissions: ['catalog.read', 'sales.create', 'sales.read_own', 'cash.read', 'reports.read_own'] } as Pick<BusinessContext, 'role' | 'permissions'>
+  expect(sidebarDestinations(business, true)).toEqual(['Venta', 'Ventas', 'Productos', 'Caja', 'Reportes'])
+  expect(availableDestinations(business)).toContain('Reportes')
+  expect(sidebarDestinations({ role: 'cashier', permissions: [] }, true)).toEqual([])
 })

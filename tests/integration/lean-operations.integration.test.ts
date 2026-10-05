@@ -35,6 +35,113 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     }
   },60_000)
 
+  it('persists the three kitchen stages through signed HTTP without changing the confirmed payment', async () => {
+    const { owner, staff } = await fixture(['kitchen.read', 'kitchen.operate'])
+    const order = await createOrder(owner)
+    const receipt = await payAll(owner, order)
+    const batch = (await kitchen(staff)).find(item => item.orderId === order.id)!
+    expect(batch.status).toBe('queued')
+    const before = data(await pos<BusinessDayReport>(owner, { command: 'report', date: businessDate(owner.operator.business.timezone) }))
+    const command = { command: 'set_kitchen_status' as const, operationId: randomUUID(), batchId: batch.id, expectedRevision: batch.revision, status: 'preparing' as const }
+    const preparing = data(await pos<KitchenBatch>(staff, command))
+    expect(preparing).toMatchObject({ status: 'preparing', revision: batch.revision + 1 })
+    expect((await kitchen(owner)).find(item => item.id === batch.id)).toEqual(preparing)
+    const delivered = data(await pos<KitchenBatch>(staff, { ...command, operationId: randomUUID(), expectedRevision: preparing.revision, status: 'delivered' }))
+    expect(delivered.status).toBe('delivered')
+    expect(data(await pos(staff, command))).toEqual(preparing)
+    expect(await pos(staff, { ...command, operationId: randomUUID(), expectedRevision: delivered.revision })).toMatchObject({ status: 409, body: { error: { code: 'BATCH_CHANGED' } } })
+    expect(data(await pos<BusinessDayReport>(owner, { command: 'report', date: businessDate(owner.operator.business.timezone) }))).toEqual(before)
+    expect(data(await pos<Sale>(owner, { command: 'sale', saleId: receipt.saleId! })).totalCents).toBe(receipt.totalCents)
+    expect(count(owner, 'sales')).toBe(1)
+  }, 45_000)
+
+  it('prepares an unpaid restaurant account before collection and never duplicates its batch on payment or replay', async () => {
+    const { owner, staff } = await fixture(['catalog.read', 'sales.create', 'orders.read', 'orders.manage', 'kitchen.read', 'kitchen.operate'])
+    const order = data(await pos<OperationalOrder>(staff, { command: 'save_order', operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, orderKind: 'service', name: 'Mostrador', tableId: null, items: [input(await product(owner), 2)] }))
+    expect(count(owner, 'sales')).toBe(0)
+    expect(order).toMatchObject({ orderKind: 'service', status: 'open', phase: 'service', paidCents: 0, balanceCents: 2002, items: [{ sentQuantity: 0, paidQuantity: 0 }] })
+    const send = { command: 'send_order' as const, operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision }
+    const discarded = await raw(staff.identity, { action: 'pos', ...args(staff), ...send })
+    expect(discarded.status).toBe(200)
+    await discarded.body?.cancel()
+    const sent = data(await pos<OperationalOrder>(staff, send))
+    expect(sent).toMatchObject({ phase: 'service', status: 'open', paidCents: 0, balanceCents: 2002, items: [{ sentQuantity: 2, paidQuantity: 0 }] })
+    const batches = (await kitchen(staff)).filter(batch => batch.orderId === order.id)
+    expect(batches).toHaveLength(1)
+    expect(batches[0]).toMatchObject({ status: 'queued', items: [{ quantity: 2 }] })
+    let batch = data(await pos<KitchenBatch>(staff, { command: 'set_kitchen_status', operationId: randomUUID(), batchId: batches[0].id, expectedRevision: batches[0].revision, status: 'preparing' }))
+    batch = data(await pos<KitchenBatch>(staff, { command: 'set_kitchen_status', operationId: randomUUID(), batchId: batch.id, expectedRevision: batch.revision, status: 'delivered' }))
+    expect(data(await pos(owner, { command: 'order', orderId: order.id }))).toEqual(sent)
+    expect(count(owner, 'sales')).toBe(0)
+    expect(count(owner, 'checkout_attempts')).toBe(0)
+    const checkout = await checkoutPhase(staff, sent)
+    const reserved = await prepare(staff, checkout)
+    const started = data(await pos<CheckoutAttempt>(staff, { command: 'start_checkout', operationId: randomUUID(), attemptId: reserved.id, expectedRevision: reserved.revision }))
+    const payment = confirmation(started)
+    const receipt = data(await pos<CheckoutAttempt>(staff, payment))
+    expect(receipt).toMatchObject({ status: 'completed', totalCents: 2002 })
+    expect(data(await pos(staff, payment))).toEqual(receipt)
+    expect(data(await pos(staff, send))).toEqual(sent)
+    expect(count(owner, 'sales')).toBe(1)
+    expect((await kitchen(staff)).filter(item => item.orderId === order.id)).toEqual([batch])
+    expect(data(await pos(owner, { command: 'order', orderId: order.id }))).toMatchObject({ status: 'paid', paidCents: 2002, balanceCents: 0, items: [{ sentQuantity: 2, paidQuantity: 2 }] })
+  }, 45_000)
+
+  it('persists a direct counter across fresh actor reads and exact retries without allowing service reclassification', async () => {
+    const { owner, staff } = await fixture(['catalog.read', 'sales.create'])
+    const command = { command: 'save_order' as const, operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, orderKind: 'counter' as const, name: 'Venta directa', tableId: null, items: [input(await product(owner))] }
+    const discarded = await raw(staff.identity, { action: 'pos', ...args(staff), ...command })
+    expect(discarded.status).toBe(200)
+    await discarded.body?.cancel()
+    const saved = data(await pos<OperationalOrder>(staff, command))
+    expect(saved).toMatchObject({ orderKind: 'counter', balanceCents: 1001, paidCents: 0 })
+    for (let reload = 0; reload < 3; reload++) {
+      expect(data(await pos<OperationalOrder>(staff, { command: 'order', orderId: saved.id }))).toEqual(saved)
+      expect(data(await pos<OperationsSnapshot>(staff, { command: 'operations' })).orders.find(order => order.id === saved.id)).toEqual(saved)
+      expect(data(await pos<OperationalOrder>(owner, { command: 'order', orderId: saved.id }))).toEqual(saved)
+    }
+    expect((await pos(owner, { command: 'send_order', operationId: randomUUID(), orderId: saved.id, expectedRevision: saved.revision })).body.error?.code).toBe('PERMISSION_DENIED')
+    expect((await pos(staff, { ...command, operationId: randomUUID(), orderId: randomUUID(), orderKind: 'service', name: 'Mostrador' })).body.error?.code).toBe('PERMISSION_DENIED')
+    const edited = data(await pos<OperationalOrder>(staff, { command: 'save_order', operationId: randomUUID(), orderId: saved.id, expectedRevision: saved.revision, name: 'Nombre editable', tableId: null, items: command.items }))
+    expect(edited.orderKind).toBe('counter')
+    expect((await pos(owner, { ...command, operationId: randomUUID(), expectedRevision: edited.revision, orderKind: 'service' })).body.error?.code).toBe('ORDER_CHANGED')
+    expect(count(owner, 'sales')).toBe(0)
+    const receipt = await payAll(staff, edited)
+    expect(receipt).toMatchObject({ status: 'completed', totalCents: 1001 })
+    expect(data(await pos(staff, command))).toEqual(saved)
+    expect(data(await pos<OperationalOrder>(owner, { command: 'order', orderId: saved.id }))).toMatchObject({ orderKind: 'counter', paidCents: 1001, balanceCents: 0, status: 'paid' })
+    expect(count(owner, 'sales')).toBe(1)
+  }, 45_000)
+
+  it('collects an amount plan through signed Auth/Edge with duplicate taps and exact remaining balance',async()=>{
+    const {owner,staff}=await fixture(['catalog.read','sales.create'])
+    const product=data(await pos<Product>(owner,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Consumo por importe sintético',category:'',priceCents:76068,details:{...emptyDetails(),taxBps:1600,taxTreatment:'vat_16'}}))
+    let order=data(await pos<OperationalOrder>(staff,{command:'save_order',operationId:randomUUID(),orderId:randomUUID(),expectedRevision:null,orderKind:'counter',name:'Venta directa',tableId:null,items:[input(product)]}))
+    order=await checkoutPhase(staff,order)
+    expect(await pos(staff,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[],amountsCents:[0,76068],paymentMethod:'cash'})).toMatchObject({status:400,body:{error:{code:'VALIDATION_ERROR'}}})
+    const parts=[50000,4000,22068]
+    for(let n=0;n<parts.length;n++) {
+      const quote=data(await pos<CheckoutAttempt>(staff,{command:'prepare_checkout',operationId:randomUUID(),orderId:order.id,expectedRevision:order.revision,items:[],amountsCents:parts.slice(n),paymentMethod:n===1?'transfer':'cash'}))
+      expect(data(await pos<OperationalOrder>(staff,{command:'order',orderId:order.id})).balanceCents).toBe(order.balanceCents)
+      const command={command:'record_checkout' as const,operationId:randomUUID(),attemptId:quote.id,expectedRevision:quote.revision,confirmed:true as const}
+      if(n===1) {
+        const discarded=await raw(staff.identity,{action:'pos',...args(staff),...command})
+        expect(discarded.status).toBe(200)
+        await discarded.body?.cancel()
+      }
+      const [first,repeated]=await Promise.all([pos<{order:OperationalOrder;attempt:CheckoutAttempt}>(staff,command),pos<{order:OperationalOrder;attempt:CheckoutAttempt}>(staff,command)])
+      const paid=data(first)
+      expect(data(repeated)).toEqual(paid)
+      expect(paid.order.balanceCents).toBe(order.balanceCents-parts[n])
+      order=paid.order
+      expect(order.amountParts).toEqual(parts.slice(n+1))
+    }
+    expect(order).toMatchObject({orderKind:'counter',status:'closed',balanceCents:0,paidCents:76068})
+    expect(count(owner,'sales')).toBe(3)
+    const report=data(await pos<BusinessDayReport>(owner,{command:'report',date:businessDate(owner.operator.business.timezone)}))
+    expect(report).toMatchObject({salesCents:76068,grossCents:76068,taxCents:order.taxCents})
+  },45_000)
+
   it('serves period analytics through signed Auth/Edge with exact totals, tenant isolation and revoked grants', async () => {
     const {owner,staff} = await fixture(['reports.read'])
     const order = await createOrder(owner)
@@ -67,6 +174,50 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     const fresh=data(await call<OperatorSession>(staff.identity,{action:'unlock',businessId:owner.operator.business.id,pin:employeePin}))
     expect(await pos({...staff,operator:fresh},command)).toMatchObject({status:403,body:{error:{code:'PERMISSION_DENIED'}}})
   }, 45_000)
+
+  it('serves personal metrics through Auth/Edge by immutable employee ID with refunds, isolation and revocation', async () => {
+    const grants: BusinessPermission[] = ['catalog.read', 'sales.create', 'orders.read', 'orders.manage', 'reports.read_own']
+    const { owner, staff } = await fixture(grants)
+    const firstEmployee = staff.operator.business.employee!
+    const secondIdentity = await identity()
+    const invitation = data(await call<{ invitation: { invitationCode: string } }>(owner.identity, {
+      action: 'create_employee', ...args(owner), name: firstEmployee.name, role: 'cashier', permissions: grants,
+      pin: null, inviteWithGoogle: true, operationId: randomUUID(),
+    }))
+    const second: Actor = { identity: secondIdentity, operator: data(await call<OperatorSession>(secondIdentity, {
+      action: 'accept_invitation', invitationCode: invitation.invitation.invitationCode, pin: employeePin, operationId: randomUUID(),
+    })) }
+    expect(second.operator.business.employee!.name).toBe(firstEmployee.name)
+    expect(second.operator.business.employee!.id).not.toBe(firstEmployee.id)
+    const item = await product(owner)
+    const ownReceipt = await payAll(staff, await createOrder(staff, [input(item)]))
+    await payAll(second, await createOrder(second, [input(item, 3)]))
+    expect(sql(`select employee_id from app_private.sales where business_id=${uuid(owner.operator.business.id)} and id=${uuid(ownReceipt.saleId!)};`).trim()).toBe(firstEmployee.id)
+    const command = { command: 'report_own_period' as const, date: businessDate(owner.operator.business.timezone), period: 'day' as const }
+    const personal = data(await pos<BusinessPeriodReport>(staff, command))
+    expect(personal.totals).toMatchObject({ salesCents: 1001, saleCount: 1, reversalCents: 0, netCents: 1001, operators: [], cashDifferences: [] })
+    expect(personal.totals.products).toMatchObject([{ productId: item.id, quantity: 1, salesCents: 1001 }])
+    expect(personal.series.reduce((sum, point) => sum + point.salesCents, 0)).toBe(1001)
+    expect(data(await pos<BusinessPeriodReport>(second, command)).totals.salesCents).toBe(3003)
+    expect(await pos(staff, { ...command, command: 'report_period' })).toMatchObject({ status: 403, body: { error: { code: 'PERMISSION_DENIED' } } })
+    for (const selector of [{ employeeId: second.operator.business.employee!.id }, { operatorName: firstEmployee.name }, { scope: 'business' }]) {
+      expect(await pos(staff, { ...command, ...selector } as PosCommand)).toMatchObject({ status: 400, body: { error: { code: 'VALIDATION_ERROR' } } })
+    }
+    let refund = data(await pos<CheckoutAttempt>(owner, { command: 'prepare_reversal', operationId: randomUUID(), saleId: ownReceipt.saleId!, reason: 'Devolución de venta propia sintética' }))
+    refund = data(await pos<CheckoutAttempt>(owner, { command: 'start_checkout', operationId: randomUUID(), attemptId: refund.id, expectedRevision: refund.revision }))
+    data(await pos(owner, confirmation(refund)))
+    const afterRefund = data(await pos<BusinessPeriodReport>(staff, command))
+    expect(afterRefund.totals).toMatchObject({ salesCents: 1001, reversalCents: 1001, netCents: 0 })
+    expect(afterRefund.series.reduce((sum, point) => sum + point.reversalCents, 0)).toBe(1001)
+    expect(data(await pos<BusinessPeriodReport>(owner, command)).totals.reversalCents).toBe(0)
+    expect(data(await pos<BusinessPeriodReport>(second, command)).totals).toMatchObject({ salesCents: 3003, reversalCents: 0, netCents: 3003 })
+    const other = await fixture([])
+    expect(await call(staff.identity, { action: 'pos', ...args(staff), businessId: other.owner.operator.business.id, ...command })).toMatchObject({ status: 401, body: { error: { code: 'SESSION_INVALID' } } })
+    data(await call(owner.identity, { action: 'update_employee', ...args(owner), employeeId: firstEmployee.id, name: firstEmployee.name, role: 'cashier', active: true, pin: null, permissions: [] }))
+    expect(await pos(staff, command)).toMatchObject({ status: 401, body: { error: { code: 'SESSION_INVALID' } } })
+    const fresh = data(await call<OperatorSession>(staff.identity, { action: 'unlock', businessId: owner.operator.business.id, pin: employeePin }))
+    expect(await pos({ ...staff, operator: fresh }, command)).toMatchObject({ status: 403, body: { error: { code: 'PERMISSION_DENIED' } } })
+  }, 60_000)
 
   it('reserves before manual collection and records a split sale plus comanda with one idempotent final action', async () => {
     const {owner,staff,shift}=await fixture()

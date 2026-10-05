@@ -10,6 +10,7 @@ export const accountErrorMessages: Record<AccountErrorCode, string> = {
   POINT_CHECKOUT_NOT_FOUND: 'No encontramos este cobro integrado.',
   POINT_RESULT_UNCERTAIN: 'Estamos verificando el cobro. Conserva este intento sin cobrar de nuevo.',
   POINT_STATE_INVALID: 'Revisa el estado actual antes de continuar.',
+  POINT_AMOUNT_INVALID: 'El importe está fuera del rango admitido por esta terminal.',
   POINT_FACT_MISMATCH: 'Los datos del proveedor requieren revisión. No confirmamos este cobro.',
   POINT_REFUND_LIMIT: 'El importe supera el saldo disponible para devolución.',
   POINT_REFUND_ALLOCATION_REQUIRED: 'Indica la mercancía y propina de la devolución con su evidencia.',

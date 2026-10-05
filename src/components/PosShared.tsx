@@ -8,7 +8,7 @@ import { money, saleDate } from "../lib/pos";
 export const paymentLabels = {
   cash: "Efectivo",
   card_external: "Tarjeta externa",
-  card_integrated: "Mercado Pago",
+  card_integrated: "Tarjeta",
   transfer: "Transferencia",
 };
 
@@ -181,7 +181,7 @@ export function SaleDetail({ sale }: { sale: Sale }) {
               <strong>{item.name}</strong>
               <p>{item.selectionLabel}</p>
               <p>
-                {item.quantity} × {money(item.unitPriceCents)}
+                {item.allocatedGrossCents !== undefined ? 'Parte de cuenta' : `${item.quantity} × ${money(item.unitPriceCents)}`}
               </p>
             </div>
             <span>{money(item.totalCents)}</span>

@@ -2,7 +2,7 @@
 export type Environment = 'live' | 'sandbox'
 export type PaymentState = 'pending' | 'sent' | 'processing' | 'approved' | 'rejected' | 'canceled' | 'expired' | 'review' | 'partially_refunded' | 'refunded'
 export class ProviderError extends Error {
-  constructor(readonly code: 'UNAVAILABLE' | 'REVOKED' | 'INVALID_RESPONSE' | 'DEFINITIVE_FAILURE' | 'UNCERTAIN' | 'CANCEL_ON_TERMINAL', readonly status = 0) {
+  constructor(readonly code: 'UNAVAILABLE' | 'REVOKED' | 'INVALID_RESPONSE' | 'DEFINITIVE_FAILURE' | 'UNCERTAIN' | 'CANCEL_ON_TERMINAL' | 'REFUND_UNSUPPORTED', readonly status = 0) {
     super(code)
   }
 }
@@ -26,6 +26,14 @@ export function cents(value: unknown): number {
   if (!Number.isSafeInteger(amount) || amount > 999999999) throw new ProviderError('INVALID_RESPONSE')
   return amount
 }
+/** Payments exposes decimal amounts as either JSON numbers or decimal strings. */
+function paymentCents(value: unknown): number {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new ProviderError('INVALID_RESPONSE')
+    return cents(String(value))
+  }
+  return cents(value)
+}
 export interface TokenSet { accessToken: string; refreshToken: string; expiresAt: string; receiverId: string; environment: Environment; scope: string; source?: 'server_test' }
 export interface ExpectedOrder { amountCents: number; currency: string; receiverId: string; environment: Environment; externalReference: string; terminalId: string }
 export interface OrderEvidence {
@@ -39,6 +47,23 @@ export function createPayload(expected: ExpectedOrder): Json {
     transactions: { payments: [{ amount: decimal(expected.amountCents) }] },
     config: { point: { terminal_id: identifier(expected.terminalId), print_on_terminal: 'no_ticket' } } }
 }
+/** Check the durable job against its immutable quote before sending any money instruction. */
+export function validateCreatePayload(raw: unknown, expected: ExpectedOrder, token: TokenSet): Json {
+  if (identifier(expected.receiverId) !== token.receiverId || !['live', 'sandbox'].includes(expected.environment)
+    || expected.environment !== token.environment) throw new ProviderError('INVALID_RESPONSE')
+  const canonical = createPayload(expected)
+  const same = (actual: unknown, required: unknown): boolean => {
+    if (required === null || typeof required !== 'object') return actual === required
+    if (Array.isArray(required)) return Array.isArray(actual) && actual.length === required.length
+      && required.every((value, index) => same(actual[index], value))
+    if (!actual || typeof actual !== 'object' || Array.isArray(actual)) return false
+    const entries = Object.entries(required)
+    return Object.keys(actual).length === entries.length && entries.every(([key, value]) =>
+      Object.hasOwn(actual, key) && same((actual as Json)[key], value))
+  }
+  if (!same(raw, canonical)) throw new ProviderError('INVALID_RESPONSE')
+  return record(raw)
+}
 export function mapState(status: string, detail: string, txStatus: string, txDetail: string): PaymentState {
   if (status === 'action_required' || txStatus === 'action_required' || txDetail === 'in_review') return 'review'
   if (status === 'refunded' && detail === 'refunded' && ['processed', 'refunded'].includes(txStatus)) return 'refunded'
@@ -46,7 +71,7 @@ export function mapState(status: string, detail: string, txStatus: string, txDet
   if (status === 'processed' && ['processed', 'accredited'].includes(detail) && txStatus === 'processed' && ['processed', 'accredited'].includes(txDetail)) return 'approved'
   if (status === 'created' && detail === 'created' && txStatus === 'created') return 'pending'
   if (status === 'at_terminal' && detail === 'at_terminal' && ['created', 'at_terminal'].includes(txStatus)) return 'sent'
-  if (status === 'canceled' && ['canceled', 'canceled_by_api', 'canceled_on_terminal'].includes(detail) && txStatus === 'canceled' && ['canceled', 'canceled_by_api', 'canceled_on_terminal'].includes(txDetail)) return 'canceled'
+  if (status === 'canceled' && ['canceled', 'canceled_by_api', 'canceled_on_terminal'].includes(detail) && txStatus === 'canceled' && ['canceled', 'canceled_by_api', 'canceled_on_terminal', 'cancel_by_terminal'].includes(txDetail)) return 'canceled'
   if (status === 'expired' && detail === 'expired' && ['created', 'expired'].includes(txStatus)) return 'expired'
   const definitive = ['failed', 'bad_filled_card_data', 'insufficient_amount', 'high_risk', 'rejected_by_issuer', 'required_call_for_authorize', 'max_attempts_exceeded', 'card_disabled', 'amount_limit_exceeded', 'invalid_installments', 'processing_error']
   if (status === 'failed' && ['failed', 'rejected'].includes(detail) && txStatus === 'failed' && definitive.includes(txDetail)) return 'rejected'
@@ -81,8 +106,7 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
     const reference = payment.reference_id ?? (payment.reference && record(payment.reference).id)
     if (identifier(proof.id) !== identifier(reference) || identifier(proof.collector_id) !== receiver || proof.live_mode !== (expected.environment === 'live')
       || proof.currency_id !== expected.currency || (proof.external_reference !== undefined && proof.external_reference !== expected.externalReference)
-      || typeof proof.transaction_amount !== 'number'
-      || !Number.isFinite(proof.transaction_amount) || cents(String(proof.transaction_amount)) !== amount) throw new ProviderError('INVALID_RESPONSE')
+      || paymentCents(proof.transaction_amount) !== amount) throw new ProviderError('INVALID_RESPONSE')
     const proofState = String(proof.status)
     if (financiallyVerified ? !['approved', 'refunded'].includes(proofState)
       : state === 'rejected' ? !['rejected', 'cancelled'].includes(proofState)
@@ -96,6 +120,15 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
   // and a short payment must never settle the whole snapshot.
   if (payment.tip_amount !== undefined && cents(payment.tip_amount) !== 0) throw new ProviderError('INVALID_RESPONSE')
   if (financiallyVerified && payment.paid_amount !== undefined && cents(payment.paid_amount) < amount) throw new ProviderError('INVALID_RESPONSE')
+  if (financiallyVerified && proof?.transaction_details != null) {
+    const paid = record(proof.transaction_details).total_paid_amount
+    if (paid != null) {
+      const paidCents = paymentCents(paid)
+      // Buyer financing can exceed merchandise, but Orders and Payments must agree.
+      // Provider fees/net received amounts are not the checkout's sale amount.
+      if (paidCents < amount || payment.paid_amount !== undefined && cents(payment.paid_amount) !== paidCents) throw new ProviderError('INVALID_RESPONSE')
+    }
+  }
   const refunds: OrderEvidence['refunds'] = []
   if (transactions.refunds !== undefined && !Array.isArray(transactions.refunds)) throw new ProviderError('INVALID_RESPONSE')
   for (const item of transactions.refunds as unknown[] ?? []) {
@@ -107,8 +140,7 @@ export function verifyOrder(raw: unknown, expected: ExpectedOrder, token: TokenS
   if (new Set(refunds.map(r => r.id)).size !== refunds.length || refunds.reduce((sum, r) => sum + r.amountCents, 0) > amount) throw new ProviderError('INVALID_RESPONSE')
   const refunded = refunds.reduce((sum, r) => sum + r.amountCents, 0)
   if (payment.refunded_amount !== undefined && cents(payment.refunded_amount) !== refunded) throw new ProviderError('INVALID_RESPONSE')
-  if (proof?.transaction_amount_refunded !== undefined && (typeof proof.transaction_amount_refunded !== 'number'
-    || cents(String(proof.transaction_amount_refunded)) !== refunded)) throw new ProviderError('INVALID_RESPONSE')
+  if (proof?.transaction_amount_refunded !== undefined && paymentCents(proof.transaction_amount_refunded) !== refunded) throw new ProviderError('INVALID_RESPONSE')
   if ((state === 'refunded' && refunded !== amount) || (state === 'partially_refunded' && !(refunded > 0 && refunded < amount))) throw new ProviderError('INVALID_RESPONSE')
   return { remoteOrderId: identifier(order.id), paymentId: identifier(payment.id), state, status, statusDetail: detail,
     amountCents: amount, currency: String(currency), receiverId: receiver, environment: expected.environment,
@@ -160,6 +192,16 @@ export class MercadoPagoPoint implements PointAdapter {
       if (response.status === 204 && method === 'POST' && /^\/v1\/orders\/[A-Za-z0-9_-]+\/events$/.test(path)) return {}
       if (response.status === 401) throw new ProviderError('REVOKED', response.status)
       if (!response.ok) {
+        if (response.status === 400 && method === 'POST' && /^\/v1\/orders\/[A-Za-z0-9_-]+\/refund$/.test(path)
+          && body !== undefined) {
+          // Only the documented, permanent partial-refund refusal is terminal.
+          // Conflicts, throttling and generic errors can conceal an accepted retry.
+          const error = await responseJSON(response, false).catch(() => null)
+          const codes = error ? [error.error, error.code, ...(Array.isArray(error.errors) ? error.errors.map(item => {
+            try { return record(item).code } catch { return null }
+          }) : [])].filter(value => value !== undefined) : []
+          if (codes.length > 0 && codes.every(code => code === 'unsupported_partially_refunds')) throw new ProviderError('REFUND_UNSUPPORTED', 400)
+        }
         if (path === '/oauth/token' && response.status === 400) {
           // OAuth documents expired/revoked grants as 400, rather than an HTTP 401.
           // Retain only this stable code; provider descriptions never enter logs or UI.

@@ -1,5 +1,5 @@
 import { submitPinIfPresent } from './workspace-flow'
-import { openOperationalMore } from './workspace-flow'
+import { openOperationalMore, openOperationalTask } from './workspace-flow'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QRCodeSVG } from 'qrcode.react'
@@ -61,8 +61,7 @@ test('an employee sees newly created products automatically and can refresh imme
   products = [{ id: '51921edf-8e9e-4a26-b661-31dc5c231c0f', name: 'Café nuevo del dueño', category: 'Bebidas', priceCents: 4000, active: true, version: 1 }]
   await page.clock.fastForward(15_000)
   await expect(page.getByRole('button', { name: /^Agregar Café nuevo del dueño,/ })).toBeVisible()
-  await openOperationalMore(page)
-  await page.getByRole('button', { name: 'Productos', exact: true }).filter({visible:true}).first().click()
+  await openOperationalTask(page, 'Productos')
   products[0] = { ...products[0], name: 'Café actualizado por el dueño', version: 2 }
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(page.getByRole('list', { name: 'Catálogo de productos' }).getByText('Café actualizado por el dueño', { exact: true })).toBeVisible()
@@ -95,9 +94,9 @@ test('Google return and logout/relogin retain employee access for an account wit
     await expect(page.getByRole('navigation', { name: 'Navegación principal' })).toHaveCount(0)
     await page.getByTestId('pin-input').fill(fixturePin)
     await submitPinIfPresent(page);
-    await openOperationalMore(page);
+    const sessionActions = await openOperationalMore(page);
     await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).toHaveCount(0)
-    await page.getByRole('region',{name:'Más',exact:true}).getByRole('button', { name: 'Cerrar sesión', exact: true }).click()
+    await sessionActions.getByRole('button', { name: 'Cerrar sesión', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Continuar con Google', exact: true })).toBeEnabled()
     expect(await page.evaluate(key => localStorage.getItem(key), fixtureAuthKey)).toBeNull()
   }

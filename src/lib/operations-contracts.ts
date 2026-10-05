@@ -15,11 +15,16 @@ export interface OrderLine {
   version: number; selection?: ItemSelection | null
   lineId: string; productId: string; name: string; kitchenName: string; category: string; selectionLabel: string; note: string
   quantity: number; paidQuantity: number; sentQuantity: number; unitPriceCents: number
+  paidTotalCents?: number; paidDiscountCents?: number; paidTaxCents?: number
   grossCents: number; discountCents: number; totalCents: number; taxCents: number; taxBps: number; taxTreatment: VatTreatment | 'legacy'
 }
 export interface OrderDiscount { kind: 'fixed' | 'percent'; value: number; reason: string }
+export type OrderKind = 'counter' | 'service'
 export interface OperationalOrder {
   id: string; revision: number; name: string; tableId: string | null
+  /** Missing/null is historical or a legacy payload, never inferred from its name. */
+  orderKind?: OrderKind | null
+  amountSplit?: boolean; amountParts?: number[]; amountPaidParts?: number
   status: 'open' | 'paid' | 'cancelled' | 'waived' | 'closed'; createdAt: string; updatedAt: string
   operatorName: string; phase: 'service' | 'checkout'; frozen: boolean; items: OrderLine[]; discount: OrderDiscount | null
   grossCents: number; discountCents: number; totalCents: number; taxCents: number; paidCents: number; waivedCents: number; cancelledCents: number; balanceCents: number
@@ -36,7 +41,8 @@ export interface CheckoutAttempt {
   saleId: string | null; originalSaleId: string | null; paymentMethod: PaymentMethod; totalCents: number
   taxCents: number; discountCents: number; operatorName: string; resolverName: string | null
   createdAt: string; resolvedAt: string | null; reason: string
-  items: { lineId: string; productId: string; name: string; quantity: number; unitPriceCents: number; discountCents: number; totalCents: number; taxCents: number }[]
+  amountsCents?: number[]
+  items: { allocatedGrossCents?: number; lineId: string; productId: string; name: string; quantity: number; unitPriceCents: number; discountCents: number; totalCents: number; taxCents: number }[]
 }
 export interface BalanceWaiver { id: string; orderId: string; revision: number; status: 'prepared' | 'completed'; amountCents: number; reason: string; operatorName: string; resolvedAt: string | null }
 export interface BusinessDayReport {
@@ -75,7 +81,7 @@ export type OperationsCommand =
   | { command: 'close_shift'; operationId: string; shiftId: string; expectedRevision: number; countedCents: number }
   | { command: 'orders' }
   | { command: 'order'; orderId: string }
-  | { command: 'save_order'; operationId: string; orderId: string; expectedRevision: number | null; name: string; tableId: string | null; items: OrderInputLine[] }
+  | { command: 'save_order'; operationId: string; orderId: string; expectedRevision: number | null; name: string; tableId: string | null; items: OrderInputLine[]; orderKind?: OrderKind }
   | { command: 'set_order_discount'; operationId: string; orderId: string; expectedRevision: number; discount: OrderDiscount | null }
   | { command: 'cancel_order'; operationId: string; orderId: string; expectedRevision: number; reason: string }
   | { command: 'send_order'; operationId: string; orderId: string; expectedRevision: number }
@@ -87,8 +93,8 @@ export type OperationsCommand =
   | { command: 'save_table'; operationId: string; tableId: string; expectedRevision: number | null; name: string; active: boolean }
   | { command: 'move_order'; operationId: string; orderId: string; expectedRevision: number; tableId: string | null }
   | { command: 'close_order'; operationId: string; orderId: string; expectedRevision: number }
-  | { command: 'prepare_checkout'; operationId: string; orderId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
-  | { command: 'update_checkout'; operationId: string; attemptId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
+  | { command: 'prepare_checkout'; amountsCents?: number[]; operationId: string; orderId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
+  | { command: 'update_checkout'; amountsCents?: number[]; operationId: string; attemptId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
   | { command: 'record_checkout'; operationId: string; attemptId: string; expectedRevision: number; confirmed: true }
   | { command: 'record_payment'; operationId: string; orderId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod; confirmed: true }
   | { command: 'attempt'; attemptId: string }
@@ -100,6 +106,8 @@ export type OperationsCommand =
   | { command: 'confirm_waiver'; operationId: string; waiverId: string; expectedRevision: number; confirmed: true }
   | { command: 'report'; date: string }
   | { command: 'report_period'; date: string; period: ReportPeriod }
+  /** Actor is resolved from the live operator on the server. */
+  | { command: 'report_own_period'; date: string; period: ReportPeriod }
 
 export interface OperationsResponses {
   update_checkout: CheckoutAttempt
@@ -116,6 +124,7 @@ export interface OperationsResponses {
   resolve_checkout: CheckoutAttempt; prepare_reversal: CheckoutAttempt
   prepare_waiver: BalanceWaiver; confirm_waiver: BalanceWaiver; report: BusinessDayReport
   report_period: BusinessPeriodReport
+  report_own_period: BusinessPeriodReport
 }
 export type OperationsErrorCode = 'OPERATIONS_DISABLED' | 'LEGACY_CHECKOUT_DISABLED' | 'SHIFT_REQUIRED' | 'SHIFT_CHANGED' | 'SHIFT_NOT_OPEN' | 'SHIFT_ALREADY_OPEN'
   | 'PENDING_COLLECTION' | 'ORDER_CHANGED' | 'ORDER_NOT_FOUND' | 'ORDER_LOCKED' | 'ORDER_HAS_PAYMENTS'

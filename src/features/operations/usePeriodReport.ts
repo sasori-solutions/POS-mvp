@@ -25,8 +25,8 @@ const initialState = (scope: string, timezone: string): ReportControllerState =>
 })
 
 /** One in-memory snapshot shared by Inicio and Reportes for the current operator. */
-export function useReportController(access: PosAccess, timezone: string, onSessionError?: (error: AccountClientError) => void, active = true, authorized = true) {
-  const scope = JSON.stringify([access.businessId, access.operatorToken, access.deviceToken ?? '', authorized])
+export function useReportController(access: PosAccess, timezone: string, onSessionError?: (error: AccountClientError) => void, active = true, authorized = true, reportScope: 'business' | 'own' = 'business') {
+  const scope = JSON.stringify([access.businessId, access.operatorToken, access.deviceToken ?? '', authorized, reportScope, timezone])
   const enabled = active && authorized
   const [state, setState] = useState(() => ({ ...initialState(scope, timezone), loading: enabled }))
   const currentState = useRef(state)
@@ -56,7 +56,7 @@ export function useReportController(access: PosAccess, timezone: string, onSessi
     const isCurrent = () => alive.current && activeRef.current && currentScope.current === scope && request === sequence.current
     const promise = (async () => {
       try {
-        const report = await posRequest(access, { command: 'report_period', ...query })
+        const report = await posRequest(access, { command: reportScope === 'own' ? 'report_own_period' : 'report_period', ...query })
         if (!isCurrent()) return
         commit({ ...scopedState(), requestedQuery: query, displayedQuery: query, report, loading: false, error: '', stale: false, failedQuery: null })
       } catch (error) {
@@ -75,7 +75,7 @@ export function useReportController(access: PosAccess, timezone: string, onSessi
     })()
     inFlight.current = { scope, sequence: request, query, promise }
     return promise
-  }, [scope, access.businessId, access.operatorToken, access.deviceToken, commit, scopedState])
+  }, [scope, access.businessId, access.operatorToken, access.deviceToken, reportScope, commit, scopedState])
 
   useEffect(() => {
     alive.current = true

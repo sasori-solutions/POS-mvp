@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Ellipsis, Pencil, Plus, Power, Trash2 } from "lucide-react";
 import { AccountClientError } from "../lib/account";
-import type { Product } from "../lib/pos-contracts";
+import type { Product, VatTreatment } from "../lib/pos-contracts";
 import { filterProducts, money, posRequest, type PosAccess } from "../lib/pos";
 import ProductEditor from "./ProductEditor";
 import { productDetails, isSoldOut } from "../lib/product-details";
@@ -13,12 +13,14 @@ export default function ProductsScreen({
   access,
   catalog,
   canManage,
+  defaultVatTreatment,
   canAvailability = false,
   onSessionError,
 }: {
   access: PosAccess;
   catalog: CatalogState;
   canManage: boolean;
+  defaultVatTreatment?: VatTreatment;
   canAvailability?: boolean;
   onSessionError?: (error: AccountClientError) => void;
 }) {
@@ -201,6 +203,7 @@ export default function ProductsScreen({
       {availability && <ProductAvailability product={availability} access={access} onClose={() => setAvailability(null)} onSaved={product => { catalog.upsert(product); setAvailability(product); }} onSessionError={onSessionError} />}
       {editing && (
         <ProductEditor
+          defaultVatTreatment={defaultVatTreatment}
           product={editing === "new" ? null : editing}
           products={catalog.products}
           access={access}

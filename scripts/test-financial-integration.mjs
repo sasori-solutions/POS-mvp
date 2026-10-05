@@ -27,6 +27,7 @@ try {
   })
   const result = spawnSync(join(root, 'node_modules/.bin/vitest'), ['run',
     'tests/integration/lean-operations.integration.test.ts', 'tests/integration/products-sales.integration.test.ts',
+    'tests/integration/financial-auth-revocation.integration.test.ts',
     '--no-file-parallelism', '--testTimeout=30000'], { cwd: root, env: environment, stdio: 'inherit' })
   if (result.error) throw new Error('Could not start tests')
   process.exitCode = result.status ?? 1

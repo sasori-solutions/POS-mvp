@@ -2,7 +2,7 @@
 
 ## Evidencia y efectos
 
-`card_integrated` es un medio distinto de `card_external`. El cliente sólo envía identidades de checkout/terminal y operaciones UUID. PostgreSQL congela artículos, cantidades, impuestos, descuentos, total, zona y tarifa sobre el checkout operativo existente. El servidor verifica identidad, sesión viva, membresía, permiso y prueba de dispositivo antes de aceptarlo. Las RPC y tablas privadas nunca son accesibles al navegador.
+La interfaz ofrece una sola opción **Tarjeta**, cobrada por Mercado Pago (`card_integrated`). `card_external` permanece como contrato histórico y para recuperar operaciones anteriores; no es una opción nueva de cobro manual en la UI. El cliente sólo envía identidades de checkout/terminal y operaciones UUID. PostgreSQL congela artículos, cantidades, impuestos, descuentos, total, zona y tarifa sobre el checkout operativo existente. El servidor verifica identidad, sesión viva, membresía, permiso y prueba de dispositivo antes de aceptarlo. Las RPC y tablas privadas nunca son accesibles al navegador.
 
 El intento tiene identidad, payload y clave de idempotencia persistentes antes del HTTP. La reserva de terminal no vence por tiempo local. Un lease de trabajo vencido permite recuperar el trabajo; no permite liberar una operación bancaria incierta. Un reenvío conserva clave y payload y se restringe a 23 horas desde el primer envío, margen dentro de la ventana documentada de 24 horas. Fuera de ella se conserva revisión y se requiere evidencia del proveedor. No se usa una búsqueda por referencia que el proveedor no documente.
 
@@ -28,7 +28,7 @@ Los cierres son **estados de cuenta, no CFDI**. Registrar evidencia de facturaci
 
 ## Notificaciones y recuperación
 
-La firma usa el manifiesto oficial `id:<query data.id en minúsculas>;request-id:<header>;ts:<timestamp>;`, HMAC SHA-256 y verificación constante con clave actual/anterior. El JSON no es evidencia financiera firmada. Se guarda únicamente locator autenticado, huella y tiempos antes del ACK, incluso si aún no existe el locator local. Duplicados incrementan un contador; un barrido vincula los eventos adelantados. No se rechazan reintentos oficiales sólo por antigüedad.
+La firma usa el manifiesto oficial `id:<query data.id en minúsculas>;request-id:<header>;ts:<timestamp>;`, HMAC SHA-256 y verificación constante con firmas de aplicación principal, aplicación de pruebas y clave anterior durante rotación. El JSON no es evidencia financiera firmada. Se guarda únicamente locator autenticado, huella y tiempos antes del ACK, incluso si aún no existe el locator local. Duplicados incrementan un contador; un barrido vincula los eventos adelantados. No se rechazan reintentos oficiales sólo por antigüedad.
 
 Los workers reclaman un trabajo por vez con `FOR UPDATE SKIP LOCKED`, lease exclusivo, token, presupuesto limitado, backoff y máximo de intentos. Confirman primero el locator remoto y después consultan evidencia. El barrido y los webhooks siguen activos con nuevos cargos deshabilitados. El interruptor impide el primer envío de trabajos nuevos; una recuperación ya enviada conserva su identidad dentro de la ventana segura. Agotamiento o pérdida de credenciales conserva reservas e incidencias para intervención.
 

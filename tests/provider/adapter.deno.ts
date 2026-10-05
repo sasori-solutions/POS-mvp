@@ -109,6 +109,26 @@ Deno.test('OAuth rotation uses documented expiry and environment rather than tok
     await rejects(() => adapter.refresh(token), 'REVOKED')
   } finally { await sim.close() }
 })
+Deno.test('isolated fixture OAuth account verifies its own terminal and authoritative payment without touching development', async () => {
+  const { sim, adapter } = await setup()
+  try {
+    const before = JSON.stringify(sim.state)
+    const token = await adapter.exchange('sim-code-910123456', randomSecret(), 'sandbox')
+    await adapter.verifyAccount(token)
+    const owned = { ...expected, receiverId: '910123456', terminalId: 'NEWLAND_N950__TST910123456' }
+    const order = await adapter.create(token, createPayload(owned), 'owned-order')
+    const payment = record((record(order.transactions).payments as unknown[])[0])
+    const proof = await adapter.request(token, `/v1/payments/${payment.reference_id}`)
+    equal(verifyOrder(order, owned, token, proof).state, 'approved')
+    await rejects(() => adapter.order(syntheticToken, String(order.id)), 'DEFINITIVE_FAILURE')
+    const rotated = await adapter.refresh(token)
+    equal(rotated.receiverId, token.receiverId)
+    equal(rotated.refreshToken, 'sim-refresh-910123456-2')
+    // The intentional cross-account GET is the only development-account request.
+    equal(sim.state.creates, 0); equal(sim.state.refreshes, 0); equal(sim.state.version, 1)
+    equal(JSON.stringify({ ...sim.state, calls: sim.state.calls.slice(0, -1) }), before)
+  } finally { await sim.close() }
+})
 Deno.test('independent signature fixture validates canonical query, lowercasing, headers and old retry timestamp', async () => {
   // Fixture generated using Node createHmac independently of this verifier, with an intentionally old timestamp.
   const url = 'https://example.test/point-webhook?data.id=ORD01JQ4S4KY8HWQ6NA5PXB65B3D3&type=order'

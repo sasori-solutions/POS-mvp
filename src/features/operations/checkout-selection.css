@@ -1,4 +1,9 @@
 .checkout-balance { container-type: inline-size; }
+.checkout-payment-transition { min-width: 0; }
+.checkout-payment-content { display: grid; align-items: start; min-width: 0; gap: 16px; }
+.checkout-payment-content > [hidden] { display: none; }
+.checkout-collection .checkout-reservation:empty { display: none; }
+.checkout-collection .point-payment[data-embedded] > .point-payment-sandbox { align-self: flex-start; }
 .checkout-layout .checkout-summary .ops-list { padding: 0; scrollbar-gutter: auto; max-height: none; overflow: visible; }
 .checkout-layout .checkout-summary .ops-list > li { padding-inline: 0; }
 .checkout-summary > .ops-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; }
@@ -7,8 +12,10 @@
 .checkout-summary .ops-totals > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; }
 .checkout-summary .ops-totals dt { min-width: 0; overflow-wrap: anywhere; }
 .checkout-summary .ops-totals dd { margin: 0; white-space: nowrap; }
-.checkout-split-mode { display: flex; gap: 24px; }
-.checkout-split-mode label { flex-direction: row; justify-content: flex-start; min-height: 48px; padding: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-muted); text-align: left; }
+.checkout-split-mode { display: flex; flex-wrap: wrap; gap: 0 20px; }
+.checkout-split-mode label { flex-direction: row; justify-content: flex-start; min-height: 48px; padding: 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--color-muted); text-align: left; font-size: 14px; cursor: pointer; }
+.checkout-split-mode label:has(input:disabled) { opacity: .4; cursor: not-allowed; }
+.checkout-split-mode label:has(input:focus-visible) { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 .checkout-split-mode label:has(input:checked),
 .checkout-screen .checkout-split-mode label:has(input:checked) { border-color: var(--color-ink); background: transparent; color: var(--color-ink); }
 .checkout-balance .checkout-amount strong { font-size: clamp(32px, 10.5cqw, 64px); }
@@ -63,6 +70,13 @@
 .checkout-item-selection input:disabled { cursor: not-allowed; opacity: .4; }
 .checkout-item-selection button:not(:disabled) { cursor: pointer; }
 .checkout-register-payment { display: flex; align-items: center; gap: 8px; }
+.checkout-controls { position: relative; }
+.checkout-action-progress { display: grid; place-items: center; width: 18px; min-width: 18px; height: 18px; opacity: 0; transition: opacity 100ms linear; }
+.checkout-action-progress[data-active=true],
+.checkout-sync-progress[data-active=true] { opacity: 1; transition-delay: 220ms; }
+.checkout-sync-progress { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 18px; height: 18px; opacity: 0; pointer-events: none; transition: opacity 100ms linear; }
+.checkout-screen .checkout-register-payment[data-updating=true]:disabled { opacity: 1; }
+.checkout-discount-entry[data-updating=true]:disabled { opacity: 1; }
 .checkout-reservation:empty { display: none; }
 .checkout-register-payment > strong { margin-left: auto; font-size: 16px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .checkout-discount-entry { display: flex; align-items: center; gap: 12px; min-height: 48px; width: 100%; padding: 0; border: 0; background: transparent; color: var(--color-muted); text-align: left; font-size: 14px; }
@@ -74,6 +88,19 @@
 .checkout-item-selection :is(button, input):focus-visible,
 .checkout-discount-entry:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; }
 @keyframes checkout-feedback-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.checkout-amount-selection { margin: 12px 0 20px; }
+.checkout-person-amount { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 160px) 48px; align-items: center; gap: 8px; min-height: 64px; border-bottom: 1px solid var(--color-line); }
+.checkout-person-amount > label { display: block; font-size: 14px; }
+.checkout-person-input { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.checkout-person-input > span { color: var(--color-muted); }
+.ops-section .checkout-person-input input { min-width: 0; width: 100%; min-height: 48px; padding: 8px; border: 0; border-bottom: 1px solid var(--color-line); border-radius: 0; background: transparent; text-align: right; font-size: 18px; font-variant-numeric: tabular-nums; }
+.checkout-person-amount > button { display: grid; place-items: center; width: 48px; height: 48px; border: 0; background: transparent; color: var(--color-muted); cursor: pointer; }
+.checkout-person-remainder { grid-template-columns: minmax(0, 1fr) auto; padding-right: 56px; }
+.checkout-person-remainder small { display: block; color: var(--color-muted); font-size: 12px; margin-top: 3px; }
+.checkout-person-remainder strong { font-size: 18px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.checkout-add-person { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 8px 0; border: 0; background: transparent; color: var(--color-muted); font-size: 14px; cursor: pointer; }
+.checkout-amount-selection :is(button, input):focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
+.checkout-amount-selection button:disabled { opacity: .4; cursor: not-allowed; }
 @media (width < 24rem) {
   .checkout-balance.is-split { gap: 16px; }
   .checkout-balance.is-split .checkout-amount { flex-basis: 100%; }
@@ -82,9 +109,13 @@
   .checkout-pending-amount dt { margin-bottom: 0; }
   .checkout-pending-amount dd { font-size: 19px; }
   .checkout-item-selection .checkout-selection-list li { gap: 8px; }
+  .checkout-person-amount { grid-template-columns: minmax(0, 1fr) minmax(80px, 110px) 48px; gap: 4px; }
+  .checkout-person-remainder { grid-template-columns: minmax(0, 1fr) auto; padding-right: 52px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .checkout-payment-success { animation: none; }
   .checkout-item-selection .checkout-quantity-controls button { transition: none; }
   .checkout-item-selection .checkout-quantity-controls button:not(:disabled):active { transform: none; }
+  .checkout-action-progress,
+  .checkout-sync-progress { transition: none; }
 }

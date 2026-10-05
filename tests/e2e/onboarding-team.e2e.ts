@@ -24,29 +24,59 @@ test('a new Google account chooses whether to create or join a business', async 
   await capture(page, testInfo.project.name, 'onboarding-choice');
 });
 
+test('new business card selection saves only Tarjeta without activating or linking Point', async ({ page }) => {
+  const { calls } = await mockOnboarding(page);
+  await page.goto('/business/new');
+  await page.getByLabel('Nombre del negocio', { exact: true }).fill('Café de tarjeta');
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  const card = page.getByRole('checkbox', { name: 'Tarjeta', exact: true });
+  await expect(card).toBeChecked();
+  await expect(page.getByRole('checkbox')).toHaveCount(3);
+  await expect(page.getByRole('checkbox', { name: /Tarjeta en terminal|Tarjeta externa|Mercado Pago/ })).toHaveCount(0);
+  await card.uncheck();
+  await expect(card).not.toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Efectivo', exact: true })).toBeChecked();
+  await card.check();
+  await expect(card).toBeChecked();
+  expect(calls.filter(call => call.action === 'create_business')).toHaveLength(0);
+
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await fillAccountPin(page);
+  await page.getByRole('button', { name: 'Crear negocio', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
+  const creations = calls.filter(call => call.action === 'create_business');
+  expect(creations).toHaveLength(1);
+  expect(creations[0].profile.paymentMethods).toEqual(['cash', 'card_integrated']);
+  expect(creations[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
+  const pointCommands = calls.filter(call => call.action === 'point' || call.action === 'device_point').map(call => call.command);
+  expect(pointCommands.filter(command => command !== 'settings')).toEqual([]);
+  expect(calls.filter(call => call.action === 'update_business')).toHaveLength(0);
+});
+
 test('creation saves branch, register and progressive profile for later editing', async ({ page }, testInfo) => {
   const { calls } = await mockOnboarding(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Crear mi negocio', exact: true }).click();
   await page.getByLabel('Nombre del negocio').fill('Café del centro');
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await page.getByText('Sucursal y contacto', { exact: true }).click();
   await page.getByLabel('Sucursal', { exact: true }).fill('Centro');
   await page.getByLabel('Caja', { exact: true }).fill('Mostrador');
-  await page.getByText('Dirección y contacto (opcional)', { exact: true }).click();
   await page.getByLabel(/^Ciudad/).fill('Guadalajara');
   await page.getByLabel(/^Estado/).fill('Jalisco');
   await page.getByLabel('Transferencia', { exact: true }).check();
   await capture(page, testInfo.project.name, 'onboarding-create');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await fillAccountPin(page);
-  await page.getByRole('button', { name: 'Crear PIN', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Cuenta creada' })).toBeVisible();
+  await page.getByRole('button', { name: 'Crear negocio', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   const create = calls.find((call) => call.action === 'create_business');
   expect(create).toMatchObject({ profile: {
     branchName: 'Centro', registerName: 'Mostrador', city: 'Guadalajara', state: 'Jalisco',
-    paymentMethods: ['cash', 'card_external', 'transfer'],
+    paymentMethods: ['cash', 'card_integrated', 'transfer'],
   } });
-  await page.getByRole('button', { name: 'Abrir Dashboard', exact: true }).click();
   await openOwnerTask(page, 'Datos del negocio');
+  await page.getByText('Sucursal y contacto', { exact: true }).click();
   await expect(page.getByLabel('Sucursal', { exact: true })).toHaveValue('Centro');
   await expect(page.getByLabel(/^Ciudad/)).toHaveValue('Guadalajara');
   await page.getByLabel(/^Dirección/).fill('Calle de prueba 100');
@@ -57,6 +87,7 @@ test('creation saves branch, register and progressive profile for later editing'
   await page.reload();
   await unlockOwner(page);
   await openOwnerTask(page, 'Datos del negocio');
+  await page.getByText('Sucursal y contacto', { exact: true }).click();
   await expect(page.getByRole('textbox',{name:'Caja',exact:true})).toHaveValue('Barra');
   await expect(page.getByLabel(/^Dirección/)).toHaveValue('Calle de prueba 100');
   await capture(page, testInfo.project.name, 'business-settings');
@@ -69,24 +100,25 @@ test('invalid branch, payment methods and phone stay on business details before 
   await page.goto('/');
   await page.getByRole('button', { name: 'Crear mi negocio', exact: true }).click();
   await page.getByLabel('Nombre del negocio', { exact: true }).fill('Café de validación');
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await page.getByText('Sucursal y contacto', { exact: true }).click();
   await page.getByLabel('Sucursal', { exact: true }).fill('   ');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/sucursal|caja/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   await page.getByLabel('Sucursal', { exact: true }).fill('Principal');
   await page.getByLabel('Efectivo', { exact: true }).uncheck();
-  await page.getByLabel('Tarjeta en terminal', { exact: true }).uncheck();
+  await page.getByLabel('Tarjeta', { exact: true }).uncheck();
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/método|pago/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   await page.getByLabel('Efectivo', { exact: true }).check();
-  await page.getByText('Dirección y contacto (opcional)', { exact: true }).click();
-  await page.getByLabel('Teléfono público', { exact: true }).fill('abcde');
+  await page.getByLabel('Teléfono', { exact: true }).fill('abcde');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/teléfono/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
-  await page.getByLabel('Teléfono público', { exact: true }).fill('');
+  await page.getByLabel('Teléfono', { exact: true }).fill('');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).toBeVisible();
 });
@@ -110,9 +142,9 @@ test('joining retries invalid invitations and applies assigned permissions witho
   await page.getByRole('button', { name: 'Unirme', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible();
   const navigation = page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first();
-  await expect(navigation.getByRole('button')).toHaveCount(2);
+  const mobileNavigation = await navigation.getAttribute('aria-label') === 'Navegación principal';
+  await expect(navigation.getByRole('button')).toHaveText(mobileNavigation ? ['Comandas', 'Más'] : ['Comandas']);
   await expect(navigation.getByRole('button', { name: 'Comandas', exact: true })).toBeVisible();
-  await expect(navigation.getByRole('button', { name: 'Más', exact: true })).toBeVisible();
   await openMore(page);
   await expect(page.getByRole('button', { name: 'Datos del negocio', exact: true })).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Empleados', exact: true })).not.toBeVisible();
@@ -188,7 +220,9 @@ test('a refreshed employee context removes the previously active money destinati
   await expect(page.getByRole('heading', { name: 'Historial', exact: true })).toBeVisible();
   fixture.setEmployee(fixtureKitchen.id);
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-  await expect(page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first().getByRole('button')).toHaveCount(2);
+  const navigation = page.getByRole('navigation', { name: /Navegación (principal|lateral)/ }).filter({visible:true}).first();
+  const mobileNavigation = await navigation.getAttribute('aria-label') === 'Navegación principal';
+  await expect(navigation.getByRole('button')).toHaveText(mobileNavigation ? ['Comandas', 'Más'] : ['Comandas']);
   await expect(page.getByRole('heading', { name: 'Comandas', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Historial', exact: true })).not.toBeVisible();
 });

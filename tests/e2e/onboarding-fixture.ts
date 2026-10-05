@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { AccountRequest, BusinessContext, BusinessRole, DeviceSummary, EmployeeSummary, InvitationSummary } from '../../src/lib/contracts';
+import type { AccountRequest, BusinessContext, BusinessRole, DeviceSummary, EmployeeSummary, InvitationSummary, PaymentMethod } from '../../src/lib/contracts';
 import { fixtureBusiness, fixtureOperatorToken, fixturePin, mockAccount } from './account-fixture';
 
 export const fixtureInvitation = 'c1'.repeat(32);
@@ -16,6 +16,7 @@ export async function mockOnboarding(page: Page, options: {
   existingBusiness?: boolean;
   authenticated?: boolean;
   role?: BusinessRole;
+  paymentMethods?: PaymentMethod[];
   createEmployeeResponseLosses?: number;
   invitations?: InvitationSummary[];
   employees?: EmployeeSummary[];
@@ -27,6 +28,7 @@ export async function mockOnboarding(page: Page, options: {
   const authorizations: { action: string; authorization: string | undefined }[] = [];
   let hasBusiness = options.existingBusiness ?? false;
   let business: BusinessContext = structuredClone(fixtureBusiness) as BusinessContext;
+  if (options.paymentMethods) business.profile.paymentMethods = [...options.paymentMethods];
   let googleRole: BusinessRole = options.role ?? 'owner';
   let googleEmployeeId = options.role === 'kitchen' ? fixtureKitchen.id : fixtureCashier.id;
   let currentPin = fixturePin;
