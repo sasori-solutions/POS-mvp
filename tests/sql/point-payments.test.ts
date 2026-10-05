@@ -251,6 +251,24 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     expect((await db.query<{ n: number }>('select count(*)::int n from app_private.point_terminal_reservations where connection_id=$1', [connectionId])).rows[0].n).toBe(0)
   })
 
+  it('preserves the accepted start snapshot after approval while status retains the current receipt', async () => {
+    const { actor, checkout, reservation } = await setup()
+    const request = { command: 'start', operationId: randomUUID(), checkoutId: checkout.id }
+    const started = await point<PointCheckout>(actor, request)
+    const browserShape = (value: PointCheckout) => JSON.parse(JSON.stringify(value, (key, value) => key === 'backendWork' ? undefined : value))
+    expect(started).toMatchObject({ id: checkout.id, sale: null, saleState: 'pending', totalCents: reservation.totalCents })
+    await service('apply_order', { ...await facts(started.attemptId!), state: 'approved_verified' })
+    const paid = await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })
+    expect(paid).toMatchObject({ attemptId: started.attemptId, saleState: 'materialized', sale: { totalCents: reservation.totalCents } })
+    const replayed = await point<PointCheckout>(actor, request)
+    expect(browserShape(replayed)).toEqual(browserShape(started))
+    expect(replayed).toMatchObject({ id: checkout.id, attemptId: started.attemptId, sale: null, saleState: 'pending', totalCents: reservation.totalCents })
+    const current = await point<PointCheckout>(actor, { command: 'status', checkoutId: checkout.id })
+    expect(current.sale!.id).toBe(paid.sale!.id)
+    expect(await pos(actor, { command: 'order', orderId: reservation.orderId })).toMatchObject({ balanceCents: 0, paidCents: reservation.totalCents })
+    expect((await db.query<{ n: number }>('select count(*)::integer n from app_private.sales where business_id=$1', [actor.businessId])).rows[0].n).toBe(1)
+  })
+
   it('deduplicates refunds, keeps original sale, bounds pending reservations and does not rewind a refund', async () => {
     const { actor, checkout } = await setup()
     const started = await point<PointCheckout>(actor, { command: 'start', operationId: randomUUID(), checkoutId: checkout.id })

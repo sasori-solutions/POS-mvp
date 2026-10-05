@@ -359,7 +359,14 @@ describe.skipIf(!enabled)('Point real Auth/Edge/PostgreSQL with HTTP provider si
     expect(paid).toMatchObject({state:'approved_verified',saleState:'materialized',attemptId:started.attemptId})
     expect(await orderFor(paid)).toMatchObject({balanceCents:0,paidCents:prepared.totalCents})
     expect(await runWorker(admin!,configuration,scope)).toEqual({processed:0,failed:0})
-    expect(data(await point<PointCheckout>(owner,request)).sale!.id).toBe(paid.sale!.id)
+    const restarted=data(await point<PointCheckout>(owner,request))
+    // An accepted start retry returns its original immutable snapshot. Current
+    // provider/receipt state belongs to status, never to the saved start result.
+    expect(restarted).toEqual(started)
+    expect(restarted).toMatchObject({id:prepared.id,attemptId:started.attemptId,totalCents:prepared.totalCents,sale:null})
+    const current=data(await point<PointCheckout>(owner,{command:'status',checkoutId:prepared.id}))
+    expect(current.sale!.id).toBe(paid.sale!.id)
+    expect(await orderFor(current)).toMatchObject({balanceCents:0,paidCents:prepared.totalCents})
     expect((await stats()).creates-before.creates).toBe(1)
     expect(Number(sql(`select count(*) from app_private.sales where id=${literal(paid.sale!.id)}::uuid;`))).toBe(1)
   },60000)
