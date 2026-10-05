@@ -90,6 +90,22 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   const [preparingCheckout, setPreparingCheckout] = useState(false)
   const remaining = order.items.map(l => `${l.lineId}:${l.quantity - l.paidQuantity}`).join('|')
   const remainingKey = useRef(remaining)
+  const confirmedPayment = useRef({ orderId: order.id, paidCents: order.paidCents, amountPaidParts: order.amountPaidParts ?? 0 })
+  useLayoutEffect(() => {
+    const previous = confirmedPayment.current
+    const progress = { orderId: order.id, paidCents: order.paidCents, amountPaidParts: order.amountPaidParts ?? 0 }
+    if (previous.orderId !== order.id) { confirmedPayment.current = progress; return }
+    if (progress.paidCents <= previous.paidCents && progress.amountPaidParts <= previous.amountPaidParts) return
+    confirmedPayment.current = progress
+    // Point can refresh the paid account before its receipt's Continue action.
+    // Reconcile the selection before painting the new balance, keeping that receipt.
+    if (order.amountSplit) {
+      setAmountSplit(true)
+      setSplit(false)
+      setAmountInputs((order.amountParts ?? []).slice(0, -1).map(amountInput))
+    }
+    setQuantities(Object.fromEntries(order.items.map(line => [line.lineId, 0])))
+  }, [order.id, order.paidCents, order.amountPaidParts, order.amountSplit, order.amountParts, order.items])
   useEffect(() => {
     if (remainingKey.current !== remaining) {
       remainingKey.current = remaining

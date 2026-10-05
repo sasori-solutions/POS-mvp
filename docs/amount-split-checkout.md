@@ -39,3 +39,11 @@ La migración integrada ya fue aplicada al backend loopback de este checkout, co
 ## Entrega posterior
 
 La solicitud posterior de Larios autorizó publicar el trabajo acumulado junto a las transiciones de cobro. La migración 050140 ya está aplicada y verificada en el proyecto alojado, junto a las preferencias y el tipo de cuenta que requiere. Véanse [la evidencia del backend](backend-release-2026-10-04.md) y [el alcance de esa entrega](checkout-method-transitions-2026-10-04.md). La evidencia local anterior conserva su fecha y sus límites.
+
+## Corrección del refresco tras Point — 5 de octubre de 2026
+
+Larios informó un aviso de importes inválidos después del primer pago dividido. El cliente refrescaba el saldo al materializarse Point, antes de «Continuar», pero conservaba los importes anteriores. También conservaba parte de la selección de artículos pagados. Dos regresiones con Home y sus hooks reales reprodujeron ambos fallos antes de la corrección.
+
+Cuando avanza el dinero pagado o el número de partes confirmadas del servidor, la selección se actualiza antes de pintar el nuevo saldo: usa `amountParts` para los importes y deselecciona los artículos del cobro anterior. El intento y su recibo permanecen visibles hasta continuar. Un refresco sin pago nuevo conserva las ediciones; procesamiento y rechazo no avanzan el saldo ni la selección.
+
+Verificación local: cuatro regresiones nuevas, 388 componentes existentes, 347 pruebas unitarias y 57 SQL de `amount-checkout`/`point-payments` aprobadas, además de build, lint y diff. El ejemplo completa $500, $40 y $220.68, sin reserva posterior antes de continuar ni registro manual de tarjeta. Las respuestas Point del cliente son sintéticas; las SQL usan PGlite desechable. No hubo navegador, pagos alojados ni terminal física. La corrección está disponible en dev 5181; esta evidencia no acredita una publicación posterior.
