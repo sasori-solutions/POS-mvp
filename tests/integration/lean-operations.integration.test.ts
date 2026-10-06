@@ -113,6 +113,42 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     expect(count(owner, 'sales')).toBe(1)
   }, 45_000)
 
+  it('collects a catalog-free amount through signed HTTP with exact replay, VAT, receipt and refund snapshots', async () => {
+    const { owner, staff } = await fixture(['catalog.read', 'sales.create', 'sales.read_all', 'sales.reverse', 'reports.read'])
+    data(await call(owner.identity, { action: 'update_business', ...args(owner), name: owner.operator.business.name, businessType: owner.operator.business.businessType,
+      timezone: owner.operator.business.timezone, profile: { ...owner.operator.business.profile, defaultVatTreatment: 'vat_16' } }))
+    const line: OrderInputLine = { lineId: randomUUID(), kind: 'amount', name: 'Servicio sintético', quantity: 1, unitPriceCents: 1001, note: '' }
+    const save = { command: 'save_order' as const, operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, orderKind: 'counter' as const, name: 'Importe directo', tableId: null, items: [line] }
+    const catalogBefore = data(await pos<{ products: Product[] }>(owner, { command: 'catalog' }))
+    for (const invalid of [{ unitPriceCents: 0 }, { unitPriceCents: 1001.5 }, { productId: randomUUID() }, { selection: {} }, { version: 1 }]) {
+      const reply = await call(staff.identity, { action: 'pos', ...args(staff), ...save, operationId: randomUUID(), items: [{ ...line, ...invalid }] })
+      expect(reply).toMatchObject({ status: 400, body: { error: { code: 'VALIDATION_ERROR' } } })
+    }
+    const discarded = await raw(staff.identity, { action: 'pos', ...args(staff), ...save })
+    expect(discarded.status).toBe(200); await discarded.body?.cancel()
+    let order = data(await pos<OperationalOrder>(staff, save))
+    expect(order.items[0]).toMatchObject({ kind: 'amount', productId: null, name: line.name, totalCents: 1001, taxCents: 138, sentQuantity: 0, taxTreatment: 'vat_16' })
+    expect(data(await pos(owner, { command: 'catalog' }))).toEqual(catalogBefore)
+    order = await checkoutPhase(staff, order)
+    const quote = await prepare(staff, order)
+    const record = { command: 'record_checkout' as const, operationId: randomUUID(), attemptId: quote.id, expectedRevision: quote.revision, confirmed: true as const }
+    const [first, second] = await Promise.all([pos<{ order: OperationalOrder; attempt: CheckoutAttempt }>(staff, record), pos<{ order: OperationalOrder; attempt: CheckoutAttempt }>(staff, record)])
+    expect(data(first)).toEqual(data(second))
+    const paid = data(first)
+    expect(paid.order).toMatchObject({ paidCents: 1001, balanceCents: 0, items: [{ sentQuantity: 0, paidQuantity: 1 }] })
+    expect((await kitchen(owner)).filter(batch => batch.orderId === order.id)).toEqual([])
+    expect(count(owner, 'sales')).toBe(1)
+    const receipt = data(await pos<Sale>(staff, { command: 'sale', saleId: paid.attempt.saleId! }))
+    expect(receipt.items).toMatchObject([{ kind: 'amount', productId: null, name: line.name, unitPriceCents: 1001, totalCents: 1001, taxCents: 138 }])
+    const reversal = data(await pos<CheckoutAttempt>(staff, { command: 'prepare_reversal', operationId: randomUUID(), saleId: receipt.id, reason: 'Corrección sintética' }))
+    const started = data(await pos<CheckoutAttempt>(staff, { command: 'start_checkout', operationId: randomUUID(), attemptId: reversal.id, expectedRevision: reversal.revision }))
+    const reversed = data(await pos<CheckoutAttempt>(staff, confirmation(started)))
+    expect(reversed.items[0]).toMatchObject({ kind: 'amount', productId: null, name: line.name, totalCents: 1001, taxCents: 138 })
+    const report = data(await pos<BusinessDayReport>(owner, { command: 'report', date: businessDate(owner.operator.business.timezone) }))
+    expect(report).toMatchObject({ salesCents: 1001, reversalCents: 1001, netCents: 0, taxCents: 138 })
+    expect(report.products).toMatchObject([{ kind: 'amount', productId: null, name: 'Importe libre', salesCents: 1001, reversalCents: 1001, netCents: 0 }])
+  }, 45_000)
+
   it('collects an amount plan through signed Auth/Edge with duplicate taps and exact remaining balance',async()=>{
     const {owner,staff}=await fixture(['catalog.read','sales.create'])
     const product=data(await pos<Product>(owner,{command:'save_product',operationId:randomUUID(),productId:randomUUID(),expectedVersion:null,name:'Consumo por importe sintético',category:'',priceCents:76068,details:{...emptyDetails(),taxBps:1600,taxTreatment:'vat_16'}}))

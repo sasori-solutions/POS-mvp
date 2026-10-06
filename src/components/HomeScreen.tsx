@@ -19,6 +19,7 @@ import { hasPermission } from "../lib/business-access";
 import type { OperationsResponses, OperationalOrder, OrderInputLine, CheckoutAttempt } from "../lib/operations-contracts";
 import type { CartLine, ItemSelection, Product } from "../lib/pos-contracts";
 import { lineKey, selectedPrice } from "../lib/product-details";
+import { cartLineOrderInput, savedOrderLineInput } from "../lib/cart-line";
 import { AccountClientError, accountRequest, deviceRequest } from "../lib/account";
 import ProductsScreen from "./ProductsScreen";
 import SaleScreen from "./SaleScreen";
@@ -281,7 +282,7 @@ export default function HomeScreen({
     setBackError("");
   }
   function counterItems(): OrderInputLine[] {
-    return counter?.items.map(line => ({ lineId: line.lineId, productId: line.productId, version: line.version, unitPriceCents: line.unitPriceCents, quantity: line.quantity, note: line.note, ...(line.selection ? { selection: line.selection } : {}) })) ?? [];
+    return counter?.items.map(savedOrderLineInput) ?? [];
   }
   async function updateCounter(items: OrderInputLine[]) {
     if (!counter || counter.status !== 'open' || counter.phase !== 'service' || counter.frozen) return;
@@ -292,10 +293,13 @@ export default function HomeScreen({
   }
   async function addCounterItem(product: Product, selection?: ItemSelection) {
     const items = counterItems(), price = selectedPrice(product, selection);
-    const existing = items.find(line => line.productId === product.id && line.version === product.version && line.unitPriceCents === price && lineKey({ product, selection: line.selection }) === lineKey({ product, selection }));
+    const existing = items.find(line => 'productId' in line && line.productId === product.id && line.version === product.version && line.unitPriceCents === price && lineKey({ product, selection: line.selection }) === lineKey({ product, selection }));
     await updateCounter(existing
       ? items.map(line => line.lineId === existing.lineId ? { ...line, quantity: line.quantity + 1 } : line)
       : [...items, { lineId: crypto.randomUUID(), productId: product.id, version: product.version, unitPriceCents: price, quantity: 1, note: '', ...(selection ? { selection } : {}) }]);
+  }
+  async function addCounterAmount(amountCents: number, name: string) {
+    await updateCounter([...counterItems(), { kind: 'amount', lineId: crypto.randomUUID(), name, quantity: 1, unitPriceCents: amountCents, note: '' }]);
   }
   async function changeCounterQuantity(lineId: string, change: number | 'remove') {
     await updateCounter(counterItems().flatMap(line => {
@@ -317,7 +321,7 @@ export default function HomeScreen({
     const operationId = crypto.randomUUID();
     saleAccountOperation.current = operationId;
     if (!serviceAccount) counterOrderId.current = orderId;
-    const saved = await mutation.execute({ command: 'save_order', operationId, orderId, expectedRevision: null, name: serviceAccount ? name?.trim() || 'Cuenta' : 'Mostrador', tableId: null, orderKind: serviceAccount ? 'service' : 'counter', items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) }, serviceAccount ? 'service' : 'counter');
+    const saved = await mutation.execute({ command: 'save_order', operationId, orderId, expectedRevision: null, name: serviceAccount ? name?.trim() || 'Cuenta' : 'Mostrador', tableId: null, orderKind: serviceAccount ? 'service' : 'counter', items: cart.map(cartLineOrderInput) }, serviceAccount ? 'service' : 'counter');
     if (currentOperator.current !== operatorScope) return;
     saleAccountOperation.current = null;
     if (serviceAccount) setSaleResetToken(value => value + 1);
@@ -530,13 +534,17 @@ export default function HomeScreen({
               serviceAccounts={accountsEnabled}
               canCreateAccount={canCreateAccount}
               resetToken={saleResetToken}
-              accountPending={Boolean(mutation.pending)}
+              canAmount={hasPermission(business, 'sales.create') || hasPermission(business, 'orders.manage')}
+              defaultVatTreatment={business.profile.defaultVatTreatment}
+              configuredMethods={business.profile.paymentMethods}
               collectionReady={Boolean(snapshot) && !operation.error && !mutation.pending && !mutation.busy}
               collectionAllowed={snapshot?.shift?.status === 'open'}
               activationRequired={snapshot?.enabled === false}
               onOpenCash={hasPermission(business, 'cash.read') ? () => setActive('Caja') : undefined}
               savedCounter={counter ?? undefined}
               onAccountAdd={addCounterItem}
+              onAccountAmount={addCounterAmount}
+              accountPending={Boolean(mutation.pending)}
               onAccountQuantity={changeCounterQuantity}
               onAccountClear={() => updateCounter([])}
             />
@@ -629,7 +637,7 @@ export default function HomeScreen({
           {backError && !mutation.error && <p role="alert">{backError}</p>}
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} serviceAccount={!editingOrder.order || !isCounterOrder(editingOrder.order)} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); setCheckoutRequested(false); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} serviceAccount={order.orderKind === 'service'} onStartCheckout={() => setCheckoutRequested(true)} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} serviceAccount={!editingOrder.order || !isCounterOrder(editingOrder.order)} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); setCheckoutRequested(false); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} serviceAccount={order.orderKind === 'service'} onStartCheckout={() => setCheckoutRequested(true)} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.loaded && !catalog.error ? catalog.paymentMethods : business.profile.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
             draft={checkoutDraft.current?.scope === operatorScope ? checkoutDraft.current.value : undefined}
             onDraftChange={value => { if (!paymentComplete && currentOperator.current === operatorScope) checkoutDraft.current = { scope: operatorScope, value }; }}
             onOpenCash={hasPermission(business, 'cash.read') ? () => { void prepareBackToOrder().then(canClose => {

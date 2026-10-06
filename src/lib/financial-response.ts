@@ -10,6 +10,16 @@ const orderCommands = new Set(['order', 'save_order', 'set_order_discount', 'can
 const attemptCommands = new Set(['attempt', 'prepare_checkout', 'update_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal'])
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const sameId = (first: string, second: string) => first.toLowerCase() === second.toLowerCase()
+type LineIdentity = { kind?: string; productId: string | null; name?: string }
+const requestedAmountName = (name: string) => name.trim().replace(/\s+/g, ' ') || 'Importe libre'
+function financialLineIdentity(line: ObjectValue): boolean {
+  if (line.kind === 'amount') return line.productId === null && typeof line.name === 'string' && line.name.trim() === line.name && line.name.length >= 1 && [...line.name].length <= 100
+  return (line.kind === undefined || line.kind === 'product') && identifier(line.productId)
+}
+function sameLineIdentity(first: LineIdentity, second: LineIdentity): boolean {
+  if (first.kind === 'amount' || second.kind === 'amount') return first.kind === 'amount' && second.kind === 'amount' && first.productId === null && second.productId === null && first.name === second.name
+  return typeof first.productId === 'string' && typeof second.productId === 'string' && sameId(first.productId, second.productId)
+}
 function requireValue(valid: boolean): asserts valid { if (!valid) throw new FinancialIntegrityError() }
 function object(value: unknown): ObjectValue {
   requireValue(Boolean(value) && typeof value === 'object' && !Array.isArray(value))
@@ -33,7 +43,7 @@ function items(value: unknown, minimum: number): ObjectValue[] {
   const identities = new Set<string>()
   return value.map(raw => {
     const item = object(raw)
-    requireValue(identifier(item.lineId) && identifier(item.productId))
+    requireValue(identifier(item.lineId) && financialLineIdentity(item))
     const id = item.lineId.toLowerCase()
     requireValue(!identities.has(id)); identities.add(id)
     return item
@@ -51,6 +61,7 @@ export function assertFinancialOrder(value: unknown): asserts value is Operation
   for (const line of lines) {
     assertMonetaryLineSnapshot(line as unknown as OrderLine)
     requireValue(typeof line.sentQuantity === 'number' && isBoundedInteger(line.sentQuantity, 0, line.quantity as number))
+    if (line.kind === 'amount') requireValue(line.sentQuantity === 0 && line.version === 1 && line.selection === null && line.note === '' && line.kitchenName === '' && line.selectionLabel === '' && line.category === '' && (line.unitPriceCents as number) > 0)
     requireValue(typeof line.taxBps === 'number' && isBoundedInteger(line.taxBps, 0, 10_000))
     requireValue(['vat_16', 'vat_0', 'exempt', 'border_8', 'unconfigured', 'legacy'].includes(String(line.taxTreatment)))
     gross += line.grossCents as number; discount += line.discountCents as number; total += line.totalCents as number; tax += line.taxCents as number
@@ -107,6 +118,7 @@ export function assertFinancialAttempt(value: unknown): asserts value is Checkou
     requireValue(attempt.amountsCents === undefined || allocated)
     requireValue(typeof line.quantity === 'number' && isBoundedInteger(line.quantity, allocated ? 0 : 1, maxOperationalQuantity))
     const unit = cents(line.unitPriceCents, maxOperationalUnitPriceCents), gross = allocated ? cents(line.allocatedGrossCents) : cents(unit * line.quantity)
+    if (line.kind === 'amount') requireValue(unit > 0)
     const lineDiscount = cents(line.discountCents, gross), lineTotal = cents(line.totalCents, gross), lineTax = cents(line.taxCents, lineTotal)
     requireValue(lineTotal === gross - lineDiscount)
     // Historical reversals can have no recorded classification/rate. Their recorded tax cents stay authoritative.
@@ -126,8 +138,9 @@ export function assertFinancialSale(value: unknown): asserts value is Sale {
   for (const raw of sale.items) {
     const line = object(raw)
     const allocated = line.allocatedGrossCents !== undefined
-    requireValue(identifier(line.productId) && typeof line.quantity === 'number' && isBoundedInteger(line.quantity, allocated ? 0 : 1, maxOperationalQuantity))
+    requireValue(financialLineIdentity(line) && typeof line.quantity === 'number' && isBoundedInteger(line.quantity, allocated ? 0 : 1, maxOperationalQuantity))
     const unit = cents(line.unitPriceCents, maxOperationalUnitPriceCents), gross = allocated ? cents(line.allocatedGrossCents) : cents(unit * line.quantity)
+    if (line.kind === 'amount') requireValue(unit > 0)
     const discount = line.discountCents === undefined ? 0 : cents(line.discountCents, gross)
     const net = cents(line.totalCents, gross)
     requireValue(net === gross - discount)
@@ -162,14 +175,14 @@ function completedPayment(value: unknown, command: Extract<PosCommand, { command
     const expected = checkoutAmountTotals(before, attempt.totalCents).items
     requireValue(expected.length === attempt.items.length && expected.every(line => {
       const slice = slices.get(line.lineId.toLowerCase()), source = order.items.find(item => sameId(item.lineId, line.lineId))
-      return Boolean(slice && source && sameId(slice.productId, source.productId) && slice.unitPriceCents === source.unitPriceCents && slice.quantity === line.quantity && slice.totalCents === line.totalCents && slice.discountCents === line.discountCents && slice.taxCents === line.taxCents && slice.allocatedGrossCents === line.allocatedGrossCents)
+      return Boolean(slice && source && sameLineIdentity(slice, source) && slice.unitPriceCents === source.unitPriceCents && slice.quantity === line.quantity && slice.totalCents === line.totalCents && slice.discountCents === line.discountCents && slice.taxCents === line.taxCents && slice.allocatedGrossCents === line.allocatedGrossCents)
     }))
     return
   }
   const lines = new Map(order.items.map(line => [line.lineId.toLowerCase(), line]))
   for (const slice of attempt.items) {
     const line = lines.get(slice.lineId.toLowerCase())
-    requireValue(Boolean(line) && sameId(line!.productId, slice.productId) && line!.unitPriceCents === slice.unitPriceCents && line!.paidQuantity >= slice.quantity)
+    requireValue(Boolean(line) && sameLineIdentity(line!, slice) && line!.unitPriceCents === slice.unitPriceCents && line!.paidQuantity >= slice.quantity)
     const expected = monetaryLineSlice({ ...line!, paidQuantity: line!.paidQuantity - slice.quantity }, slice.quantity)
     requireValue(expected.totalCents === slice.totalCents && expected.discountCents === slice.discountCents && expected.taxCents === slice.taxCents)
   }
@@ -188,7 +201,9 @@ export function assertFinancialResponse(command: PosCommand, value: unknown): vo
         const lines = new Map(command.items.map(line => [line.lineId.toLowerCase(), line]))
         requireValue(lines.size === command.items.length && value.items.every(line => {
           const requested = lines.get(line.lineId.toLowerCase())
-          return Boolean(requested && sameId(line.productId, requested.productId) && line.quantity === requested.quantity && line.unitPriceCents === requested.unitPriceCents && line.version === requested.version)
+          if (!requested || line.quantity !== requested.quantity || line.unitPriceCents !== requested.unitPriceCents) return false
+          if (requested.kind === 'amount') return line.kind === 'amount' && line.productId === null && line.name === requestedAmountName(requested.name)
+          return line.kind !== 'amount' && sameId(line.productId!, requested.productId) && line.version === requested.version
         }))
       }
     } else if (attemptCommands.has(command.command)) {
@@ -211,8 +226,8 @@ export function assertFinancialResponse(command: PosCommand, value: unknown): vo
       if (command.command === 'sale') requireValue(sameId(value.id, command.saleId))
       else {
         requireValue(value.totalCents === command.totalCents && value.paymentMethod === command.paymentMethod && value.items.length === command.items.length)
-        const requested = command.items.map(line => JSON.stringify([line.productId.toLowerCase(), line.quantity, line.unitPriceCents])).sort()
-        const returned = value.items.map(line => JSON.stringify([line.productId.toLowerCase(), line.quantity, line.unitPriceCents])).sort()
+        const requested = command.items.map(line => JSON.stringify([line.kind === 'amount' ? ['amount', requestedAmountName(line.name)] : ['product', line.productId.toLowerCase()], line.quantity, line.unitPriceCents])).sort()
+        const returned = value.items.map(line => JSON.stringify([line.kind === 'amount' ? ['amount', line.name] : ['product', line.productId!.toLowerCase()], line.quantity, line.unitPriceCents])).sort()
         requireValue(requested.every((line, index) => line === returned[index]) && value.items.every(line => (line.discountCents ?? 0) === 0))
       }
     }

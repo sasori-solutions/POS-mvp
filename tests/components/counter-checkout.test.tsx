@@ -125,6 +125,44 @@ test('a saved mode change alters the next Venta action while preserving its draf
   expect(mutation.execute).not.toHaveBeenCalled()
 })
 
+test('a cold catalog failure permits amount-only counter checkout with the business payment methods', async () => {
+  catalog = { ...catalog, products: [], loaded: false, error: 'No pudimos cargar el catálogo.', paymentMethods: [] }
+  let accepted: OperationalOrder | undefined
+  vi.mocked(mutation.execute).mockImplementation(async command => {
+    if (command.command === 'save_order') {
+      const input = command.items[0]
+      if (input.kind !== 'amount') throw new Error('Expected an amount without a catalog product')
+      accepted = { ...order, id: command.orderId, orderKind: command.orderKind ?? null, grossCents: 1001, totalCents: 1001, taxCents: 138, balanceCents: 1001,
+        items: [{ lineId: input.lineId, kind: 'amount', productId: null, version: 1, selection: null, name: 'Importe libre', kitchenName: '', category: '', selectionLabel: '', note: '', quantity: 1, paidQuantity: 0, sentQuantity: 0, unitPriceCents: 1001, grossCents: 1001, discountCents: 0, totalCents: 1001, taxCents: 138, taxBps: 1600, taxTreatment: 'vat_16' }] }
+      return accepted
+    }
+    if (command.command !== 'prepare_checkout' || !accepted) throw new Error('Expected a reservation for the accepted counter')
+    const quote: CheckoutAttempt = { id: 'reserved-amount-attempt', revision: 1, kind: 'payment', status: 'prepared', orderId: accepted.id, shiftId: 'shift', saleId: null, originalSaleId: null, paymentMethod: command.paymentMethod, totalCents: 1001, taxCents: 138, discountCents: 0, operatorName: accepted.operatorName, resolverName: null, createdAt: business.createdAt, resolvedAt: null, reason: '',
+      items: [{ lineId: accepted.items[0].lineId, kind: 'amount', productId: null, name: 'Importe libre', quantity: 1, unitPriceCents: 1001, discountCents: 0, totalCents: 1001, taxCents: 138 }] }
+    vi.mocked(posRequest).mockResolvedValue(quote)
+    return quote
+  })
+  render(<HomeScreen {...props} business={{ ...business, profile: { ...business.profile, paymentMethods: ['cash'], defaultVatTreatment: 'vat_16' } }} />)
+  expect(screen.getByRole('alert').textContent).toContain(catalog.error)
+  fireEvent.click(screen.getByRole('button', { name: 'Importe para la venta', exact: true }))
+  for (const key of ['1', '0', 'Punto decimal', '0', '1']) fireEvent.click(screen.getByRole('button', { name: key, exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir $10.01', exact: true }))
+  await waitFor(() => expect(currentSale().getByText('1 × Importe libre')).toBeTruthy())
+  fireEvent.click(within(screen.getByRole('group', { name: 'Añadir a la venta' })).getByRole('button', { name: 'Productos para la venta', exact: true }))
+  expect(screen.getByRole('alert').textContent).toContain(catalog.error)
+  expect(screen.queryByRole('button', { name: 'Agregar Café, $35.00' })).toBeNull()
+  const collect = currentSale().getByRole('button', { name: 'Cobrar' }) as HTMLButtonElement
+  expect(collect.disabled).toBe(false)
+  fireEvent.click(collect)
+  const checkout = within(await screen.findByRole('dialog', { name: 'Cobrar' }))
+  expect((checkout.getByRole('radio', { name: 'Efectivo' }) as HTMLInputElement).checked).toBe(true)
+  await waitFor(() => expect((checkout.getByRole('button', { name: 'Registrar pago' }) as HTMLButtonElement).disabled).toBe(false))
+  expect(mutation.execute).toHaveBeenCalledTimes(2)
+  expect(mutation.execute).toHaveBeenNthCalledWith(1, expect.objectContaining({ command: 'save_order', orderKind: 'counter', items: [{ lineId: expect.any(String), kind: 'amount', name: '', quantity: 1, unitPriceCents: 1001, note: '' }] }), 'counter')
+  expect(mutation.execute).toHaveBeenLastCalledWith(expect.objectContaining({ command: 'prepare_checkout', orderId: accepted!.id, paymentMethod: 'cash', items: [{ lineId: accepted!.items[0].lineId, quantity: 1 }] }))
+  expect(checkout.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
+})
+
 test('saving and editing a restaurant account opens its service detail to send preparation before collecting', async () => {
   vi.mocked(posRequest).mockResolvedValue({ batches: [] })
   vi.mocked(mutation.execute).mockImplementation(async command => {

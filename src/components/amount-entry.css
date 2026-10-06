@@ -1,0 +1,35 @@
+.pos-dialog.amount-entry-dialog {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: max(8px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
+  overflow: hidden;
+}
+
+.amount-entry-dialog > .pos-dialog-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.amount-entry-dialog > .pos-dialog-heading button {
+  display: none;
+}
+
+.amount-entry-compact {
+  height: 100%;
+  min-height: 0;
+  padding-block: 0;
+}
+
+.amount-entry-compact > .amount-entry-body {
+  flex: 1;
+}
