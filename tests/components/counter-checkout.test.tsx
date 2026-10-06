@@ -100,11 +100,11 @@ test('a cold catalog failure permits amount-only counter checkout with the busin
   })
   render(<HomeScreen {...props} business={{ ...business, profile: { ...business.profile, paymentMethods: ['cash'], defaultVatTreatment: 'vat_16' } }} />)
   expect(screen.getByRole('alert').textContent).toContain(catalog.error)
-  fireEvent.click(screen.getByRole('button', { name: 'Importe', exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: 'Importe para la venta', exact: true }))
   for (const key of ['1', '0', 'Punto decimal', '0', '1']) fireEvent.click(screen.getByRole('button', { name: key, exact: true }))
   fireEvent.click(screen.getByRole('button', { name: 'Añadir $10.01', exact: true }))
   await waitFor(() => expect(currentSale().getByText('1 × Importe libre')).toBeTruthy())
-  fireEvent.click(within(screen.getByRole('group', { name: 'Añadir a la venta' })).getByRole('button', { name: 'Productos', exact: true }))
+  fireEvent.click(within(screen.getByRole('group', { name: 'Añadir a la venta' })).getByRole('button', { name: 'Productos para la venta', exact: true }))
   expect(screen.getByRole('alert').textContent).toContain(catalog.error)
   expect(screen.queryByRole('button', { name: 'Agregar Café, $35.00' })).toBeNull()
   const collect = currentSale().getByRole('button', { name: 'Cobrar' }) as HTMLButtonElement

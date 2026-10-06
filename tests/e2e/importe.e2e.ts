@@ -17,7 +17,7 @@ async function openCart(page: Page) {
   if (await button.isVisible()) await button.click()
 }
 async function addAmount(page: Page, value: string, name?: string) {
-  await page.getByRole('button', { name: 'Importe', exact: true }).click()
+  await page.getByRole('button', { name: 'Importe para la venta', exact: true }).click()
   await page.getByLabel('Importe', { exact: true }).fill(value)
   if (name) {
     await page.getByRole('button', { name: 'Añadir concepto' }).click()
@@ -57,7 +57,7 @@ test('free amount checkout works with an empty catalog, preserves exact receipt 
   const originalViewport = page.viewportSize()!
   try {
     await unlock(page)
-    await page.getByRole('button', { name: 'Importe', exact: true }).click()
+    await page.getByRole('button', { name: 'Importe para la venta', exact: true }).click()
     const keypad = page.getByRole('group', { name: 'Teclado de importe' })
     for (const key of ['2', '5', 'Punto decimal', '3', '0']) await keypad.getByRole('button', { name: key, exact: true }).click()
     await expect(page.getByRole('button', { name: 'Añadir $25.30', exact: true })).toBeEnabled()

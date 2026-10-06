@@ -29,7 +29,7 @@ afterAll(() => { HTMLDialogElement.prototype.showModal = originalShow; HTMLDialo
 function properties() { return { access, employeeId, catalog, onProducts: vi.fn(), onHistory: vi.fn(), defaultVatTreatment: 'unconfigured' as const }; }
 function currentSale() { return within(screen.getByRole('complementary', { name: 'Venta actual' })); }
 async function addAmount(value: string, label: string, concept?: string) {
-  fireEvent.click(within(screen.getByRole('group', { name: 'Añadir a la venta' })).getByRole('button', { name: 'Importe' }));
+  fireEvent.click(within(screen.getByRole('group', { name: 'Añadir a la venta' })).getByRole('button', { name: 'Importe para la venta' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Importe' }), { target: { value } });
   if (concept) {
     fireEvent.click(screen.getByRole('button', { name: 'Añadir concepto' }));
@@ -38,6 +38,26 @@ async function addAmount(value: string, label: string, concept?: string) {
   fireEvent.click(screen.getByRole('button', { name: `Añadir ${label}` }));
   await waitFor(() => expect((screen.getByRole('textbox', { name: 'Importe' }) as HTMLInputElement).value).toBe(''));
 }
+
+test('sale entry modes have distinct accessible names and show the selected catalog or calculator', () => {
+  render(<SaleScreen {...properties()} />);
+  const modes = within(screen.getByRole('group', { name: 'Añadir a la venta' }));
+  const products = modes.getByRole('button', { name: 'Productos para la venta', exact: true });
+  const amount = modes.getByRole('button', { name: 'Importe para la venta', exact: true });
+  expect(screen.queryByRole('button', { name: 'Productos', exact: true })).toBeNull();
+  expect(products.getAttribute('aria-pressed')).toBe('true');
+  expect(amount.getAttribute('aria-pressed')).toBe('false');
+  fireEvent.click(amount);
+  expect(products.getAttribute('aria-pressed')).toBe('false');
+  expect(amount.getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('textbox', { name: 'Importe', exact: true })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Agregar Café, $10.01' })).toBeNull();
+  fireEvent.click(products);
+  expect(products.getAttribute('aria-pressed')).toBe('true');
+  expect(amount.getAttribute('aria-pressed')).toBe('false');
+  expect(screen.queryByRole('textbox', { name: 'Importe', exact: true })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Agregar Café, $10.01' })).toBeTruthy();
+});
 
 test('free amounts mix with products, keep separate quantity controls and survive catalog refresh exactly', async () => {
   const onAccount = vi.fn().mockResolvedValue(undefined);
@@ -89,7 +109,7 @@ test('mixed sales still require a confirmed catalog and unauthorized sessions ha
   view.rerender(<SaleScreen {...props} catalog={{ ...catalog, error: 'Catálogo sin confirmar' }} configuredMethods={['cash']} />);
   expect((currentSale().getByRole('button', { name: 'Cobrar' }) as HTMLButtonElement).disabled).toBe(true);
   view.rerender(<SaleScreen {...props} canAmount={false} />);
-  expect(screen.queryByRole('button', { name: 'Importe' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Importe para la venta' })).toBeNull();
   expect(screen.queryByRole('textbox', { name: 'Importe' })).toBeNull();
   expect(currentSale().getByText('1 × Importe libre')).toBeTruthy();
 });

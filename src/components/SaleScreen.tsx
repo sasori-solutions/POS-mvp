@@ -778,8 +778,8 @@ function SaleScreenSession({
     >
       <div className="sale-catalog min-w-0">
         {canAmount && <div className="mb-4 flex gap-1 border-b border-line" role="group" aria-label="Añadir a la venta">
-          <button type="button" className={`min-h-12 flex-1 border-b-2 text-base ${entryMode === 'products' ? 'border-ink text-ink' : 'border-transparent text-muted'}`} aria-pressed={entryMode === 'products'} onClick={() => setEntryMode('products')}>Productos</button>
-          <button type="button" className={`min-h-12 flex-1 border-b-2 text-base ${entryMode === 'amount' ? 'border-ink text-ink' : 'border-transparent text-muted'}`} aria-pressed={entryMode === 'amount'} onClick={() => setEntryMode('amount')}>Importe</button>
+          <button type="button" className={`min-h-12 flex-1 border-b-2 text-base ${entryMode === 'products' ? 'border-ink text-ink' : 'border-transparent text-muted'}`} aria-label="Productos para la venta" aria-pressed={entryMode === 'products'} onClick={() => setEntryMode('products')}>Productos</button>
+          <button type="button" className={`min-h-12 flex-1 border-b-2 text-base ${entryMode === 'amount' ? 'border-ink text-ink' : 'border-transparent text-muted'}`} aria-label="Importe para la venta" aria-pressed={entryMode === 'amount'} onClick={() => setEntryMode('amount')}>Importe</button>
         </div>}
         {entryMode === 'amount' && canAmount ? <AmountEntry disabled={frozen || checkout} error={error} onAdd={addAmount} onCancel={() => setEntryMode('products')} /> : <>
         <div

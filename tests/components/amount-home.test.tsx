@@ -54,7 +54,7 @@ test('a cashier can collect an amount-only operational sale from saved methods b
     throw new Error('Unexpected mutation');
   });
   render(<HomeScreen business={business} operatorToken="synthetic-memory-only" destination="Venta" onLock={vi.fn()} onLogout={vi.fn()} busy={false} error="" />);
-  fireEvent.click(screen.getByRole('button', { name: 'Importe' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Importe para la venta' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Importe' }), { target: { value: '10.01' } });
   fireEvent.click(screen.getByRole('button', { name: 'Añadir $10.01' }));
   const sale = within(screen.getByRole('complementary', { name: 'Venta actual' }));
