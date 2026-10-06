@@ -22,7 +22,7 @@ vi.mock('../../src/lib/account', async original => ({ ...await original<object>(
 vi.mock('../../src/components/useCatalog', async original => ({ ...await original<object>(), useCatalog: vi.fn() }))
 vi.mock('../../src/components/PosShared', async original => ({ ...await original<object>(), SaleDetail: () => <p>Recibo sintético</p> }))
 
-const business: BusinessContext = { id: pointAccess.businessId, name: 'Negocio sintético', businessType: 'cafe', timezone: 'America/Mexico_City', currency: 'MXN', role: 'owner', createdAt: '2026-10-05T12:00:00Z', profile: { branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['card_integrated'] } }
+const business: BusinessContext = { id: pointAccess.businessId, name: 'Negocio sintético', businessType: 'cafe', timezone: 'America/Mexico_City', currency: 'MXN', role: 'owner', createdAt: '2026-10-05T12:00:00Z', profile: { branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['card_integrated'], accountsEnabled: false } }
 const showModal = HTMLDialogElement.prototype.showModal, close = HTMLDialogElement.prototype.close
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }

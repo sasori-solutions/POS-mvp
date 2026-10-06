@@ -167,7 +167,7 @@ test('product actions cancel and confirm deletion, preserve receipts and remove 
   const backend = await mockPos(page)
   try {
     const latte = (await backend.catalog()).products.find(p => p.name === 'Latte')!
-    const order = await backend.execute<OperationalOrder>({ command: 'save_order', operationId: crypto.randomUUID(), orderId: crypto.randomUUID(), expectedRevision: null, name: 'Histórico', tableId: null, items: [{ lineId: crypto.randomUUID(), productId: latte.id, quantity: 1, unitPriceCents: latte.priceCents, version: latte.version, note: '' }] })
+    const order = await backend.execute<OperationalOrder>({ command: 'save_order', operationId: crypto.randomUUID(), orderId: crypto.randomUUID(), expectedRevision: null, name: 'Histórico', orderKind: 'counter', tableId: null, items: [{ lineId: crypto.randomUUID(), productId: latte.id, quantity: 1, unitPriceCents: latte.priceCents, version: latte.version, note: '' }] })
     const attempt = await backend.execute<CheckoutAttempt>({ command: 'prepare_checkout', operationId: crypto.randomUUID(), orderId: order.id, expectedRevision: order.revision, items: order.items.map(line => ({ lineId: line.lineId, quantity: line.quantity })), paymentMethod: 'cash' })
     await backend.execute({ command: 'record_checkout', operationId: crypto.randomUUID(), attemptId: attempt.id, expectedRevision: attempt.revision, confirmed: true })
     const receipt = await backend.execute<Sale>({ command: 'sale', saleId: (await backend.sales()).sales[0].id })

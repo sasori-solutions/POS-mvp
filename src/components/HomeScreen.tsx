@@ -107,6 +107,8 @@ export default function HomeScreen({
   const [checkoutRequested, setCheckoutRequested] = useState(false);
   const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder } | null>(null);
   const [savedCounter, setSavedCounter] = useState<OperationalOrder | null>(null);
+  const [saleResetToken, setSaleResetToken] = useState(0);
+  const saleAccountOperation = useRef<string | null>(null);
   const counterOrderId = useRef<string | null>(null);
   const backOrder = useRef<OperationalOrder | null>(null);
   const checkoutDraft = useRef<{ scope: string; value: CheckoutDraft } | null>(null);
@@ -242,7 +244,10 @@ export default function HomeScreen({
     hasPermission(business, 'catalog.read') && !managementContent && (active === 'Venta' || active === 'Productos' || Boolean(editingOrder || selectedOrder)),
     onSessionError,
   );
-  const canOperate = business.role === 'owner' || (business.permissions ?? []).some(p => ['sales.create', 'sales.reverse', 'orders.read', 'kitchen.read', 'cash.read'].includes(p));
+  const accountsEnabled = business.profile.accountsEnabled !== false;
+  const canCreateAccount = hasPermission(business, 'orders.manage') && hasPermission(business, 'catalog.read');
+  const canTakeOrder = hasPermission(business, 'catalog.read') && (hasPermission(business, 'sales.create') || accountsEnabled && canCreateAccount);
+  const canOperate = business.role === 'owner' || (business.permissions ?? []).some(p => ['sales.create', 'sales.reverse', 'orders.read', 'orders.manage', 'kitchen.read', 'cash.read'].includes(p));
   const needsOperations = operating || active === 'Caja' || active === 'Ventas' && hasPermission(business, 'sales.reverse') || Boolean(selectedOrder);
   const operation = useOperations(access, canOperate && needsOperations, onSessionError);
   const mutation = useOperationalMutation(access, business.employee?.id ?? 'owner', onSessionError);
@@ -260,6 +265,7 @@ export default function HomeScreen({
     return value.orderKind === 'counter' || value.orderKind == null && value.id === counterOrderId.current;
   }
   function orderSaved(saved: OperationalOrder) {
+    if (currentOperator.current !== operatorScope) return;
     if (isCounterOrder(saved)) { counterOrderId.current = saved.id; setSavedCounter(saved); }
     else if (saved.orderKind === 'service' && saved.id === counterOrderId.current) { counterOrderId.current = null; setSavedCounter(null); }
     setSelectedOrder(saved);
@@ -280,6 +286,7 @@ export default function HomeScreen({
   async function updateCounter(items: OrderInputLine[]) {
     if (!counter || counter.status !== 'open' || counter.phase !== 'service' || counter.frozen) return;
     const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId: counter.id, expectedRevision: counter.revision, name: counter.name, tableId: counter.tableId, items, ...(counter.orderKind ? { orderKind: counter.orderKind } : {}) }, 'counter');
+    if (currentOperator.current !== operatorScope) return;
     setSavedCounter(saved);
     await operation.refresh();
   }
@@ -297,16 +304,25 @@ export default function HomeScreen({
       return quantity > 0 ? [{ ...line, quantity }] : [];
     }));
   }
-  async function saveCounter(cart: CartLine[]) {
-    setCheckoutRequested(true);
+  async function saveSaleAccount(cart: CartLine[], name?: string) {
+    if (currentOperator.current !== operatorScope) return;
     if (counter?.status === 'open') {
+      setCheckoutRequested(true);
       setSelectedOrder(counter);
       return;
     }
+    const serviceAccount = accountsEnabled;
+    if (serviceAccount && !canCreateAccount) throw new Error('Necesitas permiso para administrar cuentas. Pide al dueño que revise tu acceso.');
     const orderId = crypto.randomUUID();
-    counterOrderId.current = orderId;
-    const saved = await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: null, name: 'Mostrador', tableId: null, orderKind: 'counter', items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) }, 'counter');
-    setSavedCounter(saved);
+    const operationId = crypto.randomUUID();
+    saleAccountOperation.current = operationId;
+    if (!serviceAccount) counterOrderId.current = orderId;
+    const saved = await mutation.execute({ command: 'save_order', operationId, orderId, expectedRevision: null, name: serviceAccount ? name?.trim() || 'Cuenta' : 'Mostrador', tableId: null, orderKind: serviceAccount ? 'service' : 'counter', items: cart.map(line => ({ lineId: crypto.randomUUID(), productId: line.product.id, version: line.product.version, unitPriceCents: selectedPrice(line.product, line.selection), quantity: line.quantity, note: '', ...(line.selection ? { selection: line.selection } : {}) })) }, serviceAccount ? 'service' : 'counter');
+    if (currentOperator.current !== operatorScope) return;
+    saleAccountOperation.current = null;
+    if (serviceAccount) setSaleResetToken(value => value + 1);
+    else setSavedCounter(saved);
+    setCheckoutRequested(!serviceAccount);
     setSelectedOrder(saved);
     await operation.refresh();
   }
@@ -321,6 +337,10 @@ export default function HomeScreen({
       if (currentOperator.current !== operatorScope) return;
       if (command.command === 'save_order') {
         const saved = result as OperationalOrder;
+        if (saleAccountOperation.current === command.operationId) {
+          saleAccountOperation.current = null;
+          if (saved.orderKind === 'service' || origin === 'service') setSaleResetToken(value => value + 1);
+        }
         const acceptedCounter = saved.orderKind === 'counter' || saved.orderKind == null && counterSave;
         if (acceptedCounter) { counterOrderId.current = saved.id; setSavedCounter(saved); }
         else if (saved.id === counterOrderId.current) { counterOrderId.current = null; setSavedCounter(null); }
@@ -495,7 +515,7 @@ export default function HomeScreen({
           {!mutation.busy && mutation.pending && <><p>Hay una solicitud por confirmar. Reintenta el mismo registro sin repetir el movimiento de dinero.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
         </div>}
 
-        {(saleVisited || active === 'Venta') && hasPermission(business, 'sales.create') && hasPermission(business, 'catalog.read') && (
+        {(saleVisited || active === 'Venta') && canTakeOrder && (
           <div hidden={active !== "Venta"}>
             <SaleScreen
               access={access}
@@ -506,7 +526,11 @@ export default function HomeScreen({
               onSessionError={onSessionError}
               canAvailability={hasPermission(business, 'catalog.availability')}
               canFavorite={hasPermission(business, 'catalog.manage')}
-              onAccount={snapshot?.enabled ? saveCounter : undefined}
+              onAccount={snapshot?.enabled ? saveSaleAccount : undefined}
+              serviceAccounts={accountsEnabled}
+              canCreateAccount={canCreateAccount}
+              resetToken={saleResetToken}
+              accountPending={Boolean(mutation.pending)}
               collectionReady={Boolean(snapshot) && !operation.error && !mutation.pending && !mutation.busy}
               collectionAllowed={snapshot?.shift?.status === 'open'}
               activationRequired={snapshot?.enabled === false}
