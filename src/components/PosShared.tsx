@@ -179,7 +179,7 @@ export function SaleDetail({ sale }: { sale: Sale }) {
           <li key={`${item.productId}:${index}`}>
             <div>
               <strong>{item.name}</strong>
-              <p>{item.selectionLabel}</p>
+              <p>{item.kind === 'amount' && item.name !== 'Importe libre' ? 'Importe libre' : item.selectionLabel}</p>
               <p>
                 {item.allocatedGrossCents !== undefined ? 'Parte de cuenta' : `${item.quantity} × ${money(item.unitPriceCents)}`}
               </p>

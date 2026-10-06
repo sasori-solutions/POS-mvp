@@ -1,4 +1,4 @@
-import type { CartLine, ItemSelection, Product, ProductDetails } from './pos-contracts'
+import type { AmountCartLine, ProductCartLine, ItemSelection, Product, ProductDetails } from './pos-contracts'
 
 export function emptyDetails(): ProductDetails {
   return { description: '', imageId: null, tileColor: '#E8EEF8', tileLabel: '', itemType: 'prepared',
@@ -9,7 +9,9 @@ export function emptyDetails(): ProductDetails {
 export function productDetails(product: Product): ProductDetails {
   return { ...emptyDetails(), ...product.details, trackStock: false }
 }
-export function lineKey(line: Pick<CartLine, 'product' | 'selection'>): string {
+export function lineKey(line: Pick<ProductCartLine, 'product' | 'selection'> | AmountCartLine): string {
+  if ('kind' in line && line.kind === 'amount') return `amount:${line.id}`
+  if (!('product' in line)) throw new Error('Revisa el artículo de la cuenta.')
   const s = line.selection
   return `${line.product.id}:${s?.variationId ?? ''}:${[...(s?.modifierIds ?? [])].sort().join(',')}:${s?.variablePriceCents ?? ''}`
 }

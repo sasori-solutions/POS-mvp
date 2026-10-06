@@ -184,4 +184,42 @@ describe('authoritative financial response boundary', () => {
     expect(vi.mocked(accountRequest).mock.calls[0][0]).toEqual(vi.mocked(accountRequest).mock.calls[1][0])
     expect(view.result.current.lastResult?.command).toBe('record_checkout')
   })
+
+  it('validates an amount without a catalog identity and rejects disguised product or kitchen snapshots', () => {
+    const order = account()
+    Object.assign(order.items[0], { kind: 'amount', productId: null, name: 'Servicio adicional', kitchenName: '', selection: null, note: '' })
+    const read: PosCommand = { command: 'order', orderId: order.id }
+    assertFinancialResponse(read, order)
+    for (const change of [{ kind: undefined }, { kind: 'product' }, { productId: id(5) }, { name: '' }, { sentQuantity: 1 }, { selection: {} }, { kitchenName: 'Preparar' }]) {
+      serverError(read, { ...order, items: [{ ...order.items[0], ...change }] })
+    }
+    const save: Extract<PosCommand, { command: 'save_order' }> = { command: 'save_order', operationId: id(9), orderId: order.id, expectedRevision: null, name: order.name, tableId: null,
+      items: [{ lineId: id(3), kind: 'amount', name: ' Servicio   adicional ', quantity: 3, unitPriceCents: 101, note: '' }] }
+    assertFinancialResponse(save, order)
+    serverError(save, { ...order, items: [{ ...order.items[0], name: 'Otro concepto' }] })
+    const unnamed = { ...save, items: [{ ...save.items[0], name: '' }] }
+    assertFinancialResponse(unnamed, { ...order, items: [{ ...order.items[0], name: 'Importe libre' }] })
+  })
+
+  it('conserves amount identity in paid slices and legacy receipts, including exact recovery', async () => {
+    const result = accepted()
+    Object.assign(result.order.items[0], { kind: 'amount', productId: null, name: 'Servicio adicional', kitchenName: '', selection: null, note: '', sentQuantity: 0 })
+    Object.assign(result.attempt.items[0], { kind: 'amount', productId: null, name: 'Servicio adicional' })
+    assertFinancialResponse(recordCommand, result)
+    serverError(recordCommand, { ...result, attempt: { ...result.attempt, items: [{ ...result.attempt.items[0], name: 'Otro concepto' }] } })
+    serverError(recordCommand, { ...result, attempt: { ...result.attempt, items: [{ ...result.attempt.items[0], kind: undefined }] } })
+    const command: Extract<PosCommand, { command: 'complete_sale' }> = { command: 'complete_sale', operationId: id(9), paymentMethod: 'cash', totalCents: 101,
+      items: [{ kind: 'amount', name: '', quantity: 1, unitPriceCents: 101 }] }
+    const sale = { id: id(7), paymentMethod: 'cash', totalCents: 101, itemCount: 1,
+      items: [{ kind: 'amount', productId: null, name: 'Importe libre', category: '', quantity: 1, unitPriceCents: 101, totalCents: 101 }] }
+    assertFinancialResponse(command, sale)
+    assertFinancialResponse({ ...command, items: [{ ...command.items[0], name: ' Servicio   adicional ' }] }, { ...sale, items: [{ ...sale.items[0], name: 'Servicio adicional' }] })
+    serverError(command, { ...sale, items: [{ ...sale.items[0], name: 'Otro concepto' }] })
+    vi.mocked(accountRequest).mockResolvedValueOnce({ ...result, attempt: { ...result.attempt, items: [{ ...result.attempt.items[0], productId: id(5) }] } }).mockResolvedValueOnce(result)
+    const view = renderHook(() => useOperationalMutation(access, id(11)))
+    await act(async () => { await expect(view.result.current.execute(recordCommand)).rejects.toMatchObject({ code: 'SERVER_ERROR' }) })
+    expect(view.result.current.pending).toEqual(recordCommand)
+    await act(async () => { await view.result.current.execute(recordCommand) })
+    expect(view.result.current.pending).toBeNull()
+  })
 })

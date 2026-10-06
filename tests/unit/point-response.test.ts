@@ -33,6 +33,16 @@ test('receipt line substitutions cannot pass by preserving only aggregate money'
   expect(() => assertPointResponse({ command: 'status', checkoutId: paid.id }, paid)).toThrow(AccountClientError)
 })
 
+test('Point preserves the amount concept through reservation, materialization and receipt recovery', () => {
+  const paid = pointPaid()
+  for (const line of [...paid.checkout.items, ...paid.items, ...paid.sale!.items]) Object.assign(line, { kind: 'amount', productId: null, name: 'Servicio adicional' })
+  assertPointResponse({ command: 'status', checkoutId: paid.id }, paid)
+  for (const change of [{ kind: undefined }, { kind: 'product' }, { productId: pointId(80) }, { name: 'Otro concepto' }]) {
+    expect(() => assertPointResponse({ command: 'status', checkoutId: paid.id }, { ...paid, sale: { ...paid.sale, items: [{ ...paid.sale!.items[0], ...change }] } })).toThrow(AccountClientError)
+    expect(() => assertPointResponse({ command: 'status', checkoutId: paid.id }, { ...paid, items: [{ ...paid.items[0], ...change }] })).toThrow(AccountClientError)
+  }
+})
+
 test('a refund response must include the exact request identity, amount and allocation', () => {
   const command = { command: 'refund' as const, operationId: pointId(90), checkoutId: pointPaid().id, amountCents: 2000, merchandiseCents: 2000, tipCents: 0, reason: 'Corrección' }
   const request = { id: pointId(91), operationId: command.operationId, status: 'pending' as const, amountCents: 2000, merchandiseCents: 2000, tipCents: 0, reason: command.reason, remoteRefundId: null, firstSentAt: null }

@@ -13,7 +13,7 @@ import './point-payment.css'
 function matchesQuote(expected: CheckoutAttempt | null | undefined, returned: CheckoutAttempt) {
   if (!expected) return true
   const signature = (value: CheckoutAttempt) => JSON.stringify([value.id, value.revision, value.orderId, value.paymentMethod, value.totalCents, value.discountCents, value.taxCents,
-    value.items.map(item => [item.lineId, item.productId, item.quantity, item.unitPriceCents, item.discountCents, item.totalCents, item.taxCents]).sort((first, second) => String(first[0]).localeCompare(String(second[0])))])
+    value.items.map(item => [item.lineId, item.kind ?? 'product', item.productId, item.kind === 'amount' ? item.name : null, item.quantity, item.unitPriceCents, item.discountCents, item.totalCents, item.taxCents, item.allocatedGrossCents ?? null]).sort((first, second) => String(first[0]).localeCompare(String(second[0])))])
   return expected.status === 'prepared' && signature(expected) === signature(returned)
 }
 

@@ -1,6 +1,6 @@
 import { parseProductDetails, parseSelection } from './product-validation.ts'
 import { parseOperationsCommand } from './operations-validation.ts'
-import type { PosCommand, SaleInputLine } from '../../../src/lib/pos-contracts.ts'
+import type { PosCommand, ProductSaleInputLine, SaleInputLine } from '../../../src/lib/pos-contracts.ts'
 import type { PaymentMethod } from '../../../src/lib/contracts.ts'
 import { isUuid, RequestValidationError } from './validation.ts'
 
@@ -56,11 +56,16 @@ export function parsePosCommand(input: Record<string, unknown>, accessKeys: stri
       const items: SaleInputLine[] = input.items.map(value => {
         if (!value || typeof value !== 'object' || Array.isArray(value)) invalid()
         const line = value as Record<string, unknown>
+        if (line.kind === 'amount') {
+          exactKeys(line, ['kind', 'name', 'quantity', 'unitPriceCents'])
+          return { kind:'amount' as const, name:text(line.name,0,100), quantity:integer(line.quantity,1,999), unitPriceCents:integer(line.unitPriceCents,1,99_999_999) }
+        }
         exactKeys(line, ['productId', 'quantity', 'unitPriceCents', 'version', ...(Object.hasOwn(line, 'selection') ? ['selection'] : [])])
         return { productId: uuid(line.productId), quantity: integer(line.quantity, 1, 999),
           unitPriceCents: integer(line.unitPriceCents, 0, 99_999_999), version: integer(line.version, 1, 2_147_483_647), ...(Object.hasOwn(line, 'selection') ? { selection: parseSelection(line.selection) } : {}) }
-      }).sort((a, b) => JSON.stringify([a.productId, a.selection]).localeCompare(JSON.stringify([b.productId, b.selection])))
-      if (new Set(items.map(line => JSON.stringify([line.productId, line.selection]))).size !== items.length) invalid()
+      }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      const productItems = items.filter((line): line is ProductSaleInputLine => line.kind !== 'amount')
+      if (new Set(productItems.map(line => JSON.stringify([line.productId, line.selection]))).size !== productItems.length) invalid()
       const totalCents = integer(input.totalCents, 0, 9_999_999_999)
       if (items.reduce((sum, line) => sum + line.quantity * line.unitPriceCents, 0) !== totalCents) invalid()
       return { command: input.command, operationId: uuid(input.operationId), items, totalCents, paymentMethod: input.paymentMethod as PaymentMethod }

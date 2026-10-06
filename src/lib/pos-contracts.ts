@@ -40,23 +40,30 @@ export interface ProductInput {
   details?: ProductDetails
 }
 
-export interface CartLine {
+export interface ProductCartLine {
+  kind?: 'product'
   product: Product
   quantity: number
   selection?: ItemSelection
 }
+export interface AmountCartLine { kind: 'amount'; id: string; name: string; quantity: number; unitPriceCents: number }
+export type CartLine = ProductCartLine | AmountCartLine
 
-export interface SaleInputLine {
+export interface ProductSaleInputLine {
+  kind?: undefined
   productId: string
   quantity: number
   unitPriceCents: number
   version: number
   selection?: ItemSelection
 }
+export interface AmountSaleInputLine { kind: 'amount'; name: string; quantity: number; unitPriceCents: number }
+export type SaleInputLine = ProductSaleInputLine | AmountSaleInputLine
 
 export interface SaleItem {
   allocatedGrossCents?: number
-  productId: string
+  kind?: 'product' | 'amount'
+  productId: string | null
   name: string
   category: string
   quantity: number

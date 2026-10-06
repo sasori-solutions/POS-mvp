@@ -81,7 +81,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   const allowed = (key: Parameters<typeof hasPermission>[1]) => hasPermission(business, key)
   const disabled = mutation.busy || Boolean(mutation.pending) || pointBusy || sendingKitchen
   const settled = ['paid', 'cancelled', 'waived', 'closed'].includes(order.status)
-  const unsentItems = order.items.some(line => line.quantity > line.sentQuantity)
+  const unsentItems = order.items.some(line => line.kind !== 'amount' && line.quantity > line.sentQuantity)
   const canSendKitchen = !checkoutView && serviceAccount && order.orderKind !== 'counter' && !settled && !order.frozen && order.phase === 'service' && allowed('orders.manage') && unsentItems
   const requested = useRef('')
   const reserveTimer = useRef<number | null>(null)
@@ -412,7 +412,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
       const selectedQuantity = split ? Math.min(quantities[line.lineId] ?? 0, remainingQuantity) : remainingQuantity
       const amount = usingAmounts && line.paidTotalCents !== undefined ? line.totalCents - line.paidTotalCents : checkoutView || split ? checkoutTotals(order, [{ lineId: line.lineId, quantity: selectedQuantity }]).totalCents : line.totalCents
       return <li key={line.lineId}>
-        <span><strong>{checkoutView ? remainingQuantity : line.quantity} × {line.name}</strong><small>{line.selectionLabel}{line.note ? ` · ${line.note}` : ''}</small>{!checkoutView && <small>{line.sentQuantity} enviados · {line.paidQuantity} pagados</small>}</span>
+        <span><strong>{checkoutView ? remainingQuantity : line.quantity} × {line.name}</strong><small>{line.kind === 'amount' ? 'Importe libre' : line.selectionLabel}{line.note ? ` · ${line.note}` : ''}</small>{!checkoutView && <small>{line.kind === 'amount' ? `${line.paidQuantity} pagados` : `${line.sentQuantity} enviados · ${line.paidQuantity} pagados`}</small>}</span>
         <span className="checkout-line-amount">{money(amount)}</span>
       </li>
     })}</ul>}
