@@ -22,10 +22,11 @@ export default function PointPayment(props: Parameters<typeof PointPaymentSessio
   return <PointPaymentSession key={`${access.businessId}:${access.operatorToken}:${access.deviceToken ?? ''}:${attempt?.id ?? initialCheckout?.id ?? ''}`} {...props} />
 }
 
-function PointPaymentSession({ access, attempt, initialCheckout, settings, onSessionError, onBlocked, onResolved, onDone, collectionAllowed = true, canStart = true, embedded = false }: {
+function PointPaymentSession({ access, attempt, initialCheckout, settings, onSessionError, onBlocked, onResolved, onDone, collectionAllowed = true, canStart = true, embedded = false, businessName }: {
   access: PosAccess; attempt?: CheckoutAttempt | null; initialCheckout?: PointCheckout; settings: PointSettings | null
   onSessionError?: (error: AccountClientError) => void; onBlocked?: (blocked: boolean) => void
   onResolved?: (checkout: PointCheckout) => void; onDone?: (checkout: PointCheckout) => void; collectionAllowed?: boolean; canStart?: boolean; embedded?: boolean
+  businessName?: string
 }) {
   const [checkout, setCheckout] = useState<PointCheckout | null>(initialCheckout ?? null)
   const [terminalId, setTerminalId] = useState(initialCheckout?.terminal.id ?? '')
@@ -241,7 +242,7 @@ function PointPaymentSession({ access, attempt, initialCheckout, settings, onSes
     {checkout && !pointResolved(checkout.state) && checkout.cancelCapability === 'terminal' && <p className="point-payment-hint">Para cancelar, usa la terminal y consulta el estado aquí.</p>}
     {checkout?.state === 'unknown_review' && <details className="point-payment-details"><summary>Solicitar revisión</summary><div className="point-payment-incident"><label>¿Qué ocurrió?<textarea value={reason} maxLength={200} onChange={event => setReason(event.target.value)} disabled={busy} /></label><button type="button" className="pos-button pos-secondary" disabled={busy || !online || !reason.trim()} onClick={() => void incident()}>Guardar incidencia</button></div></details>}
     {checkout && finished && onDone && <button type="button" className="pos-button pos-primary" onClick={() => onDone(checkout)}>{failed ? 'Volver a la cuenta' : 'Continuar'}</button>}
-    {checkout?.sale && <details className="point-payment-details"><summary>Ver recibo</summary><SaleDetail sale={checkout.sale} /></details>}
+    {checkout?.sale && <details className="point-payment-details"><summary>Ver recibo</summary><SaleDetail sale={checkout.sale} businessName={businessName} /></details>}
     {checkout && <details className="point-payment-details"><summary>Referencia del cobro</summary><dl><div><dt>Referencia</dt><dd>{checkout.id}</dd></div>{checkout.remoteOrderId && <div><dt>Mercado Pago</dt><dd>{checkout.remoteOrderId}</dd></div>}{checkout.statusDetail && <div><dt>Detalle</dt><dd>{checkout.statusDetail}</dd></div>}</dl></details>}
   </section>
 }

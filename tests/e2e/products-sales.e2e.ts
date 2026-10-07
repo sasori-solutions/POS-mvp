@@ -37,16 +37,23 @@ async function recorded(page: Page, backend: Awaited<ReturnType<typeof mockPos>>
 }
 async function showReceipt(page: Page, recoveredAmount?: string) {
   const checkout = page.getByRole('dialog', { name: 'Cobrar', exact: true })
+  const confirmedReceipt = page.getByRole('dialog', { name: 'Pago registrado', exact: true })
   if (recoveredAmount) {
     const account = page.getByRole('dialog', { name: 'Mostrador', exact: true })
-    await expect(account).toBeVisible()
-    const totals = account.locator('.ops-totals > div')
-    await expect(totals.filter({ has: page.getByText('Pagado', { exact: true }) }).locator('dd')).toHaveText(recoveredAmount)
-    await expect(totals.filter({ has: page.getByText('Saldo', { exact: true }) }).locator('dd')).toHaveText('$0.00')
-    await account.getByRole('button', { name: 'Cerrar', exact: true }).click()
-    await expect(account).not.toBeVisible()
+    await expect.poll(async () => await confirmedReceipt.isVisible() || await account.isVisible()).toBe(true)
+    if (await confirmedReceipt.isVisible()) {
+      await expect(confirmedReceipt.locator('.sale-detail .sale-total')).toContainText(recoveredAmount)
+      await confirmedReceipt.getByRole('button', { name: 'Cerrar', exact: true }).click()
+    } else {
+      const totals = account.locator('.ops-totals > div')
+      await expect(totals.filter({ has: page.getByText('Pagado', { exact: true }) }).locator('dd')).toHaveText(recoveredAmount)
+      await expect(totals.filter({ has: page.getByText('Saldo', { exact: true }) }).locator('dd')).toHaveText('$0.00')
+      await account.getByRole('button', { name: 'Cerrar', exact: true }).click()
+      await expect(account).not.toBeVisible()
+    }
   }
   await expect(checkout).not.toBeVisible()
+  if (await confirmedReceipt.isVisible()) await confirmedReceipt.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await navigate(page, 'Ventas')
   await page.getByRole('button', { name: /^Ver venta/ }).click()
 }
@@ -287,16 +294,23 @@ for (const method of ['Efectivo', 'Transferencia']) test(`sale registers ${metho
   } finally { await backend.db.close() }
 })
 
-test('legacy card configuration cannot create a manual card payment without a linked terminal', async ({ page }) => {
+test('external cards record a confirmed manual payment without enabling Point', async ({ page }) => {
   const backend = await mockPos(page)
   try {
     await unlock(page); await add(page, 'Latte'); await openCart(page)
     await charge(page, '$58.00')
-    await expect(page.getByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true })).toBeDisabled()
-    await expect(page.getByRole('radio', { name: /Tarjeta externa|Registro manual/ })).toHaveCount(0)
-    await expect(page.getByText('Activa Tarjeta en Formas de pago.')).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true })).toHaveCount(0)
+    const external = page.getByRole('radio', { name: 'Tarjeta externa', exact: true })
+    await expect(external).toBeEnabled()
+    await page.locator('label').filter({ has: external }).click()
+    await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeDisabled()
     expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(0)
     expect((await backend.sales()).sales).toHaveLength(0)
+    await page.getByRole('checkbox', { name: 'Confirmo que la terminal externa aprobó este pago.', exact: true }).check()
+    await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
+    await recorded(page, backend)
+    expect((await backend.sales()).sales).toMatchObject([{ totalCents: 5800, paymentMethod: 'card_external' }])
+    expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(1)
   } finally { await backend.db.close() }
 })
 

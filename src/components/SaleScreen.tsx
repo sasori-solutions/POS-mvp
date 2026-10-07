@@ -52,6 +52,7 @@ import ProductSelection from "./ProductSelection";
 import SaleAccountPanel from "./SaleAccountPanel";
 import CheckoutPanel from "./CheckoutPanel";
 import PaymentMethodPicker from "./PaymentMethodPicker";
+import ExternalCardConfirmation from "./ExternalCardConfirmation";
 import { collectionPaymentMethods, isManualCollectionMethod } from '../lib/payment-methods';
 import {
   CatalogFilters,
@@ -86,6 +87,7 @@ export default function SaleScreen(props: Parameters<typeof SaleScreenSession>[0
 
 function SaleScreenSession({
   access,
+  businessName = '',
   employeeId,
   catalog,
   onProducts,
@@ -112,6 +114,7 @@ function SaleScreenSession({
   onAccountClear,
 }: {
   access: PosAccess;
+  businessName?: string;
   employeeId: string;
   catalog: CatalogState;
   onProducts: () => void;
@@ -167,6 +170,7 @@ function SaleScreenSession({
   const [notice, setNotice] = useState("");
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [confirmClearAccount, setConfirmClearAccount] = useState(false);
+  const [externalApproved, setExternalApproved] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const mounted = useRef(true);
@@ -205,6 +209,7 @@ function SaleScreenSession({
     setError('');
     setNotice('');
   }, [resetToken]);
+  useEffect(() => { setExternalApproved(false); }, [payment, cart, checkout]);
   useEffect(() => {
     if (savedCounter && savedCounter.status !== 'open') {
       setCart([]);
@@ -578,7 +583,7 @@ function SaleScreenSession({
   async function register() {
     if (submitting.current || storageError || !online) return;
     let command = pendingRef.current;
-    if (!command && (!isManualCollectionMethod(payment) || !collectionAllowed || !canCheckout || !manualMethods.includes(payment)))
+    if (!command && (!isManualCollectionMethod(payment) || !collectionAllowed || !canCheckout || !manualMethods.includes(payment) || payment === 'card_external' && !externalApproved))
       return;
     const draft = command ? null : JSON.parse(JSON.stringify(saleCommand(cart, payment, total, crypto.randomUUID()))) as PendingSale;
     submitting.current = true;
@@ -742,7 +747,7 @@ function SaleScreenSession({
           <Check size={28} aria-hidden="true" />
         </div>
         <h2>Venta registrada</h2>
-        <SaleDetail sale={receipt} />
+        <SaleDetail sale={receipt} businessName={businessName} />
         {error && (
           <p
             className="pos-error mt-6 rounded-lg border border-line bg-danger-soft p-3 text-sm text-danger [&_p]:text-inherit [&_button]:mt-3"
@@ -1144,7 +1149,8 @@ function SaleScreenSession({
 
               {pending ? <p className="payment-instructions py-2 text-sm">{paymentLabels[pending.paymentMethod]} · Recuperar registro</p> : <PaymentMethodPicker name="sale-payment" methods={paymentChoices}
                 value={payment} onChange={setPayment} disabled={frozen} disabledMethods={['card_integrated']} />}
-              {!pending && paymentChoices.includes('card_integrated') && <p className="payment-instructions py-2 text-sm">Vincula una terminal para cobrar con tarjeta.</p>}
+              {!pending && paymentChoices.includes('card_integrated') && <p className="payment-instructions py-2 text-sm">Vincula una terminal Point para cobrar con Mercado Pago.</p>}
+              {!pending && payment === 'card_external' && <ExternalCardConfirmation checked={externalApproved} onChange={setExternalApproved} disabled={frozen || !canCheckout || !collectionAllowed} />}
               <button
                 className="pos-button pos-primary checkout-confirm"
                 disabled={
@@ -1152,7 +1158,7 @@ function SaleScreenSession({
                   storageError ||
                   !online ||
                   (!pending &&
-                    (!canCheckout || !manualMethods.includes(payment)))
+                    (!canCheckout || !manualMethods.includes(payment) || payment === 'card_external' && !externalApproved))
                 }
                 aria-busy={busy}
                 onClick={() => void register()}

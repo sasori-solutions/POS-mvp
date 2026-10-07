@@ -3,7 +3,7 @@ import { AccessButtonContent } from "./AccessBusy";
 import { accountRequest, AccountClientError } from "../lib/account";
 import PointSetup from './PointSetup';
 import { usePoint } from './usePoint';
-import { collectionPaymentMethods } from '../lib/payment-methods';
+import { collectionPaymentMethods, paymentLabels } from '../lib/payment-methods';
 import { businessTimezones, businessDefaultVat } from '../lib/business-profile';
 import BusinessOperationFields from './BusinessOperationFields';
 import ProfileImageEditor from './ProfileImageEditor';
@@ -26,7 +26,8 @@ interface BusinessSettingsProps {
 
 const paymentOptions: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Efectivo" },
-  { value: "card_integrated", label: "Tarjeta" },
+  { value: "card_external", label: paymentLabels.card_external },
+  { value: "card_integrated", label: paymentLabels.card_integrated },
   { value: "transfer", label: "Transferencia" },
 ];
 const emptyProfile: BusinessProfile = {
@@ -227,6 +228,7 @@ export default function BusinessSettings({
                 <input type="checkbox" ref={value === 'card_integrated' ? paymentMethodInput : undefined} checked={profile.paymentMethods.includes(value)} disabled={busy} onChange={event => changeProfile('paymentMethods', event.target.checked ? [...profile.paymentMethods, value] : profile.paymentMethods.filter(method => method !== value))} />{label}
               </label>)}
             </div>
+            <p className="mt-3 text-sm text-muted">Tarjeta externa registra un pago aprobado en la terminal del comercio. Mercado Pago Point envía el cobro a una terminal vinculada.</p>
             <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Vincular una terminal</button>
           </fieldset>
           <details className="business-extra-settings">
