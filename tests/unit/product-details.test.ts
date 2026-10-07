@@ -26,7 +26,7 @@ describe('catalog selections and durable recovery', () => {
     const sale = { command: 'complete_sale', operationId: id, paymentMethod: 'cash', totalCents: 5902, items: [{ productId: id, version: 1, quantity: 1, unitPriceCents: 5902, selection }] }
     const storage = (value: unknown) => ({ getItem: () => JSON.stringify(value) }) as unknown as Storage
     expect(readPendingSale('key',storage(sale))).toEqual(sale)
-    expect(() => readPendingSale('key',storage({ ...sale,items: [{ ...sale.items[0],selection: { ...selection,modifierIds:[modifier,modifier] } }] }))).toThrow(/pendiente/)
+    expect(() => readPendingSale('key',storage({ ...sale,items: [{ ...sale.items[0],selection: { ...selection,modifierIds:Array(25).fill(modifier) } }] }))).toThrow(/pendiente/)
   })
   it('accepts distinct selections for one product and rejects extra nested fields or invalid inventory', () => {
     const access = { action:'pos',businessId:id,operatorToken:'ab'.repeat(32) }

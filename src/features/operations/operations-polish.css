@@ -251,3 +251,5 @@
   .operations-polish *::before,
   .operations-polish *::after { transition: none !important; animation: none !important; }
 }
+
+.catalog-segments { flex-wrap: wrap; max-width: 100%; }

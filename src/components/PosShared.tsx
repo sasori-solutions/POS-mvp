@@ -177,6 +177,7 @@ export function SaleDetail({ sale, businessName = '' }: { sale: Sale; businessNa
             <div>
               <strong>{item.name}</strong>
               <p>{item.kind === 'amount' && item.name !== 'Importe libre' ? 'Importe libre' : item.selectionLabel}</p>
+              {item.comboComponents?.map(component => <p key={component.productId}>{item.allocatedGrossCents !== undefined ? `Por combo: ${component.quantity}` : item.quantity * component.quantity} × {component.name}{component.selectionLabel ? ` · ${component.selectionLabel}` : ''}</p>)}
               <p>
                 {item.allocatedGrossCents !== undefined ? 'Parte de cuenta' : `${item.quantity} × ${money(item.unitPriceCents)}`}
               </p>

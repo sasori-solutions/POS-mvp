@@ -8,11 +8,14 @@ import { productDetails, isSoldOut } from "../lib/product-details";
 import { CatalogFilters, EmptyCatalog, PosDialog } from "./PosShared";
 import { accessErrorCodes, type CatalogState } from "./useCatalog";
 import LoadingPlaceholder, { PendingIndicator } from "./LoadingPlaceholder";
+import ModifierLibrary from "./ModifierLibrary";
+import CatalogBulkPanel from "./CatalogBulkPanel";
 
 export default function ProductsScreen({
   access,
   catalog,
   canManage,
+  actorId = 'owner',
   defaultVatTreatment,
   canAvailability = false,
   onSessionError,
@@ -20,6 +23,7 @@ export default function ProductsScreen({
   access: PosAccess;
   catalog: CatalogState;
   canManage: boolean;
+  actorId?: string;
   defaultVatTreatment?: VatTreatment;
   canAvailability?: boolean;
   onSessionError?: (error: AccountClientError) => void;
@@ -32,6 +36,8 @@ export default function ProductsScreen({
   const [availability, setAvailability] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState<Product | null>(null);
   const [message, setMessage] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const screen = useRef<HTMLDivElement>(null);
   const focusAfterDeletion = useRef(false);
   useEffect(() => {
@@ -57,6 +63,9 @@ export default function ProductsScreen({
   }
   return (
     <div className="products-screen" ref={screen}>
+      {canManage && <nav aria-label="Herramientas de catálogo" className="mb-5 flex flex-wrap gap-3"><button className="pos-button pos-secondary" aria-pressed={!libraryOpen} onClick={() => setLibraryOpen(false)}>Productos</button><button className="pos-button pos-secondary" aria-pressed={libraryOpen} onClick={() => setLibraryOpen(true)}>Biblioteca de extras</button><button className="pos-button pos-secondary" onClick={() => setBulkOpen(true)}>Gestionar catálogo</button></nav>}
+      {bulkOpen && <CatalogBulkPanel access={access} actorId={actorId} products={catalog.products} defaultVatTreatment={defaultVatTreatment} onClose={() => setBulkOpen(false)} onSessionError={onSessionError} onSaved={products => { products.forEach(catalog.upsert); void catalog.refresh(); }} />}
+      {libraryOpen ? <ModifierLibrary access={access} onSessionError={onSessionError} onProductsChanged={products => { products.forEach(catalog.upsert); void catalog.refresh(); }} /> : <>
       {message && (
         <p className="pos-status my-4 text-sm text-muted" role="status">
           {message}
@@ -200,7 +209,8 @@ export default function ProductsScreen({
           })}
         </ul>
       )}
-      {availability && <ProductAvailability product={availability} access={access} onClose={() => setAvailability(null)} onSaved={product => { catalog.upsert(product); setAvailability(product); }} onSessionError={onSessionError} />}
+      </>}
+      {availability && <ProductAvailability product={availability} access={access} onClose={() => setAvailability(null)} onSaved={products => { products.forEach(catalog.upsert); setAvailability(products.find(product => product.id === availability.id) ?? availability); void catalog.refresh(); }} onSessionError={onSessionError} />}
       {editing && (
         <ProductEditor
           defaultVatTreatment={defaultVatTreatment}
@@ -465,19 +475,19 @@ function ProductActivation({
   );
 }
 
-function ProductAvailability({product, access, onClose, onSaved, onSessionError}: {product: Product; access: PosAccess; onClose: () => void; onSaved: (product: Product) => void; onSessionError?: (error: AccountClientError) => void}) {
+function ProductAvailability({product, access, onClose, onSaved, onSessionError}: {product: Product; access: PosAccess; onClose: () => void; onSaved: (products: Product[]) => void; onSessionError?: (error: AccountClientError) => void}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const pending = useRef<Extract<import('../lib/pos-contracts').PosCommand, {command: 'set_product_sold_out'}> | null>(null);
+  const pending = useRef<Extract<import('../lib/pos-contracts').PosCommand, {command: 'set_product_sold_out' | 'set_modifier_option_sold_out'}> | null>(null);
   const alive = useRef(true);
   const submitting = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  async function toggle(soldOut: boolean, variationId?: string) {
+  async function toggle(soldOut: boolean, variationId?: string, modifierId?: string) {
     if (submitting.current) return;
     submitting.current = true; setBusy(true); setError('');
-    const command = pending.current ?? {command: 'set_product_sold_out' as const, operationId: crypto.randomUUID(), productId: product.id, expectedVersion: product.version, soldOut, ...(variationId ? {variationId} : {})};
+    const command = pending.current ?? (modifierId ? {command: 'set_modifier_option_sold_out' as const, operationId: crypto.randomUUID(), productId: product.id, expectedVersion: product.version, modifierId, soldOut} : {command: 'set_product_sold_out' as const, operationId: crypto.randomUUID(), productId: product.id, expectedVersion: product.version, soldOut, ...(variationId ? {variationId} : {})});
     pending.current = command;
-    try { const saved = await posRequest(access, command); pending.current = null; if (alive.current) onSaved(saved); }
+    try { const products = command.command === 'set_modifier_option_sold_out' ? (await posRequest(access, command)).products : [await posRequest(access, command)]; pending.current = null; if (alive.current) onSaved(products); }
     catch (caught) {
       if (!alive.current) return;
       setError(caught instanceof Error ? caught.message : 'No pudimos cambiar la disponibilidad.');
@@ -492,8 +502,9 @@ function ProductAvailability({product, access, onClose, onSaved, onSessionError}
     <p><strong>{product.name}</strong></p>
     <div className="ops-form"><button className="pos-button pos-secondary" disabled={busy || Boolean(pending.current)} onClick={() => void toggle(!details.soldOut)}>Producto · {details.soldOut ? 'Agotado' : 'Disponible'}</button>
       {details.variations.map(variation => <button key={variation.id} className="pos-button pos-secondary" disabled={busy || Boolean(pending.current)} onClick={() => void toggle(!variation.soldOut, variation.id)}>{variation.name} · {variation.soldOut ? 'Agotado' : 'Disponible'}</button>)}
+      {details.modifierSets.map(group => <fieldset key={group.id} className="flex flex-col gap-3 rounded-lg border border-line p-4"><legend className="px-2 text-sm font-medium">{group.name}</legend>{group.libraryId && <p className="text-sm text-muted">Grupo compartido: el cambio aplica a todos los productos enlazados.</p>}{group.options.map(option => <button key={option.id} className="pos-button pos-secondary" disabled={busy || Boolean(pending.current)} onClick={() => void toggle(!option.soldOut, undefined, option.id)}>{option.name} · {option.soldOut ? 'No disponible' : 'Disponible'}</button>)}</fieldset>)}
       {error && <p role="alert">{error}</p>}
-      {pending.current && !busy && <button className="pos-button pos-primary" onClick={() => void toggle(pending.current!.soldOut, pending.current!.variationId)}>Reintentar cambio</button>}
+      {pending.current && !busy && <button className="pos-button pos-primary" onClick={() => { const command = pending.current!; void toggle(command.soldOut, command.command === 'set_product_sold_out' ? command.variationId : undefined, command.command === 'set_modifier_option_sold_out' ? command.modifierId : undefined); }}>Reintentar cambio</button>}
     </div>
   </PosDialog>;
 }

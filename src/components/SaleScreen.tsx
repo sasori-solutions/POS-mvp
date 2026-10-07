@@ -1,3 +1,4 @@
+import CashChangeCalculator from './CashChangeCalculator';
 import VatSummary from "./VatSummary";
 import LoadingPlaceholder, { PendingIndicator, Skeleton } from "./LoadingPlaceholder";
 import { useEffect, useRef, useState } from "react";
@@ -11,7 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { AccountClientError } from "../lib/account";
-import type { PaymentMethod } from "../lib/contracts";
+import type { PaymentMethod, TransferAccount } from "../lib/contracts";
 import type { OperationalOrder } from "../lib/operations-contracts";
 import { checkoutTotals } from "../lib/checkout-selection";
 import { checkoutAmountTotals } from "../lib/checkout-amounts";
@@ -53,6 +54,7 @@ import SaleAccountPanel from "./SaleAccountPanel";
 import CheckoutPanel from "./CheckoutPanel";
 import PaymentMethodPicker from "./PaymentMethodPicker";
 import ExternalCardConfirmation from "./ExternalCardConfirmation";
+import TransferConfirmation from "./TransferConfirmation";
 import { collectionPaymentMethods, isManualCollectionMethod } from '../lib/payment-methods';
 import {
   CatalogFilters,
@@ -98,6 +100,7 @@ function SaleScreenSession({
   canAmount = true,
   defaultVatTreatment = 'vat_16',
   configuredMethods,
+  transferAccount,
   onAccount,
   serviceAccounts = false,
   canCreateAccount = true,
@@ -129,6 +132,7 @@ function SaleScreenSession({
   canAmount?: boolean;
   defaultVatTreatment?: VatTreatment;
   configuredMethods?: PaymentMethod[];
+  transferAccount?: TransferAccount | null;
   collectionReady?: boolean;
   collectionAllowed?: boolean;
   activationRequired?: boolean;
@@ -171,6 +175,8 @@ function SaleScreenSession({
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [confirmClearAccount, setConfirmClearAccount] = useState(false);
   const [externalApproved, setExternalApproved] = useState(false);
+  const [transferReceived, setTransferReceived] = useState(false);
+  const [cashChangeValid, setCashChangeValid] = useState(true);
   const [storageError, setStorageError] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const mounted = useRef(true);
@@ -209,7 +215,7 @@ function SaleScreenSession({
     setError('');
     setNotice('');
   }, [resetToken]);
-  useEffect(() => { setExternalApproved(false); }, [payment, cart, checkout]);
+  useEffect(() => { setExternalApproved(false); setTransferReceived(false); }, [payment, cart, checkout]);
   useEffect(() => {
     if (savedCounter && savedCounter.status !== 'open') {
       setCart([]);
@@ -583,7 +589,7 @@ function SaleScreenSession({
   async function register() {
     if (submitting.current || storageError || !online) return;
     let command = pendingRef.current;
-    if (!command && (!isManualCollectionMethod(payment) || !collectionAllowed || !canCheckout || !manualMethods.includes(payment) || payment === 'card_external' && !externalApproved))
+    if (!command && (!isManualCollectionMethod(payment) || !collectionAllowed || !canCheckout || !manualMethods.includes(payment) || payment === 'card_external' && !externalApproved || payment === 'transfer' && !transferReceived || payment === 'cash' && !cashChangeValid))
       return;
     const draft = command ? null : JSON.parse(JSON.stringify(saleCommand(cart, payment, total, crypto.randomUUID()))) as PendingSale;
     submitting.current = true;
@@ -1150,6 +1156,8 @@ function SaleScreenSession({
               {pending ? <p className="payment-instructions py-2 text-sm">{paymentLabels[pending.paymentMethod]} · Recuperar registro</p> : <PaymentMethodPicker name="sale-payment" methods={paymentChoices}
                 value={payment} onChange={setPayment} disabled={frozen} disabledMethods={['card_integrated']} />}
               {!pending && paymentChoices.includes('card_integrated') && <p className="payment-instructions py-2 text-sm">Vincula una terminal Point para cobrar con Mercado Pago.</p>}
+              {!pending && payment === 'cash' && <CashChangeCalculator totalCents={total} onValidChange={setCashChangeValid} disabled={frozen || !canCheckout || !collectionAllowed} />}
+              {!pending && payment === 'transfer' && <TransferConfirmation account={transferAccount} checked={transferReceived} onChange={setTransferReceived} disabled={frozen || !canCheckout || !collectionAllowed} />}
               {!pending && payment === 'card_external' && <ExternalCardConfirmation checked={externalApproved} onChange={setExternalApproved} disabled={frozen || !canCheckout || !collectionAllowed} />}
               <button
                 className="pos-button pos-primary checkout-confirm"
@@ -1158,7 +1166,7 @@ function SaleScreenSession({
                   storageError ||
                   !online ||
                   (!pending &&
-                    (!canCheckout || !manualMethods.includes(payment) || payment === 'card_external' && !externalApproved))
+                    (!canCheckout || !manualMethods.includes(payment) || payment === 'card_external' && !externalApproved || payment === 'transfer' && !transferReceived || payment === 'cash' && !cashChangeValid))
                 }
                 aria-busy={busy}
                 onClick={() => void register()}

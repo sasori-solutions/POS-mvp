@@ -15,7 +15,8 @@ export function saleReceiptHtml(sale: Sale, businessName = ''): string {
     const freeAmount = 'kind' in item && item.kind === 'amount'
     const detail = freeAmount ? 'Importe libre' : item.selectionLabel ?? ''
     const quantity = item.allocatedGrossCents !== undefined ? 'Parte de cuenta' : `${item.quantity} × ${money(item.unitPriceCents)}`
-    return `<tr><td><strong>${escape(item.name)}</strong>${detail ? `<p>${escape(detail)}</p>` : ''}<p>${escape(quantity)}</p></td><td class="amount">${escape(money(item.totalCents))}</td></tr>`
+    const components = (item.comboComponents ?? []).map(component => `<p>${escape(item.allocatedGrossCents !== undefined ? `Por combo: ${component.quantity}` : String(item.quantity * component.quantity))} × ${escape(component.name)}${component.selectionLabel ? ` · ${escape(component.selectionLabel)}` : ''}</p>`).join('')
+    return `<tr><td><strong>${escape(item.name)}</strong>${detail ? `<p>${escape(detail)}</p>` : ''}${components}<p>${escape(quantity)}</p></td><td class="amount">${escape(money(item.totalCents))}</td></tr>`
   }).join('')
   const breakdown = vat.groups.map(group => `<div><dt>${escape(group.label)}</dt><dd>${escape(money(group.cents))}</dd></div>`).join('')
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Venta ${escape(reference)}</title><style>

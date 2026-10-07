@@ -131,3 +131,62 @@ test('a refreshed order retains the discount draft and updates its exact preview
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Aplicar descuento' })))
   expect(props.onApply).toHaveBeenCalledExactlyOnceWith({ kind: 'percent', value: 1_500, reason: 'Cortesía' })
 })
+
+test('scoped discounts preview the eligible subtotal and send criteria without changing other items', async () => {
+  const onApply = vi.fn()
+  const value = { ...order, items: [{ productId: '00000000-0000-4000-8000-000000000001', name: 'Café', category: 'Bebidas', grossCents: 3500 }, { productId: '00000000-0000-4000-8000-000000000002', name: 'Pan', category: 'Comidas', grossCents: 16_000 }] } as OperationalOrder
+  render(<OrderDiscountEditor order={value} onApply={onApply} onCancel={vi.fn()} />)
+  fireEvent.change(screen.getByRole('combobox', { name: 'Aplicar descuento a' }), { target: { value: 'selected' } })
+  fireEvent.click(screen.getByRole('button', { name: '10%' }))
+  fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'Promo bebidas' } })
+  expect((screen.getByRole('button', { name: 'Aplicar descuento' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Categoría: Bebidas' }))
+  expect(screen.getByText('−$3.50')).toBeTruthy()
+  expect(screen.getByText('$191.50')).toBeTruthy()
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Aplicar descuento' })))
+  expect(onApply).toHaveBeenCalledExactlyOnceWith({ kind: 'percent', value: 1000, reason: 'Promo bebidas', scope: { productIds: [], categories: ['Bebidas'] } })
+})
+
+test('an order with 25 categories limits the draft to 24 and lets the user replace a selected category', async () => {
+  const categories = Array.from({ length: 25 }, (_, index) => `Categoría ${String(index + 1).padStart(2, '0')}`)
+  const value = { ...order, grossCents: 25_025, items: categories.map(category => ({ productId: null, name: category, category, grossCents: 1001 })) } as OperationalOrder
+  const onApply = vi.fn()
+  render(<OrderDiscountEditor order={value} onApply={onApply} onCancel={vi.fn()} />)
+  fireEvent.change(screen.getByRole('combobox', { name: 'Aplicar descuento a' }), { target: { value: 'selected' } })
+  fireEvent.click(screen.getByRole('button', { name: '10%' }))
+  fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'Cortesía' } })
+  for (const category of categories.slice(0, 24)) fireEvent.click(screen.getByRole('checkbox', { name: `Categoría: ${category}` }))
+  const last = screen.getByRole('checkbox', { name: 'Categoría: Categoría 25' }) as HTMLInputElement
+  expect(last.disabled).toBe(true)
+  expect(last.checked).toBe(false)
+  expect(screen.getByText('Máximo 24 categorías. Desmarca una para elegir otra.')).toBeTruthy()
+  // A dispatched event must not bypass the same guard used by disabled controls.
+  fireEvent.click(last)
+  expect(last.checked).toBe(false)
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Categoría: Categoría 01' }))
+  expect(last.disabled).toBe(false)
+  fireEvent.click(last)
+  expect(last.checked).toBe(true)
+  expect(screen.getByText('−$24.02')).toBeTruthy()
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Aplicar descuento' })))
+  expect(onApply).toHaveBeenCalledExactlyOnceWith({ kind: 'percent', value: 1000, reason: 'Cortesía', scope: { productIds: [], categories: categories.slice(1) } })
+})
+
+test('inherited criteria outside the current account stay visible, preserve the draft and can be removed explicitly', async () => {
+  const currentId = '00000000-0000-4000-8000-000000000001', absentId = '00000000-0000-4000-8000-000000000002'
+  const scope = { productIds: [currentId, absentId], categories: ['Bebidas', 'Postres'] }
+  const value = { ...order, grossCents: 1001, items: [{ productId: currentId, name: 'Café', category: 'Bebidas', grossCents: 1001 }], discount: { kind: 'percent', value: 1000, reason: 'Cortesía', scope, promotion: { id: '00000000-0000-4000-8000-000000000003', revision: 1, name: 'Biblioteca anterior' } } } as OperationalOrder
+  const onApply = vi.fn()
+  render(<OrderDiscountEditor order={value} onApply={onApply} onCancel={vi.fn()} />)
+  const absentProduct = screen.getByRole('checkbox', { name: 'Producto fuera de esta cuenta 1' }) as HTMLInputElement
+  const absentCategory = screen.getByRole('checkbox', { name: 'Categoría: Postres' }) as HTMLInputElement
+  expect(absentProduct.checked).toBe(true)
+  expect(absentCategory.checked).toBe(true)
+  expect(screen.getByText('Los criterios fuera de esta cuenta se conservan. Desmárcalos para quitarlos.')).toBeTruthy()
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Guardar descuento' })))
+  expect(onApply).toHaveBeenNthCalledWith(1, { kind: 'percent', value: 1000, reason: 'Cortesía', scope })
+  fireEvent.click(absentProduct)
+  fireEvent.click(absentCategory)
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Guardar descuento' })))
+  expect(onApply).toHaveBeenNthCalledWith(2, { kind: 'percent', value: 1000, reason: 'Cortesía', scope: { productIds: [currentId], categories: ['Bebidas'] } })
+})

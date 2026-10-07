@@ -223,3 +223,60 @@ describe('authoritative financial response boundary', () => {
     expect(view.result.current.pending).toBeNull()
   })
 })
+
+describe('service visits preserve financial accounts and response recovery', () => {
+  function visit(orders = [account()]) {
+    return { id: id(30), revision: 1, name: 'Visita sintética', status: 'active', createdAt: '2026-10-07T12:00:00Z', closedAt: null,
+      tableIds: [], orders, balanceCents: orders.reduce((sum, order) => sum + order.balanceCents, 0) }
+  }
+  it('includes every linked balance and rejects wrong, duplicated or truncated totals', () => {
+    const first = accepted().order, next = { ...account(), id: id(31) }
+    const command: PosCommand = { command: 'continue_service_order', operationId: id(32), sourceOrderId: first.id, expectedRevision: 2, orderId: next.id, name: 'Sobremesa' }
+    const response = { order: next, visit: visit([first, next]) }
+    expect(() => assertFinancialResponse(command, response)).not.toThrow()
+    serverError(command, { ...response, visit: { ...response.visit, balanceCents: next.balanceCents } })
+    serverError(command, { ...response, visit: visit([next, next]) })
+    serverError(command, { ...response, visit: visit([first]) })
+    serverError(command, { ...response, order: first })
+  })
+  it('does not release a visit with a pending balance or return another account service state', () => {
+    serverError({ command: 'release_service_visit', operationId: id(33), visitId: id(30), expectedRevision: 1 }, { ...visit(), status: 'closed' })
+    serverError({ command: 'service_order', orderId: id(31) }, { visit: visit(), courses: [] })
+    serverError({ command: 'service_order', orderId: id(2) }, { visit: null })
+  })
+  it('rejects malformed held quantities and service courses from another account', () => {
+    const read: PosCommand = { command: 'service_order', orderId: id(2) }
+    const course = { id: id(40), orderId: id(2), status: 'held', items: [{ lineId: id(3), quantity: 1 }] }
+    expect(() => assertFinancialResponse(read, { visit: null, courses: [course] })).not.toThrow()
+    serverError(read, { visit: null, courses: [{ ...course, orderId: id(31) }] })
+    serverError(read, { visit: null, courses: [{ ...course, items: [{ lineId: id(3), quantity: 0.5 }] }] })
+    serverError(read, { visit: null, courses: [course, course] })
+  })
+})
+
+describe('scoped promotion response totals', () => {
+  function scopedOrder(): OperationalOrder {
+    const order = account()
+    order.discount = { kind: 'percent', value: 1_000, reason: 'Bebidas', scope: { productIds: [id(5)], categories: [] } }
+    order.items[0] = { ...order.items[0], discountCents: 30, totalCents: 273, taxCents: 38 }
+    order.items.push({ ...order.items[0], lineId: id(50), productId: id(51), name: 'Otro producto', category: 'Comidas', quantity: 4, unitPriceCents: 100, grossCents: 400, discountCents: 0, totalCents: 400, taxCents: 55 })
+    return { ...order, grossCents: 703, discountCents: 30, totalCents: 673, taxCents: 93, balanceCents: 673 }
+  }
+  it('uses eligible snapshot gross and rejects discounting a different product or missing scope', () => {
+    const order = scopedOrder(), read: PosCommand = { command: 'order', orderId: order.id }
+    expect(() => assertFinancialResponse(read, order)).not.toThrow()
+    serverError(read, { ...order, discount: { kind: 'percent', value: 1_000, reason: 'Bebidas' } })
+    const invalid = structuredClone(order)
+    invalid.items[0] = { ...invalid.items[0], discountCents: 20, totalCents: 283, taxCents: 39 }
+    invalid.items[1] = { ...invalid.items[1], discountCents: 10, totalCents: 390, taxCents: 54 }
+    serverError(read, invalid)
+  })
+  it('requires the applied promotion id/revision and the exact requested manual scope', () => {
+    const order = scopedOrder()
+    const apply: PosCommand = { command: 'apply_order_promotion', operationId: id(53), orderId: order.id, expectedRevision: 1, promotionId: id(52), promotionRevision: 2 }
+    const result = { ...order, discount: { ...order.discount!, promotion: { id: id(52), revision: 2, name: 'Bebidas' } } }
+    expect(() => assertFinancialResponse(apply, result)).not.toThrow()
+    serverError(apply, { ...result, discount: { ...result.discount, promotion: { ...result.discount.promotion, revision: 1 } } })
+    serverError({ command: 'set_order_discount', operationId: id(54), orderId: order.id, expectedRevision: 1, discount: { ...order.discount!, scope: { productIds: [id(51)], categories: [] } } }, order)
+  })
+})

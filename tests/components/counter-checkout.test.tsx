@@ -26,9 +26,16 @@ beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
 })
+function mockPosReads(value: unknown) {
+  vi.mocked(posRequest).mockImplementation(async (_access, command) => {
+    if (command.command === 'report_period' || command.command === 'report_own_period') throw new Error('Reports are outside this sale fixture')
+    return (command.command === 'service_order' ? { visit: null, courses: [] } : value) as never
+  })
+}
 beforeEach(() => {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation(query => ({matches:query === '(prefers-reduced-motion: reduce)',addEventListener:vi.fn(),removeEventListener:vi.fn()})))
   localStorage.clear()
+  mockPosReads({ batches: [] })
   vi.mocked(accountRequest).mockResolvedValue({business, expiresAt:'2026-10-03T22:00:00Z'})
   vi.mocked(deviceRequest).mockResolvedValue({business, expiresAt:'2026-10-03T22:00:00Z'})
   catalog = { products: [product], paymentMethods: ['cash'], loaded: true, loading: false, error: '', refresh, upsert: vi.fn(), remove: vi.fn() }
@@ -37,7 +44,7 @@ beforeEach(() => {
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command === 'prepare_checkout') {
       const quote = {id:'reserved-attempt',revision:1,kind:'payment',status:'prepared',orderId:command.orderId,shiftId:'shift',paymentMethod:command.paymentMethod,totalCents:3500,taxCents:483,discountCents:0,items:command.items,createdAt:business.createdAt} as CheckoutAttempt;
-      vi.mocked(posRequest).mockResolvedValue(quote);
+      mockPosReads(quote);
       return quote;
     }
     if (command.command !== 'save_order') throw new Error('Unexpected mutation')
@@ -70,6 +77,28 @@ test('Home refreshes a shared owner device with device_context without sending i
   expect(accountRequest).not.toHaveBeenCalled()
 })
 
+test('releasing a paid service visit refreshes the table immediately without waiting for polling', async () => {
+  const serviceOrder = { ...order, orderKind: 'service' as const, name: 'Mesa resuelta', tableId: 'table', frozen: true, paidCents: 3500, balanceCents: 0 }
+  const table = { id: 'table', name: 'Mesa resuelta', active: true, revision: 1, orderId: serviceOrder.id, layout: null }
+  const visit = { id: 'visit', revision: 1, name: 'Visita resuelta', status: 'active', tableIds: [table.id], orders: [serviceOrder], balanceCents: 0, createdAt: business.createdAt, closedAt: null }
+  const closedOrder = { ...serviceOrder, status: 'closed' as const, revision: 2 }
+  const closedVisit = { ...visit, revision: 2, status: 'closed', tableIds: [], orders: [closedOrder], closedAt: business.createdAt }
+  snapshot = { ...snapshot, orders: [serviceOrder], tables: [table] }
+  vi.mocked(posRequest).mockImplementation(async (_access, command) => {
+    if (command.command === 'service_order') return { visit: snapshot.tables[0].orderId ? visit : closedVisit, courses: [] } as never
+    return { batches: [] } as never
+  })
+  vi.mocked(mutation.execute).mockResolvedValue(closedVisit as never)
+  refresh.mockImplementationOnce(async () => { snapshot = { ...snapshot, orders: [closedOrder], tables: [{ ...table, orderId: null }] } })
+  render(<HomeScreen {...props} business={{ ...business, profile: { ...business.profile, accountsEnabled: true } }} />)
+  fireEvent.click(screen.getByRole('button', { name: /Mesa resuelta, Pagada/ }))
+  const detail = within(await screen.findByRole('dialog', { name: 'Mesa resuelta' }))
+  fireEvent.click(await detail.findByRole('button', { name: 'Finalizar visita y liberar mesas' }))
+  await waitFor(() => expect(refresh).toHaveBeenCalled())
+  fireEvent.click(detail.getByRole('button', { name: 'Cerrar' }))
+  expect(await screen.findByRole('button', { name: 'Mesa resuelta, Libre' })).toBeTruthy()
+})
+
 test('opening checkout shows payment methods immediately and has no manual edit, kitchen or finalization steps', async () => {
   render(<HomeScreen {...props} />)
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
@@ -88,6 +117,7 @@ test('Venta opens an editable service account before payment when accounts are c
     return { ...order, id: command.orderId, name: command.name, orderKind: command.orderKind ?? null }
   })
   render(<HomeScreen {...props} business={accountBusiness} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir una cuenta desde el catálogo' }))
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   fireEvent.change(currentSale().getByRole('textbox', { name: 'Nombre de la cuenta' }), { target: { value: 'Mesa 7' } })
   fireEvent.click(currentSale().getByRole('button', { name: 'Abrir cuenta' }))
@@ -104,6 +134,7 @@ test('Venta opens an editable service account before payment when accounts are c
 test('accounts mode accepts an order with the drawer closed but still prevents collecting', async () => {
   snapshot = { ...snapshot, shift: null }
   render(<HomeScreen {...props} business={{ ...business, profile: { ...business.profile, accountsEnabled: true } }} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir una cuenta desde el catálogo' }))
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   const open = currentSale().getByRole('button', { name: 'Abrir cuenta' }) as HTMLButtonElement
   expect(open.disabled).toBe(false)
@@ -119,6 +150,8 @@ test('a saved mode change alters the next Venta action while preserving its draf
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   expect(currentSale().getByRole('button', { name: 'Cobrar' })).toBeTruthy()
   view.rerender(<HomeScreen {...props} business={{ ...business, profile: { ...business.profile, accountsEnabled: true } }} />)
+  expect(screen.getByRole('heading', { name: 'Mesas y cuentas' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir una cuenta desde el catálogo' }))
   expect(currentSale().getByRole('button', { name: 'Abrir cuenta' })).toBeTruthy()
   expect(currentSale().queryByRole('button', { name: 'Cobrar' })).toBeNull()
   expect(currentSale().getByText('1 × Café')).toBeTruthy()
@@ -139,7 +172,7 @@ test('a cold catalog failure permits amount-only counter checkout with the busin
     if (command.command !== 'prepare_checkout' || !accepted) throw new Error('Expected a reservation for the accepted counter')
     const quote: CheckoutAttempt = { id: 'reserved-amount-attempt', revision: 1, kind: 'payment', status: 'prepared', orderId: accepted.id, shiftId: 'shift', saleId: null, originalSaleId: null, paymentMethod: command.paymentMethod, totalCents: 1001, taxCents: 138, discountCents: 0, operatorName: accepted.operatorName, resolverName: null, createdAt: business.createdAt, resolvedAt: null, reason: '',
       items: [{ lineId: accepted.items[0].lineId, kind: 'amount', productId: null, name: 'Importe libre', quantity: 1, unitPriceCents: 1001, discountCents: 0, totalCents: 1001, taxCents: 138 }] }
-    vi.mocked(posRequest).mockResolvedValue(quote)
+    mockPosReads(quote)
     return quote
   })
   render(<HomeScreen {...props} business={{ ...business, profile: { ...business.profile, paymentMethods: ['cash'], defaultVatTreatment: 'vat_16' } }} />)
@@ -164,7 +197,7 @@ test('a cold catalog failure permits amount-only counter checkout with the busin
 })
 
 test('saving and editing a restaurant account opens its service detail to send preparation before collecting', async () => {
-  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  mockPosReads({ batches: [] })
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command !== 'save_order') throw new Error('A service account must not reserve collection')
     return { ...order, id: command.orderId, name: command.name, orderKind: command.orderKind ?? null, revision: (command.expectedRevision ?? 0) + 1 }
@@ -278,7 +311,7 @@ test('a partial payment leaves only unpaid items and requires a new selection fo
   }).mockImplementationOnce(async command=>{
     if(command.command!=='prepare_checkout') throw new Error('Expected preparation')
     const quote={id:'reserved-attempt',revision:1,kind:'payment',status:'prepared',orderId:command.orderId,shiftId:'shift',paymentMethod:command.paymentMethod,...checkoutTotals(double,command.items),items:command.items,createdAt:business.createdAt} as CheckoutAttempt
-    vi.mocked(posRequest).mockResolvedValue(quote)
+    mockPosReads(quote)
     return quote
   })
   render(<HomeScreen {...props} />)
@@ -292,7 +325,7 @@ test('a partial payment leaves only unpaid items and requires a new selection fo
   vi.mocked(mutation.execute).mockImplementationOnce(async command=>{
     if(command.command!=='update_checkout') throw new Error('Expected update')
     const selected={...quote,revision:2,...checkoutTotals(saved,command.items),items:command.items}
-    vi.mocked(posRequest).mockResolvedValue(selected)
+    mockPosReads(selected)
     return selected
   })
   fireEvent.click(dialog.getByRole('radio',{name:'Dividir cuenta'}))
@@ -313,7 +346,7 @@ test('a partial payment leaves only unpaid items and requires a new selection fo
   expect((dialog.getByRole('spinbutton',{name:'Cantidad a cobrar de Café'}) as HTMLInputElement).value).toBe('0')
   expect(dialog.getByText('Pago registrado · $35.00')).toBeTruthy()
   const secondQuote:CheckoutAttempt={...quote,id:'second-reservation',revision:1,totalCents:3500,taxCents:483,items:quote.items.map(line=>({...line,quantity:1,totalCents:3500,taxCents:483}))}
-  vi.mocked(posRequest).mockResolvedValue(secondQuote)
+  mockPosReads(secondQuote)
   vi.mocked(mutation.execute).mockImplementation(async command=>{
     if(command.command==='prepare_checkout') return secondQuote
     if(command.command==='record_checkout') return {order:{...partial,revision:4,status:'closed',balanceCents:0,paidCents:7000,items:partial.items.map(line=>({...line,paidQuantity:2}))},attempt:{...secondQuote,status:'completed'}}
@@ -500,7 +533,7 @@ test('an exact retry after a lost typed counter response restores the accepted a
 })
 
 test('a saved service account named Mostrador restores service after a lost response and remount', async () => {
-  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  mockPosReads({ batches: [] })
   vi.mocked(mutation.execute).mockRejectedValueOnce(new Error('Respuesta perdida'))
   const accountProps = { ...props, destination: 'Comandas' as const, business: { ...business, businessType: 'restaurant' as const, profile: { ...business.profile, accountsEnabled: true } } }
   const first = render(<HomeScreen {...accountProps} />)
@@ -528,6 +561,9 @@ test('a saved service account named Mostrador restores service after a lost resp
   expect(service.getByRole('button', { name: 'Enviar a cocina' })).toBeTruthy()
   expect(service.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
   expect(screen.queryByRole('dialog', { name: 'Cobrar' })).toBeNull()
+  fireEvent.click(service.getByRole('button', { name: 'Cerrar' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Mostrador' })).toBeNull())
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir una cuenta desde el catálogo' }))
   expect(currentSale().queryByText('1 × Café')).toBeNull()
 })
 
@@ -536,7 +572,7 @@ test('editing a known direct counter preserves its type after a lost response an
   await saveAndClose()
   const saved = await vi.mocked(mutation.execute).mock.results[0].value as OperationalOrder
   snapshot = { ...snapshot, orders: [saved] }
-  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  mockPosReads({ batches: [] })
   first.rerender(<HomeScreen {...props} destination="Comandas" />)
   fireEvent.click(screen.getByRole('button', { name: 'Cuentas' }))
   fireEvent.click(screen.getByRole('button', { name: /Mostrador.*Por cobrar/ }))
@@ -572,7 +608,7 @@ test('editing a known direct counter preserves its type after a lost response an
 test('a canonical counter remains direct through repeated remounts, editing and returning from collection without local hints', async () => {
   const persisted = { ...order, name: 'Venta guardada' }
   snapshot = { ...snapshot, orders: [persisted] }
-  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  mockPosReads({ batches: [] })
   for (let reload = 0; reload < 3; reload++) {
     const view = render(<HomeScreen {...props} destination="Comandas" />)
     fireEvent.click(screen.getByRole('button', { name: 'Cuentas' }))
@@ -653,7 +689,7 @@ test('a partial collection with a full discount keeps the checkout open for the 
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command !== 'prepare_checkout' && command.command !== 'update_checkout') throw new Error('Unexpected command')
     quote = { id: 'synthetic-free-quote', revision: command.command === 'prepare_checkout' ? 1 : command.expectedRevision + 1, kind: 'payment', status: 'prepared', orderId: free.id, shiftId: 'shift', paymentMethod: command.paymentMethod, ...checkoutTotals(free, command.items), items: command.items, createdAt: business.createdAt } as CheckoutAttempt
-    vi.mocked(posRequest).mockResolvedValue(quote)
+    mockPosReads(quote)
     return quote
   })
   view.rerender(<HomeScreen {...props} />)
@@ -689,7 +725,7 @@ test('after closing collection, additions and quantity changes update the same a
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command === 'prepare_checkout') {
       const quote = {id:'reserved-attempt',revision:1,kind:'payment',status:'prepared',orderId:command.orderId,shiftId:'shift',paymentMethod:command.paymentMethod,totalCents:3500,taxCents:483,discountCents:0,items:command.items,createdAt:business.createdAt} as CheckoutAttempt;
-      vi.mocked(posRequest).mockResolvedValue(quote);
+      mockPosReads(quote);
       return quote;
     }
     if (command.command !== 'save_order') throw new Error('Unexpected mutation')
@@ -721,7 +757,7 @@ function acceptCounterEdits(saved: OperationalOrder) {
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command === 'prepare_checkout') {
       const quote = {id:'reserved-attempt',revision:1,kind:'payment',status:'prepared',orderId:command.orderId,shiftId:'shift',paymentMethod:command.paymentMethod,totalCents:3500,taxCents:483,discountCents:0,items:command.items,createdAt:business.createdAt} as CheckoutAttempt;
-      vi.mocked(posRequest).mockResolvedValue(quote);
+      mockPosReads(quote);
       return quote;
     }
     if (command.command !== 'save_order') throw new Error('Unexpected mutation')
@@ -833,6 +869,7 @@ test('an uncertain Venta account freezes its draft and clears it only after retr
   const accountBusiness = { ...business, profile: { ...business.profile, accountsEnabled: true } }
   vi.mocked(mutation.execute).mockRejectedValueOnce(new Error('Respuesta perdida'))
   const view = render(<HomeScreen {...props} business={accountBusiness} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir una cuenta desde el catálogo' }))
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   fireEvent.change(currentSale().getByRole('textbox', { name: 'Nombre de la cuenta' }), { target: { value: 'Mesa 9' } })
   fireEvent.click(currentSale().getByRole('button', { name: 'Abrir cuenta' }))
@@ -880,7 +917,7 @@ test('an uncertain Venta account freezes its draft and clears it only after retr
 test('disabling new accounts leaves existing service accounts available to edit, send and collect', async () => {
   const serviceOrder: OperationalOrder = { ...order, name: 'Mesa existente', orderKind: 'service' }
   snapshot = { ...snapshot, orders: [serviceOrder] }
-  vi.mocked(posRequest).mockResolvedValue({ batches: [] })
+  mockPosReads({ batches: [] })
   vi.mocked(mutation.execute).mockImplementation(async command => {
     if (command.command === 'save_order') return { ...serviceOrder, revision: 2, name: command.name }
     if (command.command === 'prepare_checkout') return { id: 'existing-service-checkout', kind: 'payment', revision: 1, status: 'prepared', orderId: serviceOrder.id, shiftId: 'shift', paymentMethod: command.paymentMethod, items: command.items, totalCents: 3500, taxCents: 483, discountCents: 0, createdAt: business.createdAt } as CheckoutAttempt
@@ -899,23 +936,26 @@ test('disabling new accounts leaves existing service accounts available to edit,
   service = within(await screen.findByRole('dialog', { name: 'Mesa conservada' }))
   expect(mutation.execute).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ command: 'save_order', orderId: serviceOrder.id, orderKind: 'service', expectedRevision: 1, name: 'Mesa conservada' }), 'service')
   expect(service.getByRole('button', { name: 'Enviar a cocina' })).toBeTruthy()
+  await waitFor(() => expect((service.getByRole('button', { name: 'Cobrar $35.00' }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(service.getByRole('button', { name: 'Cobrar $35.00' }))
   const checkout = within(await screen.findByRole('dialog', { name: 'Cobrar' }))
   expect(checkout.getByRole('radio', { name: 'Efectivo' })).toBeTruthy()
   await waitFor(() => expect(mutation.execute).toHaveBeenCalledWith(expect.objectContaining({ command: 'prepare_checkout', orderId: serviceOrder.id, expectedRevision: 2 })))
 })
 
-test('accounts mode prevents a cashier from creating service accounts without orders.manage', () => {
+test('accounts mode lets a cashier read existing accounts without creating new service accounts', async () => {
   const cashier: BusinessContext = { ...business, role: 'cashier', employee: { id: 'cashier', name: 'Caja sintética', role: 'cashier' }, permissions: ['catalog.read', 'sales.create', 'orders.read'], profile: { ...business.profile, accountsEnabled: true } }
+  const serviceOrder = { ...order, orderKind: 'service' as const, name: 'Visita sintética' }
+  snapshot = { ...snapshot, orders: [serviceOrder] }
   render(<HomeScreen {...props} business={cashier} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
-  const open = currentSale().getByRole('button', { name: 'Abrir cuenta' }) as HTMLButtonElement
-  expect(open.disabled).toBe(true)
-  expect(currentSale().getByText('Necesitas permiso para administrar cuentas. Pide al dueño que revise tu acceso.')).toBeTruthy()
-  expect(currentSale().queryByRole('button', { name: 'Cobrar' })).toBeNull()
-  fireEvent.click(open)
+  expect(screen.queryByRole('button', { name: 'Cuenta sin mesa' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Abrir una cuenta desde el catálogo' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Organizar mesas' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: /Visita sintética/ }))
+  const service = within(await screen.findByRole('dialog', { name: 'Visita sintética' }))
+  expect(service.getByRole('button', { name: 'Cobrar $35.00' })).toBeTruthy()
+  expect(service.queryByRole('button', { name: 'Enviar a cocina' })).toBeNull()
   expect(mutation.execute).not.toHaveBeenCalled()
-  expect(screen.queryByRole('dialog')).toBeNull()
 })
 
 test('a waiter with account permissions can create and send a service account without sales.create', async () => {
@@ -930,12 +970,14 @@ test('a waiter with account permissions can create and send a service account wi
     throw new Error('A waiter must not reserve or record collection')
   })
   render(<HomeScreen {...props} business={waiter} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir una cuenta desde el catálogo' }))
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café, $35.00' }))
   fireEvent.click(currentSale().getByRole('button', { name: 'Abrir cuenta' }))
   const service = within(await screen.findByRole('dialog', { name: 'Cuenta' }))
   expect(service.getByRole('button', { name: 'Editar artículos' })).toBeTruthy()
   expect(service.queryByRole('button', { name: /Cobrar/ })).toBeNull()
   expect(service.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
+  await waitFor(() => expect((service.getByRole('button', { name: 'Enviar a cocina' }) as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(service.getByRole('button', { name: 'Enviar a cocina' }))
   await waitFor(() => expect(mutation.execute).toHaveBeenCalledTimes(2))
   expect(vi.mocked(mutation.execute).mock.calls[0]).toEqual([expect.objectContaining({ command: 'save_order', orderKind: 'service' }), 'service'])

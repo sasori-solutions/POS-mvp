@@ -1,0 +1,20 @@
+.service-order-panel { display: flex; flex-direction: column; gap: 16px; padding-block: 16px; border-top: 1px solid var(--operations-line); }
+.service-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.service-panel-heading h3 { display: flex; align-items: center; gap: 8px; font-size: 17px; }
+.service-panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.service-course-list, .service-visit-accounts, .service-reservation-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.service-course-list > li, .service-reservation-list > li { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--operations-line); border-radius: 16px; padding: 16px; }
+.service-course-list > li > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.service-course-list ul { padding-left: 20px; }
+.service-status { color: var(--operations-muted); font-size: 13px; }
+.service-visit-summary { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--operations-surface); }
+.service-visit-accounts span { display: flex; flex-direction: column; gap: 4px; }
+.service-quantity { display: grid !important; grid-template-columns: minmax(0,1fr) 80px; gap: 12px; align-items: center; }
+.service-quantity small { display: block; color: var(--operations-muted); font-size: 13px; margin-top: 4px; }
+.service-reservations { display: flex; flex-direction: column; gap: 16px; }
+.service-reservation-list small { color: var(--operations-muted); }
+.service-form-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.service-reservation-toolbar { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.service-reservation-toolbar label { display: flex; flex-direction: column; gap: 6px; }
+.service-reservation-toolbar input { min-height: 48px; padding: 10px; border: 1px solid var(--operations-line); border-radius: 10px; }
+@media(max-width:540px) { .service-panel-actions { flex-direction: column; } .service-panel-actions > button, .service-panel-heading > button { width: 100%; } .service-form-columns { grid-template-columns: 1fr; } .service-reservation-toolbar { align-items: stretch; flex-direction: column; } }

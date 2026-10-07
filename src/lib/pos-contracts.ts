@@ -6,8 +6,9 @@ import type { OperationsCommand, OperationsResponses, OperationsErrorCode } from
 export interface Variation {
   id: string; name: string; priceCents: number; sku: string; barcode: string; soldOut: boolean
 }
-export interface Modifier { id: string; name: string; priceCents: number }
-export interface ModifierSet { id: string; name: string; min: number; max: number; options: Modifier[] }
+export interface Modifier { id: string; name: string; priceCents: number; soldOut?: boolean; maxQuantity?: number }
+export interface ModifierSet { id: string; name: string; min: number; max: number; options: Modifier[]; libraryId?: string; parentOptionId?: string }
+export interface SharedModifierGroup extends ModifierSet { version: number; linkedProducts: { id: string; name: string }[] }
 export interface ProductAttribute { name: string; value: string }
 export interface ProductDetails {
   description: string; imageId: string | null; tileColor: string; tileLabel: string
@@ -18,9 +19,12 @@ export interface ProductDetails {
   costCents: number | null; taxBps: number; taxTreatment?: VatTreatment
   calories: number | null; dietary: string; allergens: string
   variations: Variation[]; modifierSets: ModifierSet[]
-  skipCustomization?: boolean; customAttributes?: ProductAttribute[]
+  skipCustomization?: boolean; customAttributes?: ProductAttribute[]; comboComponents?: ComboComponentInput[]
 }
 export interface ItemSelection { variationId: string | null; modifierIds: string[]; variablePriceCents: number | null }
+export interface ComboComponentInput { productId: string; version: number; quantity: number; selection?: ItemSelection }
+/** Fixed preparation per combo unit, captured when the catalog configuration is accepted. */
+export interface ComboComponentSnapshot { productId: string; version: number; quantity: number; name: string; kitchenName: string; selectionLabel: string }
 
 export interface Product {
   id: string
@@ -31,6 +35,8 @@ export interface Product {
   version: number
   details?: ProductDetails
   image?: string | null
+  comboComponents?: ComboComponentSnapshot[]
+  comboUnavailableReason?: string | null
 }
 
 export interface ProductInput {
@@ -41,6 +47,8 @@ export interface ProductInput {
   priceCents: number
   details?: ProductDetails
 }
+export interface CatalogImportProduct extends ProductInput { active: boolean }
+export interface CatalogBulkPatch { category?: string; active?: boolean; priceCents?: number; vatTreatment?: VatTreatment }
 
 export interface ProductCartLine {
   kind?: 'product'
@@ -63,6 +71,7 @@ export interface AmountSaleInputLine { kind: 'amount'; name: string; quantity: n
 export type SaleInputLine = ProductSaleInputLine | AmountSaleInputLine
 
 export interface SaleItem {
+  comboComponents?: ComboComponentSnapshot[]
   allocatedGrossCents?: number
   kind?: 'product' | 'amount'
   productId: string | null
@@ -97,7 +106,12 @@ export interface SaleCursor { createdAt: string; id: string }
 export type PosCommand =
   | OperationsCommand
   | { command: 'catalog' }
+  | { command: 'modifier_groups' }
+  | { command: 'save_modifier_group'; operationId: string; groupId: string; expectedVersion: number | null; name: string; min: number; max: number; options: Modifier[] }
+  | { command: 'set_modifier_option_sold_out'; operationId: string; productId: string; expectedVersion: number; modifierId: string; soldOut: boolean }
   | ({ command: 'save_product'; operationId: string } & ProductInput)
+  | { command: 'import_products'; operationId: string; items: CatalogImportProduct[] }
+  | { command: 'bulk_edit_products'; operationId: string; products: { productId: string; expectedVersion: number }[]; patch: CatalogBulkPatch }
   | { command: 'set_product_active'; operationId: string; productId: string; expectedVersion: number; active: boolean }
   | { command: 'delete_product'; operationId: string; productId: string; expectedVersion: number }
   | { command: 'set_product_sold_out'; operationId: string; productId: string; expectedVersion: number; soldOut: boolean; variationId?: string }
@@ -108,7 +122,12 @@ export type PosCommand =
 
 export interface PosResponses extends OperationsResponses {
   catalog: { products: Product[]; paymentMethods: PaymentMethod[] }
+  modifier_groups: { groups: SharedModifierGroup[] }
+  save_modifier_group: { group: SharedModifierGroup; products: Product[] }
+  set_modifier_option_sold_out: { products: Product[]; group?: SharedModifierGroup }
   save_product: Product
+  import_products: { products: Product[] }
+  bulk_edit_products: { products: Product[] }
   set_product_active: Product
   delete_product: { id: string; deleted: true }
   set_product_sold_out: Product

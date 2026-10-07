@@ -2,12 +2,13 @@ import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import type { BusinessContext, PaymentMethod } from '../../lib/contracts'
 import { hasPermission } from '../../lib/business-access'
-import type { BalanceWaiver, CheckoutAttempt, OperationalOrder, OrderDiscount } from '../../lib/operations-contracts'
+import type { BalanceWaiver, CheckoutAttempt, DiningTable, OperationalOrder, OrderDiscount } from '../../lib/operations-contracts'
 import { money, posRequest, type PosAccess } from '../../lib/pos'
 import { CheckoutClosingContext, CheckoutInteractionContext } from '../../components/CheckoutPanel'
 import { paymentLabels } from '../../components/PosShared'
 import PaymentMethodPicker from '../../components/PaymentMethodPicker'
 import ExternalCardConfirmation from '../../components/ExternalCardConfirmation'
+import TransferConfirmation from '../../components/TransferConfirmation'
 import AttemptPanel from './AttemptPanel'
 import type { OperationalMutation } from './useOperations'
 import { AccountClientError } from '../../lib/account'
@@ -23,9 +24,12 @@ import { amountInput, amountPlan, checkoutAmountTotals } from '../../lib/checkou
 import CheckoutAmountSelection from './CheckoutAmountSelection'
 import CheckoutItemSelection from './CheckoutItemSelection'
 import CheckoutPaymentTransition from './CheckoutPaymentTransition'
+import ServiceOrderPanel from './ServiceOrderPanel'
+import type { Promotion } from '../../lib/promotion-contracts'
+import CashChangeCalculator from '../../components/CashChangeCalculator'
 import './checkout-selection.css'
 
-export default function OrderDetail({ order, business, methods: configuredMethods, attempts, mutation, onSaved, onPaymentRecorded, onReceipt, onEdit, refresh, collectionAllowed, access, onSessionError, checkoutView = false, serviceAccount = order.orderKind === 'service', onStartCheckout, onOpenCash, draft, onDraftChange, pointSettings, onPointBlocked }: { checkoutView?: boolean; serviceAccount?: boolean; onStartCheckout?: () => void; order: OperationalOrder; business: BusinessContext; methods: PaymentMethod[]; attempts: CheckoutAttempt[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onPaymentRecorded?: (order: OperationalOrder, saleId?: string) => void; onReceipt?: (saleId: string) => void; onEdit: () => void; refresh: () => Promise<void>; collectionAllowed: boolean; access?: PosAccess; onSessionError?: (error: AccountClientError) => void; onOpenCash?: () => void; draft?: CheckoutDraft; onDraftChange?: (draft: CheckoutDraft) => void; pointSettings?: PointSettings | null; onPointBlocked?: (blocked: boolean) => void }) {
+export default function OrderDetail({ order, business, methods: configuredMethods, attempts, mutation, onSaved, onPaymentRecorded, onReceipt, onEdit, refresh, collectionAllowed, access, onSessionError, checkoutView = false, serviceAccount = order.orderKind === 'service', onStartCheckout, onOpenCash, draft, onDraftChange, pointSettings, onPointBlocked, serviceToolsEnabled = false, tables = [], onContinue, onOpenOrder }: { serviceToolsEnabled?: boolean; tables?: DiningTable[]; onContinue?: (order: OperationalOrder) => void; onOpenOrder?: (order: OperationalOrder) => void; checkoutView?: boolean; serviceAccount?: boolean; onStartCheckout?: () => void; order: OperationalOrder; business: BusinessContext; methods: PaymentMethod[]; attempts: CheckoutAttempt[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onPaymentRecorded?: (order: OperationalOrder, saleId?: string) => void; onReceipt?: (saleId: string) => void; onEdit: () => void; refresh: () => Promise<void>; collectionAllowed: boolean; access?: PosAccess; onSessionError?: (error: AccountClientError) => void; onOpenCash?: () => void; draft?: CheckoutDraft; onDraftChange?: (draft: CheckoutDraft) => void; pointSettings?: PointSettings | null; onPointBlocked?: (blocked: boolean) => void }) {
   const checkoutEnabled = checkoutView || !onStartCheckout
   const choices = collectionPaymentMethods(configuredMethods)
   const cardReady = pointCardReady(configuredMethods, pointSettings)
@@ -57,6 +61,10 @@ export default function OrderDetail({ order, business, methods: configuredMethod
     ? recovered.current.status === 'prepared' ? collectionPaymentMethod(recovered.current.paymentMethod) : recovered.current.paymentMethod
     : initialDraft.current ? collectionPaymentMethod(initialDraft.current.method) : methods[0] ?? choices[0] ?? 'cash')
   const [externalApproved, setExternalApproved] = useState(false)
+  const [transferReceived, setTransferReceived] = useState(false)
+  const [cashChangeValid, setCashChangeValid] = useState(true)
+  const [heldCourses, setHeldCourses] = useState<{ orderId: string; revision: number; count: number | null } | null>(null)
+  const serviceReady = !serviceToolsEnabled || !serviceAccount || checkoutView || Boolean(heldCourses?.orderId === order.id && heldCourses.revision === order.revision && heldCourses.count === 0)
   const [attempt, setAttempt] = useState<CheckoutAttempt | null>(null)
   const completedAttempts = useRef(new Set<string>())
   const notifiedPayments = useRef(new Set<string>())
@@ -176,21 +184,21 @@ export default function OrderDetail({ order, business, methods: configuredMethod
     setAmountInputs(order.amountParts?.length ? order.amountParts.slice(0, -1).map(amountInput) : [''])
   }
   const reservationMatches = Boolean(hasSelection && currentAttempt?.status === 'prepared' && currentAttempt.paymentMethod === method && (usingAmounts ? JSON.stringify(currentAttempt.amountsCents) === selectionKey : !currentAttempt.amountsCents && checkoutSelectionKey(currentAttempt.items) === selectionKey) && currentAttempt.totalCents === totals.totalCents && currentAttempt.discountCents === totals.discountCents && currentAttempt.taxCents === totals.taxCents)
-  useEffect(() => { setExternalApproved(false) }, [method, order.id, selectionKey, totals.totalCents, currentAttempt?.id, currentAttempt?.revision])
+  useEffect(() => { setExternalApproved(false); setTransferReceived(false) }, [method, order.id, selectionKey, totals.totalCents, currentAttempt?.id, currentAttempt?.revision])
   const editableReservation = !pointBusy && (!currentAttempt || currentAttempt.status === 'prepared')
   const adjustingDiscount = discountOpen || discountApplying
   useEffect(() => {
     const accepted = mutation.lastResult
     if (!accepted || accepted === handledDiscountResult.current || checkoutClosing || discountApplying) return
     handledDiscountResult.current = accepted
-    if (!adjustingDiscount || !['resume_order_service', 'set_order_discount'].includes(accepted.command)) return
+    if (!adjustingDiscount || !['resume_order_service', 'set_order_discount', 'apply_order_promotion'].includes(accepted.command)) return
     const saved = accepted.result as OperationalOrder
     if (saved.id !== order.id || acceptedDiscountResults.current.has(saved)) return
     acceptedDiscountResults.current.add(saved)
     discountNeedsReload.current = false
     setDiscountError('')
     if (saved.revision >= order.revision) onSaved(saved)
-    if (accepted.command === 'set_order_discount') {
+    if (accepted.command === 'set_order_discount' || accepted.command === 'apply_order_promotion') {
       setDiscountOpen(false)
       discountAbortingId.current = null
       setLastPartialPayment(null)
@@ -248,7 +256,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
     } catch { /* Shell recovery. */ }
   }
   async function sendKitchen() {
-    if (!canSendKitchen || disabled || current.blocked || kitchenSubmission.current) return
+    if (!canSendKitchen || disabled || current.blocked || !serviceReady || kitchenSubmission.current) return
     kitchenSubmission.current = true
     setSendingKitchen(true)
     const generation = workflowGeneration.current
@@ -263,7 +271,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
       if (generation === workflowGeneration.current) setSendingKitchen(false)
     }
   }
-  async function applyDiscount(discount: OrderDiscount | null) {
+  async function applyDiscount(discount: OrderDiscount | null, promotion?: Promotion) {
     if (disabled || discountApplying || current.blocked || !editableReservation || order.frozen) return
     setDiscountApplying(true)
     setDiscountError('')
@@ -294,7 +302,9 @@ export default function OrderDetail({ order, business, methods: configuredMethod
         acceptedDiscountResults.current.add(editableOrder)
         onSaved(editableOrder)
       }
-      editableOrder = await mutation.execute({ command: 'set_order_discount', operationId: crypto.randomUUID(), orderId: editableOrder.id, expectedRevision: editableOrder.revision, discount })
+      editableOrder = promotion
+        ? await mutation.execute({ command: 'apply_order_promotion', operationId: crypto.randomUUID(), orderId: editableOrder.id, expectedRevision: editableOrder.revision, promotionId: promotion.id, promotionRevision: promotion.revision })
+        : await mutation.execute({ command: 'set_order_discount', operationId: crypto.randomUUID(), orderId: editableOrder.id, expectedRevision: editableOrder.revision, discount })
       if (!active()) return
       acceptedDiscountResults.current.add(editableOrder)
       onSaved(editableOrder)
@@ -387,7 +397,7 @@ export default function OrderDetail({ order, business, methods: configuredMethod
   }, [currentAttempt?.id, currentAttempt?.revision, currentAttempt?.status])
   async function recordPayment() {
     const generation = workflowGeneration.current
-    if (!isManualCollectionMethod(method) || method === 'card_external' && !externalApproved || paymentSubmission.current === generation) return
+    if (!isManualCollectionMethod(method) || method === 'card_external' && !externalApproved || method === 'transfer' && !transferReceived || method === 'cash' && !cashChangeValid || paymentSubmission.current === generation) return
     if (disabled || registeringPayment || adjustingDiscount || !collectionAllowed || !allowed('sales.create') || !methods.includes(method) || !hasSelection || !currentAttempt || !reservationMatches || current.blocked) return
     // Guard synchronously: a second tap can arrive before React commits the disabled state.
     paymentSubmission.current = generation
@@ -444,26 +454,29 @@ export default function OrderDetail({ order, business, methods: configuredMethod
       const selectedQuantity = split ? Math.min(quantities[line.lineId] ?? 0, remainingQuantity) : remainingQuantity
       const amount = usingAmounts && line.paidTotalCents !== undefined ? line.totalCents - line.paidTotalCents : checkoutView || split ? checkoutTotals(order, [{ lineId: line.lineId, quantity: selectedQuantity }]).totalCents : line.totalCents
       return <li key={line.lineId}>
-        <span><strong>{checkoutView ? remainingQuantity : line.quantity} × {line.name}</strong><small>{line.kind === 'amount' ? 'Importe libre' : line.selectionLabel}{line.note ? ` · ${line.note}` : ''}</small>{!checkoutView && <small>{line.kind === 'amount' ? `${line.paidQuantity} pagados` : `${line.sentQuantity} enviados · ${line.paidQuantity} pagados`}</small>}</span>
+        <span><strong>{checkoutView ? remainingQuantity : line.quantity} × {line.name}</strong><small>{line.kind === 'amount' ? 'Importe libre' : line.selectionLabel}{line.note ? ` · ${line.note}` : ''}</small>{line.comboComponents?.map(component => <small key={component.productId}>{(checkoutView ? remainingQuantity : line.quantity) * component.quantity} × {component.name}{component.selectionLabel ? ` · ${component.selectionLabel}` : ''}</small>)}{!checkoutView && <small>{line.kind === 'amount' ? `${line.paidQuantity} pagados` : `${line.sentQuantity} enviados · ${line.paidQuantity} pagados`}</small>}</span>
         <span className="checkout-line-amount">{money(amount)}</span>
       </li>
     })}</ul>}
     <dl className="ops-totals"><div><dt>Subtotal</dt><dd>{money(checkoutView ? totals.grossCents : order.grossCents)}</dd></div>{order.discount && <div><dt>Descuento · {order.discount.reason}</dt><dd>−{money(checkoutView ? totals.discountCents : order.discountCents)}</dd></div>}<div><dt>IVA incluido conocido</dt><dd>{money(checkoutView ? totals.taxCents : order.taxCents)}</dd></div>{(!checkoutView || order.paidCents > 0) && <div><dt>Pagado</dt><dd>{money(order.paidCents)}</dd></div>}{order.waivedCents > 0 && <div><dt>Condonado</dt><dd>{money(order.waivedCents)}</dd></div>}{order.cancelledCents > 0 && <div><dt>Cancelado</dt><dd>{money(order.cancelledCents)}</dd></div>}{!checkoutView && <div><dt>Saldo</dt><dd>{money(order.balanceCents)}</dd></div>}</dl>
     </div><div className={checkoutView ? 'checkout-controls ops-form' : 'ops-form'}>
-    {canSendKitchen && <button type="button" className="pos-button pos-primary" aria-busy={sendingKitchen} disabled={disabled || current.blocked} onClick={() => void sendKitchen()}><span className="checkout-action-progress" data-active={sendingKitchen || undefined} aria-hidden={!sendingKitchen}><PendingIndicator label="Enviando comanda" /></span>Enviar a cocina</button>}
-    {!checkoutView && onStartCheckout && !settled && allowed('sales.create') && <button type="button" className={`pos-button ${canSendKitchen ? 'pos-secondary' : 'pos-primary'}`} disabled={disabled || sendingKitchen || !collectionAllowed || current.blocked} onClick={onStartCheckout}>Cobrar {money(order.balanceCents)}</button>}
+    {serviceToolsEnabled && serviceAccount && !checkoutView && access && <ServiceOrderPanel business={business} access={access} order={order} tables={tables} mutation={mutation} onSaved={saved => { onSaved(saved); void refresh() }} onContinue={onContinue ?? onSaved} onOpenOrder={onOpenOrder} onSessionError={onSessionError} onHeldChange={(orderId, revision, count) => setHeldCourses({ orderId, revision, count })} />}
+    {canSendKitchen && <button type="button" className="pos-button pos-primary" aria-busy={sendingKitchen} disabled={disabled || current.blocked || !serviceReady} onClick={() => void sendKitchen()}><span className="checkout-action-progress" data-active={sendingKitchen || undefined} aria-hidden={!sendingKitchen}><PendingIndicator label="Enviando comanda" /></span>Enviar a cocina</button>}
+    {!checkoutView && onStartCheckout && !settled && allowed('sales.create') && <button type="button" className={`pos-button ${canSendKitchen ? 'pos-secondary' : 'pos-primary'}`} disabled={disabled || sendingKitchen || !collectionAllowed || current.blocked || !serviceReady} onClick={onStartCheckout}>Cobrar {money(order.balanceCents)}</button>}
     {!checkoutView && order.status !== 'closed' && !settled && order.phase === 'service' && !order.frozen && <>
       {(allowed('orders.manage') || allowed('sales.create')) && <button className="pos-button pos-secondary" disabled={disabled} onClick={onEdit}>Editar artículos</button>}
     </>}
-    {!settled && !order.frozen && editableReservation && allowed('sales.discount') && discountOpen && <OrderDiscountEditor key={order.id} order={order} disabled={disabled || discountApplying || current.blocked} onApply={applyDiscount} onCancel={closeDiscount} />}
+    {!settled && !order.frozen && editableReservation && allowed('sales.discount') && discountOpen && <OrderDiscountEditor key={order.id} order={order} access={access} onSessionError={onSessionError} onApplyPromotion={promotion => applyDiscount(null, promotion)} disabled={disabled || discountApplying || current.blocked} onApply={applyDiscount} onCancel={closeDiscount} />}
     {discountError && <p className="checkout-discount-error" role="alert">{discountError}</p>}
     {(checkoutEnabled && !settled && allowed('sales.create') && !(currentAttempt?.paymentMethod === 'card_external' && currentAttempt.status !== 'prepared') || showingPoint) && <section className="ops-card checkout-collection">
       <h3 className={checkoutView ? 'sr-only' : undefined}>{split ? 'Cobrar selección' : 'Cobrar cuenta'}</h3>
       {checkoutView ? <PaymentMethodPicker name="order-payment" methods={choices} value={method} onChange={setMethod} disabled={selectionLocked} disabledMethods={cardReady ? [] : ['card_integrated']} /> : <label>Método de pago<select value={method} onChange={e => setMethod(e.target.value as PaymentMethod)} disabled={selectionLocked}>{choices.map(m => <option key={m} value={m} disabled={!methods.includes(m)}>{paymentLabels[m]}</option>)}</select></label>}
       {choices.includes('card_integrated') && !cardReady && <p className="point-payment-hint" role="status">{cardHint}</p>}
       <CheckoutPaymentTransition transitionKey={method}>
+      {method === 'cash' && (!currentAttempt || currentAttempt.status === 'prepared') && !discountOpen && <CashChangeCalculator totalCents={totals.totalCents} onValidChange={setCashChangeValid} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !collectionAllowed || !hasSelection} />}
+      {method === 'transfer' && (!currentAttempt || currentAttempt.status === 'prepared') && !discountOpen && <TransferConfirmation key={order.id} account={business.profile.transferAccount} checked={transferReceived} onChange={setTransferReceived} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !reservationMatches || !collectionAllowed || !hasSelection} />}
       {method === 'card_external' && (!currentAttempt || currentAttempt.status === 'prepared') && !discountOpen && <ExternalCardConfirmation checked={externalApproved} onChange={setExternalApproved} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !reservationMatches || !collectionAllowed || !methods.includes(method) || !hasSelection} />}
-      {isManualCollectionMethod(method) && (!currentAttempt || currentAttempt.status === 'prepared') && <button hidden={discountOpen} className="pos-button pos-primary checkout-register-payment" aria-label="Registrar pago" aria-busy={registeringPayment || reservingCheckout || current.loading} data-updating={registeringPayment || reservingCheckout || current.loading || undefined} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !reservationMatches || !collectionAllowed || !methods.includes(method) || !hasSelection || method === 'card_external' && !externalApproved} onClick={() => void recordPayment()}><span className="checkout-action-progress" data-active={registeringPayment || reservingCheckout || current.loading || undefined} aria-hidden={!registeringPayment && !reservingCheckout && !current.loading}><PendingIndicator label={registeringPayment ? 'Registrando pago' : current.loading ? 'Consultando el cobro' : 'Reservando el cobro'} /></span><span>Registrar pago</span>{hasSelection && <strong aria-hidden="true">{money(totals.totalCents)}</strong>}</button>}
+      {isManualCollectionMethod(method) && (!currentAttempt || currentAttempt.status === 'prepared') && <button hidden={discountOpen} className="pos-button pos-primary checkout-register-payment" aria-label="Registrar pago" aria-busy={registeringPayment || reservingCheckout || current.loading} data-updating={registeringPayment || reservingCheckout || current.loading || undefined} disabled={disabled || adjustingDiscount || registeringPayment || current.blocked || !reservationMatches || !collectionAllowed || !methods.includes(method) || !hasSelection || method === 'card_external' && !externalApproved || method === 'transfer' && !transferReceived || method === 'cash' && !cashChangeValid} onClick={() => void recordPayment()}><span className="checkout-action-progress" data-active={registeringPayment || reservingCheckout || current.loading || undefined} aria-hidden={!registeringPayment && !reservingCheckout && !current.loading}><PendingIndicator label={registeringPayment ? 'Registrando pago' : current.loading ? 'Consultando el cobro' : 'Reservando el cobro'} /></span><span>Registrar pago</span>{hasSelection && <strong aria-hidden="true">{money(totals.totalCents)}</strong>}</button>}
       {showingPoint && currentAttempt && access ? <PointPayment key={currentAttempt.id} businessName={business.name} embedded={checkoutView} access={access} attempt={currentAttempt} initialCheckout={pointSettings?.pending.find(checkout => checkout.checkout.id === currentAttempt.id)} settings={pointSettings ?? null} collectionAllowed={collectionAllowed} canStart={checkoutEnabled && cardReady && reservationMatches && !adjustingDiscount && !reservingCheckout && !current.blocked && !mutation.pending && !mutation.busy} onSessionError={onSessionError} onBlocked={blocked => { setPointBusy(blocked); onPointBlocked?.(blocked) }} onResolved={() => { void refresh() }} onDone={value => { void finishPoint(value) }} />
         : method === 'card_integrated' && <button type="button" className="pos-button pos-primary checkout-register-payment" aria-label="Enviar a terminal" aria-busy={reservingCheckout || current.loading} disabled><span className="checkout-action-progress" data-active={reservingCheckout || current.loading || undefined} aria-hidden={!reservingCheckout && !current.loading}><PendingIndicator label="Reservando el cobro" /></span><span>Enviar a terminal</span>{hasSelection && <strong aria-hidden="true">{money(totals.totalCents)}</strong>}</button>}
       <div className="checkout-reservation">

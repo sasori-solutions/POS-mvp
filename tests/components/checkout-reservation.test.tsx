@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import OrderDetail from '../../src/features/operations/OrderDetail'
 import type { OperationalMutation } from '../../src/features/operations/useOperations'
 import type { CheckoutAttempt, OperationalOrder } from '../../src/lib/operations-contracts'
@@ -8,7 +8,15 @@ import type { BusinessContext } from '../../src/lib/contracts'
 import { posRequest } from '../../src/lib/pos'
 import { checkoutTotals } from '../../src/lib/checkout-selection'
 vi.mock('../../src/lib/pos', async original => ({...await original<object>(),posRequest:vi.fn()}))
+const operationalRead=vi.fn<typeof posRequest>()
+beforeEach(()=>vi.mocked(posRequest).mockImplementation((access,command)=>command.command==='promotions'?Promise.resolve({promotions:[]}) as never:operationalRead(access,command)))
 afterEach(() => {cleanup();vi.resetAllMocks()})
+async function confirmTransfer() {
+ const confirmation=await screen.findByRole('checkbox',{name:'Confirmo que el comercio recibió esta transferencia.'}) as HTMLInputElement
+ await waitFor(()=>expect(confirmation.disabled).toBe(false))
+ expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(true)
+ fireEvent.click(confirmation)
+}
 const business={id:'business',name:'Sintético',role:'owner',permissions:[],profile:{paymentMethods:['cash','transfer']}} as unknown as BusinessContext
 const order:OperationalOrder={id:'order',revision:1,name:'Cuenta',orderKind:'service',tableId:null,status:'open',phase:'service',frozen:false,createdAt:'2026-10-03T12:00:00Z',updatedAt:'2026-10-03T12:00:00Z',operatorName:'Sintético',items:[{lineId:'line',productId:'product',version:1,name:'Café',kitchenName:'Café',category:'',selectionLabel:'',note:'',quantity:3,paidQuantity:0,sentQuantity:0,unitPriceCents:1001,grossCents:3003,discountCents:2,totalCents:3001,taxCents:414,taxBps:1600,taxTreatment:'vat_16'}],discount:{kind:'fixed',value:2,reason:'Centavos'},grossCents:3003,discountCents:2,totalCents:3001,taxCents:414,paidCents:0,waivedCents:0,cancelledCents:0,balanceCents:3001}
 
@@ -122,7 +130,7 @@ test('automatically reserves and updates selected money while keeping a single f
   quote={id:'reservation',revision:command.command==='prepare_checkout'?1:command.expectedRevision+1,kind:'payment',status:'prepared',orderId:order.id,shiftId:'shift',paymentMethod:command.paymentMethod,...totals,items:command.items.map(i=>({...i,productId:'product',name:'Café',unitPriceCents:1001,discountCents:totals.discountCents,totalCents:totals.totalCents,taxCents:totals.taxCents})),saleId:null,originalSaleId:null,operatorName:'Sintético',resolverName:null,createdAt:order.createdAt,resolvedAt:null,reason:''}
   return quote
  })
- vi.mocked(posRequest).mockImplementation(async()=>quote)
+ operationalRead.mockImplementation(async()=>quote)
  const onPaymentRecorded=vi.fn()
  render(<OrderDetail checkoutView order={order} business={business} methods={['cash','transfer']} attempts={[]} mutation={request} onSaved={vi.fn()} onPaymentRecorded={onPaymentRecorded} onEdit={vi.fn()} refresh={vi.fn().mockResolvedValue(undefined)} collectionAllowed access={{businessId:'business',operatorToken:'synthetic-memory-only'}} />)
  await waitFor(()=>expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
@@ -140,6 +148,7 @@ test('automatically reserves and updates selected money while keeping a single f
  expect(request.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'update_checkout',attemptId:'reservation',items:[{lineId:'line',quantity:1}]}))
  fireEvent.click(screen.getByRole('radio',{name:'Transferencia'}))
  await waitFor(()=>expect(request.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'update_checkout',paymentMethod:'transfer'})))
+ await confirmTransfer()
  await waitFor(()=>expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
  vi.mocked(request.execute).mockResolvedValueOnce({order:{...order,frozen:true,paidCents:1001,balanceCents:2000},attempt:{...quote!,status:'completed'}})
  fireEvent.click(screen.getByRole('button',{name:'Registrar pago'}))
@@ -177,7 +186,7 @@ test('opening or refreshing a recovered split never silently changes its amount 
  await waitFor(()=>expect((screen.getByRole('spinbutton',{name:'Cantidad a cobrar de Café'}) as HTMLInputElement).value).toBe('2'))
  expect((screen.getByRole('radio',{name:'Efectivo'}) as HTMLInputElement).checked).toBe(true)
  expect(request.execute).not.toHaveBeenCalled()
- vi.mocked(posRequest).mockResolvedValue({...next,status:'completed',revision:3})
+ operationalRead.mockResolvedValue({...next,status:'completed',revision:3})
  view.rerender(<OrderDetail {...props} order={{...order,status:'paid',frozen:true,paidCents:3001,balanceCents:0,items:[{...order.items[0],paidQuantity:3}]}} attempts={[]} />)
  expect(await screen.findByText(/Pago registrado/)).toBeTruthy()
 })
@@ -189,6 +198,7 @@ test('an accepted partial payment recovered by exact retry resets the next selec
  const props={checkoutView:true,order,business,methods:['cash' as const,'transfer' as const],mutation:request,onSaved:vi.fn(),onPaymentRecorded:vi.fn(),onEdit:vi.fn(),refresh:vi.fn().mockResolvedValue(undefined),collectionAllowed:true,access:{businessId:'business',operatorToken:'synthetic-memory-only'}}
  const view=render(<OrderDetail {...props} attempts={[quote]} />)
  vi.mocked(request.execute).mockRejectedValueOnce(new Error('Respuesta perdida'))
+ await confirmTransfer()
  fireEvent.click(screen.getByRole('button',{name:'Registrar pago'}))
  await waitFor(()=>expect(request.execute).toHaveBeenCalledOnce())
  const pending=vi.mocked(request.execute).mock.calls[0][0]
@@ -196,7 +206,7 @@ test('an accepted partial payment recovered by exact retry resets the next selec
  expect(props.onPaymentRecorded).not.toHaveBeenCalled()
  const partial:OperationalOrder={...order,revision:3,phase:'checkout',frozen:true,paidCents:totals.totalCents,balanceCents:order.balanceCents-totals.totalCents,items:order.items.map(line=>({...line,paidQuantity:1}))}
  const completed:CheckoutAttempt={...quote,revision:3,status:'completed'}
- vi.mocked(posRequest).mockResolvedValue(completed)
+ operationalRead.mockResolvedValue(completed)
  view.rerender(<OrderDetail {...props} order={partial} mutation={{...request,lastResult:{command:'record_checkout',result:{order:partial,attempt:completed}}}} attempts={[]} />)
  await waitFor(()=>expect((screen.getByRole('spinbutton',{name:'Cantidad a cobrar de Café'}) as HTMLInputElement).value).toBe('0'))
  expect((screen.getByRole('radio',{name:'Dividir cuenta'}) as HTMLInputElement).checked).toBe(true)
@@ -222,7 +232,7 @@ test('a delayed first reservation preserves quantity and method edits made while
   quote=accepted(command.items,command.paymentMethod,command.expectedRevision+1)
   return Promise.resolve(quote) as never
  })
- vi.mocked(posRequest).mockImplementation(async()=>quote)
+ operationalRead.mockImplementation(async()=>quote)
  const props={checkoutView:true,order,business,methods:['cash' as const,'transfer' as const],mutation:request,onSaved:vi.fn(),onEdit:vi.fn(),refresh:vi.fn().mockResolvedValue(undefined),collectionAllowed:true,access:{businessId:'business',operatorToken:'synthetic-memory-only'}}
  const view=render(<OrderDetail {...props} attempts={[]} />)
  await waitFor(()=>expect(request.execute).toHaveBeenCalledOnce())
@@ -240,6 +250,7 @@ test('a delayed first reservation preserves quantity and method edits made while
  expect((screen.getByRole('radio',{name:'Transferencia'}) as HTMLInputElement).checked).toBe(true)
  expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(true)
  await waitFor(()=>expect(request.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'update_checkout',attemptId:'slow-reservation',expectedRevision:1,paymentMethod:'transfer',items:[{lineId:'line',quantity:2}]})))
+ await confirmTransfer()
  await waitFor(()=>expect((screen.getByRole('button',{name:'Registrar pago'}) as HTMLButtonElement).disabled).toBe(false))
  expect(vi.mocked(request.execute).mock.calls.filter(([command])=>command.command==='prepare_checkout')).toHaveLength(1)
 })
@@ -267,7 +278,7 @@ test.each(['completed','aborted'] as const)('continuing after a remote %s paymen
  const partial:OperationalOrder=status==='completed'
   ? {...order,revision:3,phase:'checkout',frozen:true,paidCents:totals.totalCents,balanceCents:order.balanceCents-totals.totalCents,items:order.items.map(line=>({...line,paidQuantity:1}))}
   : {...order,revision:3,phase:'service'}
- vi.mocked(posRequest).mockResolvedValue({...quote,revision:3,status})
+ operationalRead.mockResolvedValue({...quote,revision:3,status})
  view.rerender(<OrderDetail {...props} order={partial} attempts={[]} />)
  fireEvent.click(await screen.findByRole('button',{name:'Continuar con la cuenta'}))
  await waitFor(()=>expect(screen.queryByRole('button',{name:'Continuar con la cuenta'})).toBeNull())

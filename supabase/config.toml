@@ -417,6 +417,10 @@ enabled = true
 [functions.account]
 verify_jwt = false
 
+# Read-only published menus validate an unguessable public menu id in their handler.
+[functions.public-menu]
+verify_jwt = false
+
 # Each handler retains its own authentication: signed POS/account, provider
 # signature, or independent worker secret. The gateway must not reject webhooks.
 [functions.point]
