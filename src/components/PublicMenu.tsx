@@ -4,6 +4,7 @@ import type { PublicMenuDocument, PublicMenuProduct } from '../lib/menu-contract
 import { fetchPublicMenu } from '../lib/menu-client';
 import { scheduleLabel } from '../lib/menu-schedule';
 import { money } from '../lib/format';
+import { businessTimezoneLabel } from '../lib/business-profile';
 import './public-menu.css';
 
 function priceLabel(product: PublicMenuProduct): string {
@@ -40,7 +41,7 @@ export default function PublicMenu({ menuId }: { menuId: string }) {
     {loading && !menu && !error && <p role="status">Consultando precios y disponibilidad…</p>}
     {menu && <>
       <p className="public-menu-caption">Menú informativo. Pide y paga con el personal del local.</p>
-      {menu.availability === 'outside_hours' ? <section className="public-menu-message"><h2>Este menú está fuera de horario</h2><p>Horario del local ({menu.timezone}):</p><ul>{menu.schedules.map((schedule, index) => <li key={index}>{scheduleLabel(schedule)}</li>)}</ul></section> : <>
+      {menu.availability === 'outside_hours' ? <section className="public-menu-message"><h2>Este menú está fuera de horario</h2><p>Horario del local ({businessTimezoneLabel(menu.timezone)}):</p><ul>{menu.schedules.map((schedule, index) => <li key={index}>{scheduleLabel(schedule)}</li>)}</ul></section> : <>
         {categories.length > 1 && <nav className="public-menu-categories" aria-label="Categorías"><button type="button" aria-pressed={!category} onClick={() => setCategory('')}>Todo</button>{categories.map(name => <button type="button" key={name} aria-pressed={category === name} onClick={() => setCategory(name)}>{name}</button>)}</nav>}
         {!menu.products.length && <p className="public-menu-message">El local está actualizando los productos de este menú.</p>}
         <div className="public-menu-products">{menu.products.filter(product => !category || product.category === category).map(product => <article key={product.id} className="public-menu-product">

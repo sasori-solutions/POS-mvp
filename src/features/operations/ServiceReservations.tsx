@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, Plus } from 'lucide-react'
 import type { BusinessContext } from '../../lib/contracts'
 import { hasPermission } from '../../lib/business-access'
+import { businessTimezoneLabel } from '../../lib/business-profile'
 import type { DiningTable, OperationalOrder } from '../../lib/operations-contracts'
 import type { ReservationStatus, ServiceDay, ServiceMutation, ServiceReservation } from '../../lib/service-contracts'
 import { posRequest, type PosAccess } from '../../lib/pos'
@@ -71,7 +72,7 @@ export default function ServiceReservations({ business, access, orders, tables, 
   const time = (value: string) => new Intl.DateTimeFormat('es-MX', { timeZone: timezone, hour: '2-digit', minute: '2-digit' }).format(new Date(value))
   const formError = error || mutation.error
   return <section className="service-reservations" aria-label="Reservaciones">
-    <div className="service-panel-heading"><div><h3><CalendarDays size={20} aria-hidden="true" />Reservaciones</h3><p className="operations-caption">Agenda local del negocio · {timezone}</p></div>{canManage && <button type="button" className="pos-button pos-primary" disabled={disabled} onClick={() => edit()}><Plus size={18} aria-hidden="true" />Añadir reservación</button>}</div>
+    <div className="service-panel-heading"><div><h3><CalendarDays size={20} aria-hidden="true" />Reservaciones</h3><p className="operations-caption">Hora del local · {businessTimezoneLabel(timezone)}</p></div>{canManage && <button type="button" className="pos-button pos-primary" disabled={disabled} onClick={() => edit()}><Plus size={18} aria-hidden="true" />Añadir reservación</button>}</div>
     <div className="service-reservation-toolbar"><label>Fecha<input type="date" min="2000-01-01" max="2100-12-31" value={date} disabled={mutation.busy} onChange={event => { if (event.target.value) setDate(event.target.value) }} /></label><button type="button" className="pos-button pos-secondary" disabled={disabled} onClick={() => setReload(value => value + 1)}>Actualizar agenda</button></div>
     {loading && <p role="status" className="operations-caption">Cargando agenda…</p>}
     {formError && !draft && !seating && <div className="operations-error" role="alert"><p>{formError}</p>{!mutation.pending && <button type="button" className="pos-button pos-secondary" disabled={mutation.busy} onClick={() => setReload(value => value + 1)}>Volver a cargar</button>}</div>}

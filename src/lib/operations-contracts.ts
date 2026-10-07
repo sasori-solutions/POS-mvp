@@ -21,7 +21,7 @@ export interface CashShift {
   paymentSummary?: ShiftPaymentSummary
 }
 export interface TableLayout { zone: string; row: number; column: number; seats: number; shape: 'square' | 'round' | 'rectangle' }
-export interface DiningTable { id: string; name: string; active: boolean; revision: number; orderId: string | null; layout?: TableLayout | null }
+export interface DiningTable { id: string; name: string; active: boolean; revision: number; orderId: string | null; visitId?: string | null; layout?: TableLayout | null }
 export type OrderInputLine = SaleInputLine & { lineId: string; note: string }
 export interface OrderLine {
   comboComponents?: ComboComponentSnapshot[]
