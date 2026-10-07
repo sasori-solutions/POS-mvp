@@ -92,7 +92,7 @@ test('saving and editing a restaurant account opens its service detail to send p
   fireEvent.click(screen.getByRole('button', { name: 'Abrir cuenta' }))
   const editor = within(await screen.findByRole('dialog', { name: 'Abrir cuenta' }))
   fireEvent.change(editor.getByRole('textbox', { name: 'Nombre de la cuenta' }), { target: { value: 'Mesa 7' } })
-  fireEvent.click(editor.getByRole('button', { name: /Café/ }))
+  fireEvent.click(editor.getByRole('button', { name: 'Agregar Café, $35.00' }))
   fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
   let service = within(await screen.findByRole('dialog', { name: 'Mesa 7' }))
   expect(service.getByRole('button', { name: 'Enviar a cocina' }).classList.contains('pos-primary')).toBe(true)
@@ -426,7 +426,7 @@ test('a saved service account named Mostrador restores service after a lost resp
   fireEvent.click(screen.getByRole('button', { name: 'Abrir cuenta' }))
   const editor = within(await screen.findByRole('dialog', { name: 'Abrir cuenta' }))
   fireEvent.change(editor.getByRole('textbox', { name: 'Nombre de la cuenta' }), { target: { value: 'Mostrador' } })
-  fireEvent.click(editor.getByRole('button', { name: /Café/ }))
+  fireEvent.click(editor.getByRole('button', { name: 'Agregar Café, $35.00' }))
   fireEvent.click(editor.getByRole('button', { name: 'Guardar cuenta' }))
   await waitFor(() => expect(mutation.execute).toHaveBeenCalledOnce())
   const command = vi.mocked(mutation.execute).mock.calls[0][0]

@@ -9,10 +9,12 @@ export default function ProductSelection({
   product,
   onClose,
   onAdd,
+  addingDisabled = false,
 }: {
   product: Product;
   onClose: () => void;
   onAdd: (selection: ItemSelection) => void;
+  addingDisabled?: boolean;
 }) {
   const d = productDetails(product);
   const [variationId, setVariationId] = useState<string | null>(
@@ -175,7 +177,7 @@ export default function ProductSelection({
       <div className="dialog-actions selection-actions mt-6 flex flex-col gap-3">
         <button
           className="pos-button pos-primary"
-          disabled={!valid}
+          disabled={!valid || addingDisabled}
           onClick={() => {
             onAdd(selection);
             onClose();

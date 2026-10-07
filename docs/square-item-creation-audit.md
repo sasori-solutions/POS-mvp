@@ -42,6 +42,16 @@ En **Venta**, el botón de tres puntos permite **Ver detalles y opciones** a los
 
 Los metadatos siguen privados al negocio. El comando firmado conserva el límite HTTP de 8 KiB y el editor reserva espacio limitando su payload a 6800 bytes. Atributos adicionales tienen claves exactas, nombres únicos y límites compartidos de 8 entradas, 40 caracteres de nombre y 120 de valor. Un reintento aceptado conserva UUID y payload; los cambios posteriores del catálogo no alteran el resultado original ni los snapshots de órdenes anteriores.
 
+### Paridad al tomar y editar cuentas
+
+La auditoría previa al primer cliente del 6 de octubre encontró que el editor de cuentas conservaba un recorrido anterior al catálogo ampliado. Ahora aplica la misma preferencia de agregar directamente, muestra «Precio abierto» o el mínimo de las variantes disponibles y ofrece **Detalles** para consultar nutrición, atributos y personalizar extras opcionales. Un precio abierto, un extra obligatorio o varias variantes disponibles continúan exigiendo elección.
+
+Los detalles se pueden consultar al alcanzar 40 líneas o con una cuenta bloqueada, pero agregar y guardar permanecen desactivados. El editor calcula el subtotal bruto con los precios aceptados de las líneas y enteros exactos, respetando los límites existentes de cantidad, precio unitario y total. Cambiar el catálogo no recalcula una línea histórica. Una cantidad excesiva muestra un error antes de iniciar una solicitud nueva; reducirla permite guardar. La recuperación de una solicitud pendiente conserva el comando original fuera de ese guard.
+
+No se impone a cuentas históricas el presupuesto conservador de 6800 bytes: el límite HTTP real incluye acceso y firma y puede admitir comandos anteriores mayores. Esa restricción adicional podría impedir editar una cuenta previamente aceptada. Se conserva la validación existente del transporte y servidor.
+
+La corrección pasó 63 pruebas de componentes y 8 recorridos nuevos de escritorio/móvil. Estos últimos ejecutan SQL real embebido y verifican guardar, editar después de un cambio de catálogo, enviar a cocina y cobrar con snapshots originales; precios abiertos/variantes, agregado directo, subtotal máximo y geometría/tacto a 320, 390 y 1024 px.
+
 ## Backend y validación
 
 La migración nueva `20261006200000_square_catalog_options.sql` mantiene las claves históricas y admite `skipCustomization` y `customAttributes` como campos opcionales. Amplía la validación privada y captura el nombre público únicamente al insertar líneas de orden, sin reescribir historia. Las líneas por importe sin producto conservan su propio nombre. No añade acceso de navegador a tablas privadas ni modifica cálculos monetarios.
