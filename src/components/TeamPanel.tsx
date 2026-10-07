@@ -19,6 +19,7 @@ interface TeamPanelProps {
   business: BusinessContext;
   operatorToken: string;
   section: "employees" | "devices";
+  embeddedTitle?: boolean;
   onBack: () => void;
   onSessionError?: (error: AccountClientError) => void;
 }
@@ -32,6 +33,7 @@ const sessionErrors = [
   "BUSINESS_ACCESS_DENIED",
   "PERMISSION_DENIED",
   "REAUTH_REQUIRED",
+  "DEVICE_REVOKED",
 ];
 type Code = {
   setupId?: string;
@@ -48,6 +50,7 @@ export default function TeamPanel({
   business,
   operatorToken,
   section,
+  embeddedTitle = false,
   onSessionError,
 }: TeamPanelProps) {
   const [team, setTeam] = useState<AccountResponses["team"] | null>(null);
@@ -63,6 +66,8 @@ export default function TeamPanel({
   const [deviceToRemove, setDeviceToRemove] = useState<{
     id: string;
     name: string;
+    current?: boolean;
+    kind?: 'register' | 'owner_browser' | 'employee_browser';
   } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [name, setName] = useState("");
@@ -71,6 +76,7 @@ export default function TeamPanel({
   const [code, setCode] = useState<Code | null>(null);
   const [now, setNow] = useState(Date.now);
   const heading = useRef<HTMLHeadingElement>(null);
+  const Heading = embeddedTitle ? 'h2' : 'h1';
   const listButton = useRef<HTMLButtonElement>(null);
   const selectedEmployee = useRef<string | null>(null);
   const mounted = useRef(true);
@@ -594,13 +600,22 @@ export default function TeamPanel({
           operatorToken,
           invitationId: id,
         });
-      else
-        await accountRequest({
+      else {
+        const request = accountRequest({
           action: "revoke_device",
           businessId: business.id,
           operatorToken,
           deviceId: id,
         });
+        if (team?.devices.some(device => device.id === id && device.current)) {
+          // Hide this browser immediately. The captured request still completes;
+          // an uncertain response never restores a closed operator session.
+          showError(new AccountClientError('SESSION_INVALID', 'Se cerró tu acceso a este navegador.'));
+          await request;
+          return;
+        }
+        await request;
+      }
       if (!mounted.current || current !== generation.current) return;
       setNotice(
         kind === "invitation"
@@ -869,8 +884,8 @@ export default function TeamPanel({
         <ArrowLeft size={18} aria-hidden="true" />
         Empleados
       </button>}
-      <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px]">
-        <h1 ref={heading} tabIndex={-1}>
+      <div className="management-heading mb-8 [&_h1]:[overflow-wrap:anywhere] [&_h2]:[overflow-wrap:anywhere] [&_h1+p]:mt-3 max-compact:[&_h1]:text-[28px] max-compact:[&_h2]:text-[28px]">
+        <Heading ref={heading} tabIndex={-1}>
           {confirmDelete && editing
             ? `¿Eliminar a ${editing.name}?`
             : invitationReady
@@ -882,9 +897,9 @@ export default function TeamPanel({
                   ? editing.name
                   : "Agregar empleado"
                 : tab === "devices"
-                  ? "Dispositivos de caja"
+                  ? "Dispositivos"
                   : "Empleados"}
-        </h1>
+        </Heading>
       </div>
       {error && (
         <p
@@ -1261,11 +1276,11 @@ export default function TeamPanel({
                 <section
                   hidden={tab !== "devices"}
                   id="management-devices-panel"
-                  aria-label="Dispositivos de caja"
+                  aria-label="Dispositivos del negocio"
                   className="management-section mt-10 [&_h2]:mb-2 [&_h2]:text-[21px] [&_h2]:font-medium [&[role=tabpanel]]:mt-6"
                 >
                   <p>
-                    Cajas compartidas para acceso con PIN. Google usa el dispositivo personal vinculado.
+                    Navegadores del dueño, dispositivos personales de empleados y cajas compartidas. Cada navegador o instalación se vincula por separado.
                   </p>
                   {codeCard()}
                   {deviceToRemove && (
@@ -1279,8 +1294,9 @@ export default function TeamPanel({
                         ¿Desvincular {deviceToRemove.name}?
                       </h2>
                       <p id="remove-device-help">
-                        Se cerrarán las sesiones en ese dispositivo. Necesitarás
-                        vincularlo de nuevo para usarlo como caja.
+                        Se cerrarán las sesiones en ese dispositivo.
+                        {deviceToRemove.kind === 'employee_browser' ? ' El empleado necesitará una nueva aprobación del dueño para entrar.' : deviceToRemove.kind === 'owner_browser' ? ' Este navegador perderá acceso; podrás administrar el negocio desde otro navegador autorizado.' : ' Necesitarás vincularlo de nuevo para usarlo como caja.'}
+                        {deviceToRemove.current && ' Este es el navegador que estás usando y tu acceso se cerrará al confirmar.'}
                       </p>
                       <div className="management-actions mt-1 flex flex-wrap gap-3 max-compact:flex-col">
                         <button
@@ -1311,11 +1327,12 @@ export default function TeamPanel({
                     {team.devices.map((device) => (
                       <li key={device.id}>
                         <div>
-                          <strong>{device.name}</strong>
+                          <strong>{device.name}{device.current ? ' · Este dispositivo' : ''}</strong>
                           <p>
-                            {device.registerName}
+                            {device.kind === 'owner_browser' ? `Dueño · ${device.employeeName ?? business.name}` : device.kind === 'employee_browser' ? `Personal · ${device.employeeName ?? 'Empleado'}` : `Caja compartida · ${device.registerName}`}
                             {device.active ? "" : ". Sin acceso"}
                           </p>
+                          <p className="text-sm text-muted">{device.lastSeenAt ? `Última actividad: ${new Intl.DateTimeFormat('es-MX', { timeZone: business.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(device.lastSeenAt))}` : 'Todavía no hay actividad registrada.'}</p>
                         </div>
                         {device.active && (
                           <button
@@ -1327,6 +1344,8 @@ export default function TeamPanel({
                               setDeviceToRemove({
                                 id: device.id,
                                 name: device.name,
+                                kind: device.kind,
+                                current: device.current,
                               });
                               setError("");
                               setNotice("");
@@ -1340,7 +1359,7 @@ export default function TeamPanel({
                   </ul>
                   {!team.devices.length && (
                     <p className="management-empty my-6 text-sm">
-                      Aún no hay tablets o computadoras vinculadas.
+                      Aún no hay dispositivos vinculados. Los navegadores personales aparecen al entrar y las cajas compartidas al vincularlas.
                     </p>
                   )}
                   <button
@@ -1349,7 +1368,7 @@ export default function TeamPanel({
                     disabled={busy}
                     onClick={() => void pairing()}
                   >
-                    Vincular dispositivo
+                    Vincular caja compartida
                   </button>
                 </section>
               </>

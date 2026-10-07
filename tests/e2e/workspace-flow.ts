@@ -10,7 +10,14 @@ export async function enterOperations(page: Page) {
   else if (await page.locator('#pos-section-title').textContent() !== 'Venta') {
     await page.getByRole('button', { name: 'Venta', exact: true }).filter({ visible: true }).first().click()
   }
-  await expect(page.getByRole('heading',{name:'Venta',exact:true})).toBeVisible()
+  await expect(page.getByRole('heading',{name:/^(Venta|Servicio)$/,exact:true})).toBeVisible()
+  // Account businesses enter their service hub; these sale/editor cases explicitly
+  // choose its catalog shortcut instead of assuming both modes share the same entry.
+  if (await page.getByRole('heading', { name: 'Servicio', exact: true }).isVisible()
+    && !await page.getByRole('button', { name: 'Volver a mesas y cuentas', exact: true }).isVisible()) {
+    await page.getByRole('button', { name: 'Abrir una cuenta desde el catálogo', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Volver a mesas y cuentas', exact: true })).toBeVisible()
+  }
 }
 export async function openOperationalMore(page: Page) {
   await expect(page.locator('#pos-section-title')).toBeVisible()

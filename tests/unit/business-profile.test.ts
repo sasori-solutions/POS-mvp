@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { parseAccountRequest, RequestValidationError } from '../../supabase/functions/account/validation'
-import { businessAccountsEnabled, businessDefaultVat, newBusinessProfile } from '../../src/lib/business-profile'
+import { businessAccountsEnabled, businessDefaultVat, newBusinessProfile, detectedBusinessTimezone, validClabe } from '../../src/lib/business-profile'
 
 const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash'] }
 const details = { name: 'Negocio sintético', businessType: 'cafe', timezone: 'America/Mexico_City' }
@@ -44,6 +44,7 @@ describe('business operation defaults and image HTTP boundary', () => {
     expect(newBusinessProfile('restaurant').accountsEnabled).toBe(true)
     expect(newBusinessProfile('cafe').accountsEnabled).toBe(false)
     expect(newBusinessProfile('other').accountsEnabled).toBe(false)
+    expect(newBusinessProfile('cafe').defaultVatTreatment).toBe('unconfigured')
     expect(businessAccountsEnabled(profile as never)).toBe(true)
     expect(businessDefaultVat({})).toBe('vat_16')
     expect(businessDefaultVat({ defaultVatTreatment: 'exempt' })).toBe('exempt')
@@ -63,5 +64,23 @@ describe('business operation defaults and image HTTP boundary', () => {
     for (const patch of [{ data: 'A'.repeat(4100) }, { data: 'AAA' }, { data: '<svg>' }, { parts: 61 }, { part: 1 }, { part: 0.5 }, { subject: 'another-user' }, { url: 'https://example.test/image' }, { deviceToken: 'b'.repeat(64) }])
       expect(() => parseAccountRequest({ ...image, ...patch })).toThrow(RequestValidationError)
     expect(parseAccountRequest({ action: 'remove_profile_image', businessId: image.businessId, operatorToken: image.operatorToken, subject: 'account', operationId: image.operationId })).toMatchObject({ subject: 'account' })
+  })
+})
+
+describe('creation timezone and receiving account boundary', () => {
+  it('detects a valid device timezone for creation and keeps defaults explicit', () => {
+    expect(() => new Intl.DateTimeFormat('es', { timeZone: detectedBusinessTimezone() })).not.toThrow()
+  })
+  it('matches the published CLABE check digit example and rejects ASCII/length/checksum errors', () => {
+    // Banco de México Circular 12/2018, Annex 4: published calculation example.
+    expect(validClabe('002180032240946700')).toBe(true)
+    for (const value of ['002180032240946701', '00218003224094670', '002 180 032240946700', '٠'.repeat(18)]) expect(validClabe(value)).toBe(false)
+  })
+  it.each(requests)('keeps receiving account optional and exact on $action', request => {
+    const account = { beneficiary: '  Comercio sintético  ', bank: 'Banco sintético', clabe: '000000000000000000' }
+    expect(parseAccountRequest({ ...request, profile: { ...profile, transferAccount: account } })).toMatchObject({ profile: { transferAccount: { ...account, beneficiary: 'Comercio sintético' } } })
+    expect(parseAccountRequest({ ...request, profile: { ...profile, transferAccount: null } })).toMatchObject({ profile: { transferAccount: null } })
+    for (const transferAccount of [{ ...account, clabe: '000000000000000001' }, { ...account, clabe: 0 }, { ...account, bank: '' }, { ...account, credential: 'forbidden' }, { ...account, beneficiary: 42 }])
+      expect(() => parseAccountRequest({ ...request, profile: { ...profile, transferAccount } })).toThrow(RequestValidationError)
   })
 })

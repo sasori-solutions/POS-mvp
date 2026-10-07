@@ -99,6 +99,7 @@ export default function OrdersScreen({ business, access, snapshot, mutation, onO
           <strong>{Math.max(0, line.quantity - (line.cancelledQuantity ?? 0))} × {line.name}</strong>
           {(line.cancelledQuantity ?? 0) > 0 && <small>Cantidad original: {line.quantity} · Canceladas: {line.cancelledQuantity}</small>}
           {line.selectionLabel && <small>{line.selectionLabel}</small>}{line.note && <small className="comanda-note">Nota: {line.note}</small>}
+          {line.comboComponents?.map(component => <small key={component.productId}>{Math.max(0, line.quantity - (line.cancelledQuantity ?? 0)) * component.quantity} × {component.kitchenName || component.name}{component.selectionLabel ? ` · ${component.selectionLabel}` : ''}</small>)}
         </span></li>)}</ul>
         {allowed('kitchen.operate') && currentStage !== 'completed' && <button className="pos-button pos-primary" disabled={disabled} onClick={() => void advance(batch)}>{working ? <PendingIndicator label="Actualizando comanda" /> : currentStage === 'pending' && batch.kind !== 'cancellation' ? <Play size={18} aria-hidden="true" /> : <Check size={18} aria-hidden="true" />}{label}</button>}
       </section>})}</div>

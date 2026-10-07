@@ -58,7 +58,6 @@ function validatedSelection(value: ItemSelection | undefined): ItemSelection | u
     || !['variationId','modifierIds','variablePriceCents'].every(key => Object.hasOwn(value,key))
     || (value.variationId !== null && !uuid.test(value.variationId))
     || !Array.isArray(value.modifierIds) || value.modifierIds.length > 24 || value.modifierIds.some(id => !uuid.test(id))
-    || new Set(value.modifierIds).size !== value.modifierIds.length
     || (value.variablePriceCents !== null && (!Number.isSafeInteger(value.variablePriceCents) || value.variablePriceCents < 0 || value.variablePriceCents > 99_999_999))) throw new Error('Invalid selection')
   return { variationId: value.variationId, modifierIds: [...value.modifierIds].sort(), variablePriceCents: value.variablePriceCents }
 }

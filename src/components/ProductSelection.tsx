@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ItemSelection, Product } from "../lib/pos-contracts";
-import { isSoldOut, productDetails, selectedPrice } from "../lib/product-details";
+import { activeModifierSets, modifierOptionAvailable, modifierOptionLimit, modifierQuantity, normalizeModifierIds, productAvailabilityReason, productDetails, selectedPrice, selectionIssue } from "../lib/product-details";
 import { money, parsePrice } from "../lib/pos";
 import { PosDialog } from "./PosShared";
 import MoneyInput from "./MoneyInput";
@@ -21,6 +21,7 @@ export default function ProductSelection({
     d.variations.find((v) => !v.soldOut)?.id ?? null,
   );
   const [modifierIds, setModifierIds] = useState<string[]>([]);
+  const updateModifierIds = (update: (ids: string[]) => string[]) => setModifierIds(ids => normalizeModifierIds(product, update(ids)));
   const [price, setPrice] = useState("");
   const selection = {
     variationId,
@@ -28,13 +29,9 @@ export default function ProductSelection({
     variablePriceCents: d.variablePrice ? parsePrice(price) : null,
   };
   const valid =
-    !isSoldOut(product) &&
+    !selectionIssue(product, selection) &&
     (!d.variablePrice || selection.variablePriceCents !== null) &&
     (!d.variations.length || d.variations.some((v) => v.id === variationId && !v.soldOut)) &&
-    d.modifierSets.every((s) => {
-      const count = s.options.filter((o) => modifierIds.includes(o.id)).length;
-      return count >= s.min && count <= s.max;
-    }) &&
     modifierIds.length <= 24 &&
     selectedPrice(product, selection) <= 99_999_999;
   return (
@@ -54,6 +51,7 @@ export default function ProductSelection({
       {d.customerName && d.customerName !== product.name && (
         <p className="product-help mb-4 text-sm">En la cuenta: {d.customerName}</p>
       )}
+      {Boolean(product.comboComponents?.length) && <div className="mb-4 rounded-lg bg-surface p-4"><p className="mb-2 text-sm font-medium">Este combo incluye</p><ul className="m-0 list-none space-y-2 p-0 text-sm" aria-label="Componentes del combo">{product.comboComponents!.map((component, index) => <li key={index}>{component.quantity} × {component.name}{component.selectionLabel ? ` · ${component.selectionLabel}` : ''}</li>)}</ul></div>}
       {(d.calories !== null || d.dietary || d.allergens) && (
         <div className="mb-4 flex flex-col gap-2 rounded-lg bg-surface p-4" aria-label="Información alimentaria">
           {d.calories !== null && <p className="text-sm">Calorías: {d.calories} kcal</p>}
@@ -108,7 +106,7 @@ export default function ProductSelection({
           />
         </div>
       )}
-      {d.modifierSets.map((s) => (
+      {activeModifierSets(product, selection).map((s) => (
         <fieldset
           key={s.id}
           className="selection-group mt-6 border-0 p-0 [&_legend]:w-full [&_legend]:pb-3 [&_legend]:font-medium [&_legend_small]:mt-1 [&_legend_small]:block [&_legend_small]:text-[13px] [&_legend_small]:font-normal [&_legend_small]:text-muted"
@@ -122,10 +120,19 @@ export default function ProductSelection({
             </small>
           </legend>
           {s.options.map((o) => {
-            const checked = modifierIds.includes(o.id);
-            const count = s.options.filter((item) =>
-              modifierIds.includes(item.id),
-            ).length;
+            const quantity = modifierQuantity(selection, o.id), checked = quantity > 0;
+            const count = s.options.reduce((sum, item) => sum + modifierQuantity(selection, item.id), 0);
+            const adjustment = o.priceCents ? `${o.priceCents > 0 ? '+' : '−'}${money(Math.abs(o.priceCents))}` : 'Sin costo';
+            if (modifierOptionLimit(o) > 1 && s.max > 1) return (
+              <div key={o.id} className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-t border-line py-3">
+                <div className="min-w-0 flex-1 [overflow-wrap:anywhere]"><span>{o.name}</span><small className="block text-muted">{!modifierOptionAvailable(d.modifierSets, o.id) ? 'No disponible' : `${adjustment} por unidad`}</small></div>
+                <div className="flex items-center gap-2" aria-label={`Cantidad de ${o.name}`}>
+                  <button type="button" className="pos-icon-button" aria-label={`Reducir ${o.name}`} disabled={!quantity} onClick={() => updateModifierIds(ids => { const next = [...ids]; next.splice(next.indexOf(o.id), 1); return next; })}>−</button>
+                  <output className="min-w-6 text-center" aria-label={`Unidades de ${o.name}`}>{quantity}</output>
+                  <button type="button" className="pos-icon-button" aria-label={`Añadir ${o.name}`} disabled={!modifierOptionAvailable(d.modifierSets, o.id) || quantity >= modifierOptionLimit(o) || count >= s.max || modifierIds.length >= 24} onClick={() => updateModifierIds(ids => [...ids, o.id])}>+</button>
+                </div>
+              </div>
+            );
             return (
               <label
                 key={o.id}
@@ -136,12 +143,12 @@ export default function ProductSelection({
                   name={s.id}
                   checked={checked}
                   disabled={
-                    !checked &&
+                    !modifierOptionAvailable(d.modifierSets, o.id) || (!checked &&
                     ((s.max > 1 && count >= s.max) ||
-                      (modifierIds.length >= 24 && (s.max > 1 || count === 0)))
+                      (modifierIds.length >= 24 && (s.max > 1 || count === 0))))
                   }
                   onChange={() =>
-                    setModifierIds((ids) =>
+                    updateModifierIds((ids) =>
                       checked
                         ? ids.filter((id) => id !== o.id)
                         : [
@@ -155,16 +162,17 @@ export default function ProductSelection({
                     )
                   }
                 />
-                <span>{o.name}</span>
-                <b>{o.priceCents ? `+${money(o.priceCents)}` : "Sin costo"}</b>
+                <span>{o.name}{!modifierOptionAvailable(d.modifierSets, o.id) && <small>No disponible{o.soldOut ? '' : ': faltan opciones de preparación'}</small>}</span>
+                <b>{adjustment}</b>
               </label>
             );
           })}
           {s.max === 1 && s.min === 0 && (
             <button
+              type="button"
               className="editor-text-button inline-flex min-h-12 items-center gap-2 border-0 bg-transparent py-2 text-left text-sm font-medium text-brand-hover hover:text-brand"
               onClick={() =>
-                setModifierIds((ids) =>
+                updateModifierIds((ids) =>
                   ids.filter((id) => !s.options.some((o) => o.id === id)),
                 )
               }
@@ -175,7 +183,9 @@ export default function ProductSelection({
         </fieldset>
       ))}
       <div className="dialog-actions selection-actions mt-6 flex flex-col gap-3">
+        {(productAvailabilityReason(product) || selectedPrice(product, selection) < 0 || selectedPrice(product, selection) > 99_999_999) && <p role="alert" className="text-sm text-danger">{productAvailabilityReason(product) || 'Los ajustes deben dejar el precio entre $0.00 y $999,999.99.'}</p>}
         <button
+          type="button"
           className="pos-button pos-primary"
           disabled={!valid || addingDisabled}
           onClick={() => {

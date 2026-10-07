@@ -4,6 +4,18 @@ import type { Environment, ExpectedOrder, PointAdapter, TokenSet } from './provi
 export interface RpcClient { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> }
 export interface Configuration { adapter: PointAdapter; vault: TokenVault; clientId: string; redirectUri: string; environment: Environment; chargesEnabled: boolean; authorizationUrl?: string; testAccessToken?: string; localSimulator?: boolean; oauthAvailable?: boolean }
 export class PointServiceError extends Error { constructor(readonly code: string) { super(code) } }
+/** Carry only Edge's verified browser hash across a new Point RPC transaction.
+ * The RPC wrappers consume this private field before the original command parser.
+ * They still reauthorize the live actor; neither a token nor a proof nonce is copied.
+ */
+export function authorizedPointRpcClient(admin: RpcClient, deviceKeyHash: string | null): RpcClient {
+  if (deviceKeyHash !== null && !/^[0-9a-f]{64}$/.test(deviceKeyHash)) throw new PointServiceError('POINT_SERVICE_UNAVAILABLE')
+  return { rpc(name, args) {
+    if (name !== 'point_execute' && name !== 'point_service') return admin.rpc(name, args)
+    const { serverDeviceKeyHash: _untrusted, ...payload } = record(args.p_payload)
+    return admin.rpc(name, { ...args, p_payload: { ...payload, ...(deviceKeyHash === null ? {} : { serverDeviceKeyHash: deviceKeyHash }) } })
+  } }
+}
 export async function serviceRpc(admin: RpcClient, action: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   const response = await admin.rpc('point_service', { p_action: action, p_payload: payload })
   if (response.error) {

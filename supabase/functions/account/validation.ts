@@ -38,16 +38,30 @@ function businessDetails(input: Record<string, unknown>) {
 function profile(value: unknown): BusinessProfile {
   if (!value || typeof value !== 'object' || Array.isArray(value)) invalid()
   const input = value as Record<string, unknown>
-  exactKeys(input, ['branchName', 'registerName', 'address', 'city', 'state', 'contactPhone', 'paymentMethods'], ['accountsEnabled', 'defaultVatTreatment', 'logoImageId'])
+  exactKeys(input, ['branchName', 'registerName', 'address', 'city', 'state', 'contactPhone', 'paymentMethods'], ['accountsEnabled', 'defaultVatTreatment', 'logoImageId', 'transferAccount'])
   if (!Array.isArray(input.paymentMethods) || input.paymentMethods.length < 1 || input.paymentMethods.length > 4 || new Set(input.paymentMethods).size !== input.paymentMethods.length || input.paymentMethods.some((value) => !['cash', 'card_external', 'transfer', 'card_integrated'].includes(value))) invalid()
   const contactPhone = name(input.contactPhone, 0, 30)
   if (contactPhone && !/^[+0-9() -]{5,30}$/.test(contactPhone)) invalid()
   if (Object.hasOwn(input, 'accountsEnabled') && typeof input.accountsEnabled !== 'boolean') invalid()
   if (Object.hasOwn(input, 'defaultVatTreatment') && !['vat_16', 'vat_0', 'exempt', 'border_8', 'unconfigured'].includes(input.defaultVatTreatment as string)) invalid()
   if (Object.hasOwn(input, 'logoImageId') && input.logoImageId !== null && !isUuid(input.logoImageId)) invalid()
+  let transferAccount: BusinessProfile['transferAccount']
+  if (Object.hasOwn(input, 'transferAccount')) {
+    if (input.transferAccount === null) transferAccount = null
+    else {
+      if (!input.transferAccount || typeof input.transferAccount !== 'object' || Array.isArray(input.transferAccount)) invalid()
+      const account = input.transferAccount as Record<string, unknown>
+      exactKeys(account, ['beneficiary', 'bank', 'clabe'])
+      if (typeof account.clabe !== 'string' || !/^[0-9]{18}$/.test(account.clabe)) invalid()
+      const sum = Array.from(account.clabe.slice(0, 17)).reduce((total, digit, index) => total + (Number(digit) * [3, 7, 1][index % 3]) % 10, 0)
+      if ((10 - sum % 10) % 10 !== Number(account.clabe[17])) invalid()
+      transferAccount = { beneficiary: name(account.beneficiary, 1), bank: name(account.bank, 1), clabe: account.clabe }
+    }
+  }
   return { ...(Object.hasOwn(input, 'accountsEnabled') ? { accountsEnabled: input.accountsEnabled as boolean } : {}),
     ...(Object.hasOwn(input, 'defaultVatTreatment') ? { defaultVatTreatment: input.defaultVatTreatment as BusinessProfile['defaultVatTreatment'] } : {}),
     ...(Object.hasOwn(input, 'logoImageId') ? { logoImageId: input.logoImageId as string | null } : {}),
+    ...(Object.hasOwn(input, 'transferAccount') ? { transferAccount } : {}),
     branchName: name(input.branchName, 1), registerName: name(input.registerName, 1), address: name(input.address, 0, 300), city: name(input.city, 0), state: name(input.state, 0), contactPhone, paymentMethods: input.paymentMethods as PaymentMethod[] }
 }
 export function parseAccountRequest(value: unknown): AccountRequest {

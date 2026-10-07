@@ -33,10 +33,18 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
   await page.goto('/business/new');
   await page.getByLabel('Nombre del negocio').fill(fixtureBusiness.name);
   await page.getByRole('radio', { name: 'Cafetería', exact: true }).check();
-  await page.getByLabel('Zona horaria').selectOption('America/Mexico_City');
+  await page.getByText('Mi local está en otro horario', { exact: true }).click();
+  await page.getByLabel('Horario del local', { exact: true }).selectOption('America/Mexico_City');
   await page.screenshot({ path: `/tmp/pos-mexico-${testInfo.project.name}-business.png`, fullPage: true });
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Tu forma de trabajar', exact: true })).toBeVisible();
+  const tax = page.getByLabel('¿Qué IVA usas en tus precios?', { exact: true });
+  await expect(tax).toHaveValue('');
+  await expect(tax).toHaveAttribute('required', '');
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await expect(page.getByTestId('pin-input')).not.toBeVisible();
+  expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
+  await tax.selectOption('vat_16');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   const pin = page.getByTestId('pin-input');
   const confirmation = page.getByTestId('pin-confirm-input');
@@ -57,6 +65,7 @@ test('business creation, PIN confirmation, lock, unlock and logout', async ({ pa
     businessType: 'cafe',
     timezone: 'America/Mexico_City',
     pin: fixturePin,
+    profile: { defaultVatTreatment: 'vat_16' },
   });
   expect(create?.operationId).toMatch(/^[0-9a-f-]{36}$/);
   await assertNoPersistedOperatorSecrets(page);
@@ -101,6 +110,7 @@ test('a lost business-creation response can be retried with the same operation i
   await page.goto('/business/new');
   await page.getByLabel('Nombre del negocio').fill(fixtureBusiness.name);
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await page.getByLabel('¿Qué IVA usas en tus precios?', { exact: true }).selectOption('vat_16');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await page.getByTestId('pin-input').fill(fixturePin);
   await page.getByTestId('pin-confirm-input').fill(fixturePin);
@@ -118,7 +128,7 @@ test('a lost business-creation response can be retried with the same operation i
   expect(attempts[1]?.operationId).toBe(attempts[0]?.operationId);
   const payloads = attempts.map(({ deviceProof: _deviceProof, ...payload }) => payload);
   expect(payloads[1]).toEqual(payloads[0]);
-  expect(attempts[0]).toMatchObject({ profile: { paymentMethods: ['cash', 'card_integrated'] } });
+  expect(attempts[0]).toMatchObject({ profile: { paymentMethods: ['cash', 'card_integrated'], defaultVatTreatment: 'vat_16' } });
   await expect(page.getByRole('button', { name: 'Abrir Dashboard', exact: true })).not.toBeVisible();
   expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(2);
 });
@@ -138,6 +148,7 @@ test('business creation exposes the home transition only after the API succeeds'
   await page.goto('/business/new');
   await page.getByLabel('Nombre del negocio').fill(fixtureBusiness.name);
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await page.getByLabel('¿Qué IVA usas en tus precios?', { exact: true }).selectOption('vat_16');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await page.getByTestId('pin-input').fill(fixturePin);
   await page.getByTestId('pin-confirm-input').fill(fixturePin);

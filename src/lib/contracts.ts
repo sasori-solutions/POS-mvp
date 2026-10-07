@@ -21,7 +21,14 @@ export const permissionPrerequisites: Partial<Record<BusinessPermission, Busines
 }
 export type PaymentMethod = 'cash' | 'card_external' | 'transfer' | 'card_integrated'
 
-/** Progressive setup: fiscal and bank credentials never belong in this profile. */
+export interface TransferAccount {
+  beneficiary: string
+  bank: string
+  /** Receiving CLABE only; never bank passwords or access credentials. */
+  clabe: string
+}
+
+/** Private, post-unlock business preferences; never a public menu projection. */
 export interface BusinessProfile {
   branchName: string
   registerName: string
@@ -34,6 +41,7 @@ export interface BusinessProfile {
   accountsEnabled?: boolean
   defaultVatTreatment?: VatTreatment
   logoImageId?: string | null
+  transferAccount?: TransferAccount | null
 }
 
 /** The only business data available before a successful PIN unlock. */
@@ -89,6 +97,10 @@ export interface DeviceSummary {
   name: string
   registerName: string
   active: boolean
+  kind?: 'register' | 'owner_browser' | 'employee_browser'
+  employeeName?: string
+  lastSeenAt?: string | null
+  current?: boolean
 }
 export interface BusinessContext extends BusinessSummary {
   timezone: string

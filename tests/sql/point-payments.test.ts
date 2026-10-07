@@ -78,7 +78,7 @@ describe('Point private ledger and server reservations (single PostgreSQL sessio
     const profile = { branchName: 'Principal', registerName: 'Caja 1', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash', 'card_external', 'transfer', 'card_integrated'] }
     const payload = { action: 'update_business', businessId: actor.businessId, operatorToken: actor.token, name: 'Comercio ficticio', businessType: 'cafe', timezone: 'America/Mexico_City', profile }
     const result = (await db.query<{ result: { data: BusinessContext } }>("select public.account_secure($1,$2,'update_business',$3::jsonb) result", [actor.userId, actor.sessionId, JSON.stringify(payload)])).rows[0].result.data
-    expect(result.profile).toEqual({ ...profile, accountsEnabled: true, defaultVatTreatment: 'vat_16', logoImageId: null })
+    expect(result.profile).toEqual({ ...profile, accountsEnabled: true, defaultVatTreatment: 'vat_16', logoImageId: null, transferAccount: null })
     expect((await db.query<{ profile: unknown }>('select profile from app_private.businesses where id=$1', [actor.businessId])).rows[0].profile).toEqual(profile)
     expect((await pos<{ paymentMethods: string[] }>(actor, { command: 'catalog' })).paymentMethods).toEqual(profile.paymentMethods)
     const settings = await point<PointSettings>(actor, { command: 'settings' })

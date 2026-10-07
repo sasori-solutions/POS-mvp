@@ -284,7 +284,16 @@ for (const method of ['Efectivo', 'Transferencia']) test(`sale registers ${metho
     await charge(page, '$116.00')
     const option = page.locator('label').filter({has:page.getByRole('radio', {name:method,exact:true})})
     await option.click()
-    if (method === 'Transferencia') await expect(page.getByText(/Verifica que recibiste la transferencia/)).toHaveCount(0)
+    if (method === 'Transferencia') {
+      await expect(page.getByText('Comprueba el abono en la cuenta del comercio antes de registrar el pago.', { exact: true })).toBeVisible()
+      const received = page.getByRole('checkbox', { name: 'Confirmo que el comercio recibió esta transferencia.', exact: true })
+      await expect(received).not.toBeChecked()
+      await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeDisabled()
+      expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(0)
+      expect((await backend.sales()).sales).toHaveLength(0)
+      await received.check()
+      await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeEnabled()
+    }
     await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
     await recorded(page, backend)
     await showReceipt(page)

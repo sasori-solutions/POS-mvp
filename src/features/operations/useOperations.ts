@@ -3,11 +3,12 @@ import { AccountClientError } from '../../lib/account'
 import type { OperationsCommand, OperationsResponses, OperationsSnapshot } from '../../lib/operations-contracts'
 import { posRequest, type PosAccess } from '../../lib/pos'
 import { accessErrorCodes } from '../../components/useCatalog'
+import { parsePromotionCommand } from '../../../supabase/functions/account/promotion-validation'
 
 type Mutation = Extract<OperationsCommand, { operationId: string }>
 export type OperationOrigin = 'counter' | 'service'
 type PendingOperation = { pending: Mutation | null; pendingOrigin: OperationOrigin | null }
-const commands = new Set(['activate_operations', 'open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'set_kitchen_status', 'save_table', 'move_order', 'close_order', 'begin_order_checkout', 'resume_order_service', 'update_checkout','record_checkout','record_payment','prepare_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal', 'prepare_waiver', 'confirm_waiver'])
+const commands = new Set(['activate_operations', 'open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'set_kitchen_status', 'save_table', 'set_table_layout', 'move_order', 'close_order', 'begin_order_checkout', 'resume_order_service', 'update_checkout','record_checkout','record_payment','prepare_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal', 'prepare_waiver', 'confirm_waiver', 'associate_service_tables', 'release_service_visit', 'continue_service_order', 'save_service_course', 'send_service_course', 'cancel_service_course', 'save_service_reservation', 'set_service_reservation_status', 'save_promotion', 'apply_order_promotion'])
 const credentials = /"(?:operatorToken|deviceToken|pin|currentPin|confirmation|access_token|refresh_token|deviceProof|access|businessId|authSessionId|authorization|Authorization)"\s*:/
 
 function parseOperation(value: string): PendingOperation {
@@ -27,6 +28,12 @@ function parseOperation(value: string): PendingOperation {
   const item = command as Record<string, unknown>
   if (typeof item.command !== 'string' || !commands.has(item.command) || typeof item.operationId !== 'string' || !/^[0-9a-f-]{36}$/i.test(item.operationId)
     || origin !== null && item.command !== 'save_order' || 'payload' in item || 'origin' in item) throw invalid()
+  if (item.command === 'save_promotion' || item.command === 'apply_order_promotion') {
+    try {
+      // Validate the draft, but retain its exact accepted payload and UUID for replay.
+      if (!parsePromotionCommand(item, [])) throw invalid()
+    } catch { throw invalid() }
+  }
   return { pending: command as Mutation, pendingOrigin: origin }
 }
 function readPendingOperation(key: string): PendingOperation {

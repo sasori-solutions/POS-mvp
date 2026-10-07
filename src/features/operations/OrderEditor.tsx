@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, Minus, MoreHorizontal, Plus, ReceiptText, Search, Trash2 } from 'lucide-react'
-import type { OperationalOrder, OrderInputLine } from '../../lib/operations-contracts'
+import type { DiningTable, OperationalOrder, OrderInputLine } from '../../lib/operations-contracts'
 import type { ItemSelection, Product } from '../../lib/pos-contracts'
 import { filterProducts, money, parsePrice, priceInput } from '../../lib/pos'
 import { isSoldOut, productDetails, quickProductSelection, selectedPrice, selectionLabel } from '../../lib/product-details'
@@ -14,8 +14,10 @@ import './operations-polish.css'
 
 const amountLine = (line: OrderInputLine): line is Extract<OrderInputLine, { kind: 'amount' }> => 'kind' in line && line.kind === 'amount'
 
-export default function OrderEditor({ order, products, mutation, onSaved, onCancel, serviceAccount = true, catalogLoading = false, catalogError = '', onRetryCatalog }: { order?: OperationalOrder; products: Product[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onCancel: () => void; serviceAccount?: boolean; catalogLoading?: boolean; catalogError?: string; onRetryCatalog?: () => void | Promise<void> }) {
-  const [name, setName] = useState(order?.name ?? '')
+export default function OrderEditor({ order, products, mutation, onSaved, onCancel, serviceAccount = true, catalogLoading = false, catalogError = '', onRetryCatalog, tables = [], initialTable, canMoveTable = false }: { order?: OperationalOrder; products: Product[]; mutation: OperationalMutation; onSaved: (order: OperationalOrder) => void; onCancel: () => void; serviceAccount?: boolean; catalogLoading?: boolean; catalogError?: string; onRetryCatalog?: () => void | Promise<void>; tables?: DiningTable[]; initialTable?: DiningTable; canMoveTable?: boolean }) {
+  const [name, setName] = useState(order?.name ?? initialTable?.name ?? '')
+  const [tableId, setTableId] = useState<string | null>(order?.tableId ?? initialTable?.id ?? null)
+  const availableTables = tables.filter(table => table.active && (!table.orderId || table.orderId === order?.id))
   const [query, setQuery] = useState('')
   const [choosing, setChoosing] = useState<Product | null>(null)
   const [addingAmount, setAddingAmount] = useState(false)
@@ -50,10 +52,11 @@ export default function OrderEditor({ order, products, mutation, onSaved, onCanc
   async function save() {
     if (disabled || invalidAmounts || totalError) return
     const orderKind = order ? order.orderKind ?? undefined : serviceAccount ? 'service' : 'counter'
-    try { onSaved(await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: order?.revision ?? null, name: name.trim() || (serviceAccount ? 'Cuenta' : 'Mostrador'), tableId: order?.tableId ?? null, items: lines, ...(orderKind ? { orderKind } : {}) }, orderKind === 'counter' || !orderKind && !serviceAccount ? 'counter' : 'service')) } catch { /* Shell recovery. */ }
+    try { onSaved(await mutation.execute({ command: 'save_order', operationId: crypto.randomUUID(), orderId, expectedRevision: order?.revision ?? null, name: name.trim() || (serviceAccount ? 'Cuenta' : 'Mostrador'), tableId, items: lines, ...(orderKind ? { orderKind } : {}) }, orderKind === 'counter' || !orderKind && !serviceAccount ? 'counter' : 'service')) } catch { /* Shell recovery. */ }
   }
   return <div className="ops-form operations-polish order-editor">
     <label className="order-editor-name">Nombre de la cuenta<input value={name} placeholder={serviceAccount ? 'Cuenta' : 'Mostrador'} maxLength={80} onChange={e => setName(e.target.value)} disabled={disabled} /></label>
+    {serviceAccount && tables.length > 0 && <label>Mesa<select value={tableId ?? ''} disabled={disabled || Boolean(order && !canMoveTable)} onChange={event => setTableId(event.target.value || null)}><option value="">Sin mesa</option>{availableTables.map(table => <option key={table.id} value={table.id}>{table.name}</option>)}</select></label>}
     <div className="order-editor-layout">
       <section className="order-editor-catalog" aria-label="Añadir productos">
         {addingAmount ? <AmountEntry disabled={disabled} onAdd={addAmount} onCancel={() => setAddingAmount(false)} /> : <button type="button" className="pos-button pos-secondary" disabled={disabled || lines.length >= 40} onClick={() => setAddingAmount(true)}>Añadir importe libre</button>}

@@ -1,9 +1,15 @@
+import type { ServiceCommand } from '../../../src/lib/service-contracts.ts'
+import { parseServiceCommand } from './service-validation.ts'
+import type { MenuCommand } from '../../../src/lib/menu-contracts.ts'
+import { parseMenuCommand } from './menu-validation.ts'
+import type { PromotionCommand } from '../../../src/lib/promotion-contracts.ts'
+import { parsePromotionCommand, parsePromotionScope } from './promotion-validation.ts'
 import type { OperationsCommand, OrderInputLine } from '../../../src/lib/operations-contracts.ts'
 import type { PaymentMethod } from '../../../src/lib/contracts.ts'
 import { parseSelection } from './product-validation.ts'
 import { isUuid, RequestValidationError } from './validation.ts'
 
-const commands = new Set(['operations','activate_operations','shifts','open_shift','cash_movement','begin_shift_close','abort_shift_close','close_shift','orders','order','save_order','set_order_discount','cancel_order','send_order','begin_order_checkout','resume_order_service','kitchen','set_kitchen_status','tables','save_table','move_order','close_order','update_checkout','record_checkout','record_payment','prepare_checkout','attempt','start_checkout','mark_checkout_uncertain','resolve_checkout','prepare_reversal','prepare_waiver','confirm_waiver','report','report_period','report_own_period'])
+const commands = new Set(['operations','activate_operations','shifts','open_shift','cash_movement','begin_shift_close','abort_shift_close','close_shift','orders','order','save_order','set_order_discount','cancel_order','send_order','begin_order_checkout','resume_order_service','kitchen','set_kitchen_status','tables','save_table','set_table_layout','move_order','close_order','update_checkout','record_checkout','record_payment','prepare_checkout','attempt','start_checkout','mark_checkout_uncertain','resolve_checkout','prepare_reversal','prepare_waiver','confirm_waiver','report','report_period','report_own_period'])
 function invalid(): never { throw new RequestValidationError() }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== 'object' || Array.isArray(value)) invalid(); return value as Record<string, unknown> }
 function exact(value: Record<string, unknown>, keys: string[]) { if (Object.keys(value).length !== keys.length || keys.some(k => !Object.hasOwn(value,k))) invalid() }
@@ -18,8 +24,14 @@ function reportDate(value: unknown): string {
 }
 
 export function parseOperationsCommand(input: Record<string, unknown>, accessKeys: string[]): OperationsCommand | null {
+  const promotion = parsePromotionCommand(input, accessKeys)
+  if (promotion) return promotion
+  const menu = parseMenuCommand(input, accessKeys)
+  if (menu) return menu
+  const service = parseServiceCommand(input, accessKeys)
+  if (service) return service
   if (!commands.has(input.command as string)) return null
-  const command=input.command as OperationsCommand['command']
+  const command=input.command as Exclude<OperationsCommand, ServiceCommand | MenuCommand | PromotionCommand>['command']
   const keys=(extra: string[]) => exact(input,[...accessKeys,'command',...extra])
   const op=() => uuid(input.operationId)
   const revision=() => integer(input.expectedRevision)
@@ -57,14 +69,21 @@ export function parseOperationsCommand(input: Record<string, unknown>, accessKey
     case 'set_order_discount': {
       keys(['operationId','orderId','expectedRevision','discount'])
       if (input.discount===null) return {command,operationId:op(),orderId:order(),expectedRevision:revision(),discount:null}
-      const discount=object(input.discount); exact(discount,['kind','value','reason'])
+      const discount=object(input.discount); const scoped = Object.hasOwn(discount, 'scope'); exact(discount,['kind','value','reason',...(scoped ? ['scope'] : [])])
       if (discount.kind!=='fixed' && discount.kind!=='percent') invalid()
-      return {command,operationId:op(),orderId:order(),expectedRevision:revision(),discount:{kind:discount.kind,value:integer(discount.value,discount.kind==='fixed'?9_999_999_999:10000,0),reason:text(discount.reason,200,1)}}
+      return {command,operationId:op(),orderId:order(),expectedRevision:revision(),discount:{kind:discount.kind,value:integer(discount.value,discount.kind==='fixed'?9_999_999_999:10000,0),reason:text(discount.reason,200,1),...(scoped ? { scope: parsePromotionScope(discount.scope) } : {})}}
     }
     case 'send_order': case 'close_order': case 'begin_order_checkout': case 'resume_order_service': keys(['operationId','orderId','expectedRevision']); return {command,operationId:op(),orderId:order(),expectedRevision:revision()}
     case 'cancel_order': case 'prepare_waiver': keys(['operationId','orderId','expectedRevision','reason']); return {command,operationId:op(),orderId:order(),expectedRevision:revision(),reason:text(input.reason,200,1)}
     case 'set_kitchen_status': keys(['operationId','batchId','expectedRevision','status']); if (!['preparing','ready','delivered'].includes(input.status as string)) invalid(); return {command,operationId:op(),batchId:uuid(input.batchId),expectedRevision:revision(),status:input.status as 'preparing'|'ready'|'delivered'}
     case 'save_table': keys(['operationId','tableId','expectedRevision','name','active']); if (typeof input.active!=='boolean') invalid(); return {command,operationId:op(),tableId:uuid(input.tableId),expectedRevision:input.expectedRevision===null?null:revision(),name:text(input.name,60,1),active:input.active}
+    case 'set_table_layout': {
+      keys(['operationId','tableId','expectedRevision','layout'])
+      if (input.layout === null) return { command, operationId: op(), tableId: uuid(input.tableId), expectedRevision: revision(), layout: null }
+      const layout = object(input.layout); exact(layout, ['zone','row','column','seats','shape'])
+      if (layout.shape !== 'square' && layout.shape !== 'round' && layout.shape !== 'rectangle') invalid()
+      return { command, operationId: op(), tableId: uuid(input.tableId), expectedRevision: revision(), layout: { zone: text(layout.zone,40,1), row: integer(layout.row,12), column: integer(layout.column,12), seats: integer(layout.seats,24), shape: layout.shape } }
+    }
     case 'move_order': keys(['operationId','orderId','expectedRevision','tableId']); return {command,operationId:op(),orderId:order(),expectedRevision:revision(),tableId:input.tableId===null?null:uuid(input.tableId)}
     case 'prepare_checkout': case 'record_payment': case 'update_checkout': {
       keys(['operationId',command==='update_checkout'?'attemptId':'orderId','expectedRevision','items','paymentMethod',...(command==='record_payment'?['confirmed']:[]),...(Object.hasOwn(input,'amountsCents')?['amountsCents']:[])])

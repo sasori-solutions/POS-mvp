@@ -111,7 +111,7 @@ test('device removal requires confirmation and pairing explains where to use the
   await expect(page.getByRole('status').filter({ hasText: 'Dispositivo desvinculado.' })).toHaveText('Dispositivo desvinculado. Ya no permite entrar al negocio.')
   await expect(page.getByRole('button', { name: 'Desvincular Tablet de prueba' })).toHaveCount(0)
   expect(calls.filter((call) => call.action === 'revoke_device')).toHaveLength(1)
-  await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
+  await page.getByRole('button', { name: 'Vincular caja compartida', exact: true }).click()
   await expect(page.getByLabel('Código para vincular dispositivo')).toHaveValue(fixturePairingCode)
   await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()
   await expect(page.getByText('Escanéalo desde la caja que vas a vincular.')).toBeVisible()

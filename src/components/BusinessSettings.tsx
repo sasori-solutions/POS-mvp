@@ -4,8 +4,9 @@ import { accountRequest, AccountClientError } from "../lib/account";
 import PointSetup from './PointSetup';
 import { usePoint } from './usePoint';
 import { collectionPaymentMethods, paymentLabels } from '../lib/payment-methods';
-import { businessTimezones, businessDefaultVat } from '../lib/business-profile';
+import { businessTimezones, businessDefaultVat, businessTimezoneLabel, transferAccountError } from '../lib/business-profile';
 import BusinessOperationFields from './BusinessOperationFields';
+import TransferAccountFields from './TransferAccountFields';
 import ProfileImageEditor from './ProfileImageEditor';
 import './business-profile.css';
 import type {
@@ -19,6 +20,7 @@ interface BusinessSettingsProps {
   business: BusinessContext;
   operatorToken: string;
   focusPaymentMethods?: boolean;
+  embeddedTitle?: boolean;
   onSaved: (business: BusinessContext) => void;
   onBack: () => void;
   onSessionError?: (error: AccountClientError) => void;
@@ -48,6 +50,7 @@ function profileSignature(profile: BusinessProfile) {
     paymentMethods: profile.paymentMethods,
     accountsEnabled: profile.accountsEnabled !== false,
     defaultVatTreatment: businessDefaultVat(profile), logoImageId: profile.logoImageId ?? null,
+    transferAccount: profile.transferAccount ?? null,
   });
 }
 
@@ -55,10 +58,12 @@ export default function BusinessSettings({
   business,
   operatorToken,
   focusPaymentMethods = false,
+  embeddedTitle = false,
   onSaved,
   onSessionError,
 }: BusinessSettingsProps) {
   const [name, setName] = useState(business.name);
+  const Heading = embeddedTitle ? 'h2' : 'h1';
   const [businessType, setBusinessType] = useState<BusinessType>(
     business.businessType,
   );
@@ -123,6 +128,8 @@ export default function BusinessSettings({
       setError("Elige al menos un método de pago.");
       return;
     }
+    const transferError = transferAccountError(profile.transferAccount);
+    if (transferError) { setError(transferError); return; }
     if (
       profile.contactPhone.trim() &&
       !/^[+0-9() -]{5,30}$/.test(profile.contactPhone.trim())
@@ -199,7 +206,7 @@ export default function BusinessSettings({
   if (pointSetup) return <PointSetup access={pointAccess} controller={point} paymentMethodEnabled={business.profile.paymentMethods.includes('card_integrated')} onOpenPaymentMethods={() => { paymentFocusPending.current = true; setPointSetup(false); }} onBack={() => setPointSetup(false)} onSessionError={onSessionError} />;
   return (
     <div className="management-shell management-polish settings-polish business-profile-settings">
-      <div className="management-heading mb-8"><h1>Configuración</h1></div>
+      <div className="management-heading mb-8"><Heading>Configuración</Heading></div>
       {error && <p className="mb-6 text-sm text-danger" role="alert">{error}</p>}
       {saved && <p className="mb-6 text-sm text-success" role="status">Cambios guardados.</p>}
       {denied ? <p className="text-sm text-muted">Sólo el dueño puede editar el negocio.</p> : <>
@@ -212,11 +219,15 @@ export default function BusinessSettings({
             <div className="settings-fields-grid">
               <div className="field"><label htmlFor="settings-name">Nombre</label><input id="settings-name" value={name} onChange={event => { setName(event.target.value); setSaved(false); }} minLength={2} maxLength={100} required disabled={busy} /></div>
               <div className="field"><label htmlFor="settings-type">Tipo de negocio</label><select id="settings-type" value={businessType} onChange={event => { setBusinessType(event.target.value as BusinessType); setSaved(false); }} disabled={busy}><option value="cafe">Cafetería</option><option value="restaurant">Restaurante</option><option value="other">Otro</option></select></div>
-              <div className="field"><label htmlFor="settings-timezone">Zona horaria</label><select id="settings-timezone" value={timezone} onChange={event => { setTimezone(event.target.value); setSaved(false); }} disabled={busy}>
-                {!businessTimezones.some(([value]) => value === timezone) && <option value={timezone}>{timezone}</option>}
-                {businessTimezones.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select></div>
             </div>
+            <p className="mt-4 text-sm text-muted">Hora del local: {businessTimezoneLabel(timezone)}. Tus reportes y cierres usan este horario, aunque entres desde otro lugar.</p>
+            <details className="business-extra-settings">
+              <summary>Corregir el horario del local</summary>
+              <div className="field mt-4"><label htmlFor="settings-timezone">Horario del local</label><select id="settings-timezone" value={timezone} onChange={event => { setTimezone(event.target.value); setSaved(false); }} disabled={busy}>
+                {!businessTimezones.some(([value]) => value === timezone) && <option value={timezone}>{businessTimezoneLabel(timezone)}</option>}
+                {businessTimezones.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select><p className="mt-3 text-sm text-muted">Cambiarlo modifica cómo se agrupan las fechas en los reportes. Los cobros registrados conservan sus datos.</p></div>
+            </details>
           </fieldset>
           <div className="settings-operation">
             <BusinessOperationFields profile={profile} onChange={value => { setProfile(value); setSaved(false); }} disabled={busy} prefix="settings" />
@@ -231,6 +242,7 @@ export default function BusinessSettings({
             <p className="mt-3 text-sm text-muted">Tarjeta externa registra un pago aprobado en la terminal del comercio. Mercado Pago Point envía el cobro a una terminal vinculada.</p>
             <button type="button" className="pos-button pos-secondary mt-4" disabled={busy} onClick={() => setPointSetup(true)}>Vincular una terminal</button>
           </fieldset>
+          {(profile.paymentMethods.includes('transfer') || profile.transferAccount) && <TransferAccountFields value={profile.transferAccount ?? null} disabled={busy} prefix="settings-transfer" onChange={value => changeProfile('transferAccount', value)} />}
           <details className="business-extra-settings">
             <summary>Sucursal y contacto</summary>
             <div className="business-extra-fields">

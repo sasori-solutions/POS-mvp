@@ -2,11 +2,14 @@ import { AccountClientError } from './account'
 import type { PosCommand } from './pos-contracts'
 import type { Sale } from './pos-contracts'
 import type { CashShift, CheckoutAttempt, OperationalOrder, OrderLine } from './operations-contracts'
+import type { ServiceVisit } from './service-contracts'
+import type { PromotionScope } from './promotion-contracts'
+import { promotionCategory, promotionMatchesLine, promotionScopeKey } from './promotion-math'
 import { assertMonetaryLineSnapshot, FinancialIntegrityError, isBoundedInteger, maxOperationalLines, maxOperationalMoneyCents, maxOperationalQuantity, maxOperationalUnitPriceCents, monetaryLineSlice } from './operational-money'
 import { checkoutAmountTotals } from './checkout-amounts'
 
 type ObjectValue = Record<string, unknown>
-const orderCommands = new Set(['order', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'begin_order_checkout', 'resume_order_service', 'move_order', 'close_order'])
+const orderCommands = new Set(['order', 'save_order', 'set_order_discount', 'apply_order_promotion', 'cancel_order', 'send_order', 'begin_order_checkout', 'resume_order_service', 'move_order', 'close_order'])
 const attemptCommands = new Set(['attempt', 'prepare_checkout', 'update_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal'])
 const shiftCommands = new Set(['open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift'])
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
@@ -123,9 +126,27 @@ export function assertFinancialOrder(value: unknown): asserts value is Operation
   else {
     const entry = object(order.discount)
     requireValue(entry.kind === 'fixed' || entry.kind === 'percent')
-    const value = cents(entry.value, entry.kind === 'fixed' ? gross : 10_000)
-    const amount = entry.kind === 'fixed' ? value : Number((BigInt(gross) * BigInt(value) + 5_000n) / 10_000n)
+    let eligible = gross
+    if (entry.scope !== undefined) {
+      const scope = object(entry.scope)
+      requireValue(Object.keys(scope).length === 2 && Array.isArray(scope.productIds) && scope.productIds.length <= 100 && scope.productIds.every(identifier)
+        && Array.isArray(scope.categories) && scope.categories.length <= 24 && scope.categories.every(category => typeof category === 'string' && !/[\u0000-\u001f\u007f]/.test(category) && Array.from(category).length <= 60 && Boolean(promotionCategory(category))))
+      const selector = scope as unknown as PromotionScope
+      requireValue(selector.productIds.length + selector.categories.length > 0 && new Set(selector.productIds.map(id => id.toLowerCase())).size === selector.productIds.length && new Set(selector.categories.map(promotionCategory)).size === selector.categories.length)
+      eligible = 0
+      for (const line of lines) {
+        const matches = promotionMatchesLine(line as unknown as OrderLine, selector)
+        if (matches) eligible += line.grossCents as number
+        else requireValue(line.discountCents === 0)
+      }
+    }
+    const value = cents(entry.value, entry.kind === 'fixed' ? eligible : 10_000)
+    const amount = entry.kind === 'fixed' ? value : Number((BigInt(eligible) * BigInt(value) + 5_000n) / 10_000n)
     requireValue(amount === discount)
+    if (entry.promotion !== undefined) {
+      const promotion = object(entry.promotion)
+      requireValue(identifier(promotion.id) && typeof promotion.revision === 'number' && isBoundedInteger(promotion.revision, 1, 2_147_483_647) && typeof promotion.name === 'string' && Boolean(promotion.name.trim()) && entry.scope !== undefined)
+    }
   }
 }
 
@@ -216,13 +237,71 @@ function completedPayment(value: unknown, command: Extract<PosCommand, { command
   }
 }
 
+/** Visit totals include every linked account, including immutable paid receipts. */
+export function assertFinancialVisit(value: unknown): asserts value is ServiceVisit {
+  const visit = object(value)
+  header(visit)
+  requireValue(visit.status === 'active' || visit.status === 'closed')
+  requireValue(Array.isArray(visit.orders) && visit.orders.length >= 1 && visit.orders.length <= 100)
+  const identities = new Set<string>()
+  let balance = 0n
+  for (const order of visit.orders) {
+    assertFinancialOrder(order)
+    requireValue(!identities.has(order.id.toLowerCase())); identities.add(order.id.toLowerCase())
+    balance += BigInt(order.balanceCents)
+  }
+  requireValue(BigInt(cents(visit.balanceCents, Number.MAX_SAFE_INTEGER)) === balance)
+  requireValue(visit.status !== 'closed' || balance === 0n)
+}
+
+function serviceCourses(value: unknown, orderId: string) {
+  requireValue(Array.isArray(value))
+  const ids = new Set<string>()
+  for (const raw of value) {
+    const course = object(raw)
+    requireValue(identifier(course.id) && identifier(course.orderId) && !ids.has(course.id.toLowerCase()) && sameId(course.orderId, orderId))
+    ids.add(course.id.toLowerCase())
+    requireValue(['held', 'sent', 'released'].includes(String(course.status)))
+    requireValue(Array.isArray(course.items) && course.items.length >= 1 && course.items.length <= maxOperationalLines)
+    const lines = new Set<string>()
+    for (const rawLine of course.items) {
+      const line = object(rawLine)
+      requireValue(identifier(line.lineId) && !lines.has(line.lineId.toLowerCase()) && typeof line.quantity === 'number' && isBoundedInteger(line.quantity, 1, maxOperationalQuantity))
+      lines.add(line.lineId.toLowerCase())
+    }
+  }
+}
+
 /** Run before posRequest resolves, so uncertain mutations retain their original durable UUID/payload. */
 export function assertFinancialResponse(command: PosCommand, value: unknown): void {
   try {
+    if (['associate_service_tables', 'continue_service_order', 'save_service_course', 'send_service_course', 'cancel_service_course'].includes(command.command)) {
+      const response = object(value)
+      assertFinancialOrder(response.order)
+      const savedOrder = response.order
+      if ('orderId' in command) { requireValue(typeof command.orderId === 'string'); requireValue(sameId(response.order.id, command.orderId)) }
+      if ('visit' in response) {
+        assertFinancialVisit(response.visit)
+        requireValue(response.visit.orders.some(order => sameId(order.id, savedOrder.id)))
+      }
+      if (['save_service_course', 'send_service_course', 'cancel_service_course'].includes(command.command)) serviceCourses(response.courses, savedOrder.id)
+    }
+    if (command.command === 'release_service_visit') { assertFinancialVisit(value); requireValue(sameId(value.id, command.visitId) && value.status === 'closed' && value.balanceCents === 0) }
+    if (command.command === 'service_order') {
+      const response = object(value)
+      serviceCourses(response.courses, command.orderId)
+      if (response.visit !== null) {
+        assertFinancialVisit(response.visit)
+        requireValue(response.visit.orders.some(order => sameId(order.id, command.orderId)))
+      }
+    }
+    if (command.command === 'service_day') { const response = object(value); requireValue(response.date === command.date && Array.isArray(response.reservations) && Array.isArray(response.visits)); response.visits.forEach(assertFinancialVisit) }
+    if (command.command === 'set_service_reservation_status') { const response = object(value); if (response.visit !== null) assertFinancialVisit(response.visit) }
     if (orderCommands.has(command.command)) {
       assertFinancialOrder(value)
-      if ('orderId' in command) requireValue(sameId(value.id, command.orderId))
-      if (command.command === 'set_order_discount') requireValue(command.discount === null ? value.discount === null : value.discount?.kind === command.discount.kind && value.discount.value === command.discount.value)
+      if ('orderId' in command) { requireValue(typeof command.orderId === 'string'); requireValue(sameId(value.id, command.orderId)) }
+      if (command.command === 'set_order_discount') requireValue(command.discount === null ? value.discount === null : value.discount?.kind === command.discount.kind && value.discount.value === command.discount.value && promotionScopeKey(value.discount.scope) === promotionScopeKey(command.discount.scope) && value.discount.promotion === undefined)
+      if (command.command === 'apply_order_promotion') requireValue(value.discount?.promotion !== undefined && sameId(value.discount.promotion.id, command.promotionId) && value.discount.promotion.revision === command.promotionRevision && value.discount.scope !== undefined)
       if (command.command === 'save_order') {
         if (command.orderKind !== undefined) requireValue(value.orderKind === command.orderKind)
         requireValue(value.items.length === command.items.length)

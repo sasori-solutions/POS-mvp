@@ -107,3 +107,15 @@ test('a loading failure has a bounded retryable error instead of leaving a pendi
   expect(ready).not.toHaveBeenCalled()
   expect(document.querySelector('iframe')).toBeNull()
 })
+
+test('combo receipts retain component snapshots and escape names without inventing quantities for amount splits', () => {
+  const combo = { ...sale.items[0], comboComponents: [{ productId: '00000000-0000-4000-8000-000000000090', version: 1, quantity: 3,
+    name: 'Taco <script>test</script>', kitchenName: 'Cocina privada', selectionLabel: 'Sin cebolla & salsa' }] }
+  const whole = receipt({ ...sale, items: [combo] })
+  expect(whole.body.textContent).toContain('6 × Taco <script>test</script> · Sin cebolla & salsa')
+  expect(whole.querySelector('script')).toBeNull()
+  expect(whole.body.textContent).not.toContain('Cocina privada')
+  const part = receipt({ ...sale, items: [{ ...combo, quantity: 0, allocatedGrossCents: 10001 }] })
+  expect(part.body.textContent).toContain('Por combo: 3 × Taco')
+  expect(part.body.textContent).not.toContain('0 × Taco')
+})

@@ -16,7 +16,7 @@ import ReportDashboard, { type ReportTab } from "../features/operations/ReportDa
 import { useReportController } from "../features/operations/usePeriodReport";
 import { businessDate } from "../lib/reporting";
 import { hasPermission } from "../lib/business-access";
-import type { OperationsResponses, OperationalOrder, OrderInputLine, CheckoutAttempt } from "../lib/operations-contracts";
+import type { OperationsResponses, OperationalOrder, OrderInputLine, CheckoutAttempt, DiningTable } from "../lib/operations-contracts";
 import type { CartLine, ItemSelection, Product } from "../lib/pos-contracts";
 import { lineKey, selectedPrice } from "../lib/product-details";
 import { cartLineOrderInput, savedOrderLineInput } from "../lib/cart-line";
@@ -36,6 +36,9 @@ import ReportsScreen from "../features/operations/ReportsScreen";
 import PersonalMetricsScreen from "../features/operations/PersonalMetricsScreen";
 import OrderDetail from "../features/operations/OrderDetail";
 import OrderEditor from "../features/operations/OrderEditor";
+import ServiceWorkspace from "../features/operations/ServiceWorkspace";
+import MenuManager from './MenuManager';
+import PromotionManager from './PromotionManager';
 import PointSetup from './PointSetup';
 import PointDashboard from './PointDashboard';
 import PointPayment from './PointPayment';
@@ -107,7 +110,7 @@ export default function HomeScreen({
   sessionErrorHandler.current = onSessionError;
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [checkoutRequested, setCheckoutRequested] = useState(false);
-  const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder } | null>(null);
+  const [editingOrder, setEditingOrder] = useState<{ order?: OperationalOrder; table?: DiningTable } | null>(null);
   const [savedCounter, setSavedCounter] = useState<OperationalOrder | null>(null);
   const [saleResetToken, setSaleResetToken] = useState(0);
   const saleAccountOperation = useRef<string | null>(null);
@@ -131,6 +134,8 @@ export default function HomeScreen({
   const canReadReceipts = hasPermission(business, 'sales.read_own') || hasPermission(business, 'sales.read_all');
   const canReadOwnMetrics = !isOwner && hasPermission(business, 'reports.read_own');
   const [operating, setOperating] = useState(!isOwner || active === 'Venta' || active === 'Comandas');
+  const [serviceCatalog, setServiceCatalog] = useState(false);
+  const [catalogView, setCatalogView] = useState<'products' | 'menus' | 'promotions'>('products');
   const [saleVisited, setSaleVisited] = useState(active === 'Venta');
   useEffect(() => { if (active === 'Venta') setSaleVisited(true); }, [active]);
   const access = { businessId: business.id, operatorToken, deviceToken };
@@ -256,6 +261,7 @@ export default function HomeScreen({
   const operation = useOperations(access, canOperate && needsOperations, onSessionError);
   const mutation = useOperationalMutation(access, business.employee?.id ?? 'owner', onSessionError);
   const snapshot = operation.snapshot;
+  const showServiceWorkspace = accountsEnabled && !serviceCatalog && !savedCounter && mutation.pendingOrigin !== 'counter' && !(mutation.pending?.command === 'save_order' && mutation.pendingOrigin === 'service');
   const selectedSnapshot = snapshot?.orders.find(o => o.id === selectedOrder?.id);
   const order = selectedSnapshot && selectedSnapshot.revision >= (selectedOrder?.revision ?? 0)
     ? selectedSnapshot : selectedOrder;
@@ -362,6 +368,12 @@ export default function HomeScreen({
           setCheckoutRequested(false);
           setSelectedOrder(saved);
         }
+      }
+      if (command.command === 'continue_service_order') {
+        const saved = (result as OperationsResponses['continue_service_order']).order;
+        setCheckoutRequested(false);
+        setSelectedOrder(saved);
+        setEditingOrder({ order: saved });
       }
       if (['record_payment', 'record_checkout'].includes(command.command)) {
         const accepted = result as OperationsResponses['record_payment'];
@@ -486,13 +498,13 @@ export default function HomeScreen({
     );
   }
   const visiblePointPage = managementContent ? null : pointPage;
-  const title = visiblePointPage === 'setup' ? 'Vincular una terminal' : visiblePointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active === 'Reportes' && canReadOwnMetrics ? 'Mis métricas' : active);
+  const title = visiblePointPage === 'setup' ? 'Vincular una terminal' : visiblePointPage === 'admin' ? 'SASORI' : managementTitle ?? (active === 'Ventas' && (!isOwner || operating) ? 'Historial' : active === 'Reportes' && canReadOwnMetrics ? 'Mis métricas' : active === 'Venta' && accountsEnabled ? 'Servicio' : active);
   return (
     <WorkspaceShell business={business} accountName={accountName} active={active} operating={operating && !managementContent && !pointPage} title={title} busy={busy}
       onSelect={setActive} onLock={onLock} onLogout={onLogout} logoutLabel={logoutLabel} onTeam={onTeam ? () => openManagement(onTeam) : undefined} onDevices={onDevices ? () => openManagement(onDevices) : undefined} onSettings={onSettings ? () => openManagement(onSettings) : undefined} onChangePin={onChangePin ? () => openManagement(onChangePin) : undefined} onAccountProfile={onAccountProfile ? () => openManagement(onAccountProfile) : undefined} onSwitchEmployee={onSwitchEmployee}
       onSwitchBusiness={onSwitchBusiness} onNotifications={onNotifications ? () => openManagement(onNotifications) : undefined} unreadCount={unreadCount} pendingCount={snapshot?.pendingKitchenCount ?? 0} managementKey={pointPage ?? managementKey}
       onPointSetup={isOwner && !deviceToken ? () => openPoint('setup') : undefined} onPointAdmin={point.settings?.permissions.admin ? () => openPoint('admin') : undefined}
-      headingAside={active === 'Venta' && !managementContent && !pointPage && snapshot && !operation.error && snapshot.shift?.status !== 'open'
+      headingAside={active === 'Venta' && !accountsEnabled && !managementContent && !pointPage && snapshot && !operation.error && snapshot.shift?.status !== 'open'
         ? hasPermission(business, 'cash.read')
           ? <button type="button" className="cash-shift-notice" aria-label="Turno cerrado. Ir a Caja" onClick={() => setActive('Caja')}>Turno cerrado</button>
           : <span className="cash-shift-notice" role="status">Turno cerrado</span>
@@ -528,8 +540,10 @@ export default function HomeScreen({
           {!mutation.busy && mutation.pending && <><p>Hay una solicitud por confirmar. Reintenta el mismo registro sin repetir el movimiento de dinero.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
         </div>}
 
+        {active === 'Venta' && accountsEnabled && showServiceWorkspace && canTakeOrder && (snapshot ? <ServiceWorkspace key={operatorScope} business={business} access={access} onSessionError={onSessionError} snapshot={snapshot} mutation={mutation} onOrder={saved => { setCheckoutRequested(false); setSelectedOrder(saved); }} onNew={table => { setCheckoutRequested(false); setEditingOrder({ table }); }} onQuickAccount={() => setServiceCatalog(true)} refresh={operation.refresh} /> : !operation.error && <LoadingPlaceholder variant="cards" rows={4} label="Cargando mesas y cuentas" />)}
+        {active === 'Venta' && accountsEnabled && !showServiceWorkspace && !savedCounter && <button type="button" className="pos-button pos-secondary mb-4" disabled={mutation.busy || Boolean(mutation.pending)} onClick={() => setServiceCatalog(false)}>Volver a mesas y cuentas</button>}
         {(saleVisited || active === 'Venta') && canTakeOrder && (
-          <div hidden={active !== "Venta"}>
+          <div hidden={active !== "Venta" || showServiceWorkspace}>
             <SaleScreen
               access={access}
               businessName={business.name}
@@ -547,6 +561,7 @@ export default function HomeScreen({
               canAmount={hasPermission(business, 'sales.create') || hasPermission(business, 'orders.manage')}
               defaultVatTreatment={business.profile.defaultVatTreatment}
               configuredMethods={business.profile.paymentMethods}
+              transferAccount={business.profile.transferAccount}
               collectionReady={Boolean(snapshot) && !operation.error && !mutation.pending && !mutation.busy}
               collectionAllowed={snapshot?.shift?.status === 'open'}
               activationRequired={snapshot?.enabled === false}
@@ -570,14 +585,18 @@ export default function HomeScreen({
         ) : active === "Caja" ? (
           snapshot ? <CashScreen business={business} access={access} snapshot={snapshot} mutation={mutation} refresh={operation.refresh} onSessionError={onSessionError} /> : !operation.error && <LoadingPlaceholder variant="cards" rows={3} label="Cargando caja" />
         ) : active === "Productos" ? (
-          <ProductsScreen
+          <>
+          {hasPermission(business, 'catalog.manage') && (hasPermission(business, 'sales.discount') || isOwner && !deviceToken) && <div className="operations-segments catalog-segments mb-5" role="group" aria-label="Administrar catálogo"><button type="button" aria-pressed={catalogView === 'products'} onClick={() => setCatalogView('products')}>Productos</button>{isOwner && !deviceToken && <button type="button" aria-pressed={catalogView === 'menus'} onClick={() => setCatalogView('menus')}>Menús QR</button>}{hasPermission(business, 'sales.discount') && <button type="button" aria-pressed={catalogView === 'promotions'} onClick={() => setCatalogView('promotions')}>Promociones</button>}</div>}
+          {catalogView === 'promotions' && hasPermission(business, 'catalog.manage') && hasPermission(business, 'sales.discount') ? <PromotionManager key={operatorScope} access={access} products={catalog.products} mutation={mutation} onSessionError={onSessionError} /> : catalogView === 'menus' && isOwner && !deviceToken && hasPermission(business, 'catalog.manage') ? <MenuManager key={operatorScope} access={access} actorId={business.employee?.id ?? 'owner'} products={catalog.products} onSessionError={onSessionError} /> : <ProductsScreen
             access={access}
+            actorId={business.employee?.id ?? 'owner'}
             catalog={catalog}
             canManage={hasPermission(business, 'catalog.manage')}
             defaultVatTreatment={business.profile.defaultVatTreatment}
             canAvailability={hasPermission(business, 'catalog.availability')}
             onSessionError={onSessionError}
-          />
+          />}
+          </>
         ) : active === "Ventas" ? (
           <SalesScreen
             key={`${business.employee?.id}:${JSON.stringify(business.permissions)}`}
@@ -648,7 +667,7 @@ export default function HomeScreen({
           {backError && !mutation.error && <p role="alert">{backError}</p>}
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
-          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} serviceAccount={!editingOrder.order || !isCounterOrder(editingOrder.order)} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); setCheckoutRequested(false); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} serviceAccount={order.orderKind === 'service'} onStartCheckout={() => setCheckoutRequested(true)} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.loaded && !catalog.error ? catalog.paymentMethods : business.profile.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
+          {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? editingOrder.table?.id ?? 'new'} order={editingOrder.order} tables={snapshot?.tables ?? []} initialTable={editingOrder.table} canMoveTable={hasPermission(business, 'tables.manage')} serviceAccount={!editingOrder.order || !isCounterOrder(editingOrder.order)} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); setCheckoutRequested(false); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} serviceToolsEnabled={order.orderKind === 'service'} tables={snapshot?.tables ?? []} onContinue={saved => { setCheckoutRequested(false); setSelectedOrder(saved); setEditingOrder({ order: saved }); void operation.refresh(); }} onOpenOrder={saved => { setCheckoutRequested(false); setSelectedOrder(saved); }} checkoutView={checkoutView} serviceAccount={order.orderKind === 'service'} onStartCheckout={() => setCheckoutRequested(true)} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.loaded && !catalog.error ? catalog.paymentMethods : business.profile.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
             onReceipt={canReadReceipts ? saleId => { if (currentOperator.current === operatorScope) setReceipt({ scope: operatorScope, saleId, afterCheckout: false }); } : undefined}
             draft={checkoutDraft.current?.scope === operatorScope ? checkoutDraft.current.value : undefined}
             onDraftChange={value => { if (!paymentComplete && currentOperator.current === operatorScope) checkoutDraft.current = { scope: operatorScope, value }; }}

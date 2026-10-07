@@ -1,0 +1,23 @@
+# Menús públicos y horarios
+
+El dueño puede crear varios menús del mismo negocio, cada uno con nombre, punto de atención, hasta 100 productos y hasta 14 franjas semanales. Esto permite distinguir barra, terraza o desayuno; no crea sucursales ni cajas independientes.
+
+Un menú nuevo empieza como borrador. La pantalla explica los datos que publicará antes de guardar: nombre del negocio, ubicación, nombres para clientes, precios, descripciones, tamaños, extras, contenido de combos, alérgenos y fotografías. El QR tiene una dirección estable `/menu/:publicUUID`, generada por el servidor al aceptar la creación. Guardar cambios posteriores conserva esa dirección.
+
+El cliente no necesita Google, PIN ni una sesión del POS. El menú es informativo: no recibe pedidos, reservaciones ni cobros. Cada consulta toma el catálogo actual. Los productos activos agotados permanecen con la etiqueta **Agotado**; productos inactivos o eliminados se ocultan. Tamaños, extras condicionales y disponibilidad de combos usan las reglas actuales del catálogo. Una página visible vuelve a consultar cada 45 segundos, al regresar a la pestaña o al tocar **Actualizar menú**.
+
+Los horarios se evalúan con el reloj del servidor y la zona horaria guardada del negocio. Sin franjas, el menú se muestra todo el día. El intervalo incluye la apertura y excluye el cierre; si el cierre es anterior al inicio, corresponde al día siguiente. Fuera del horario se muestra el horario del local y se oculta la colección de productos.
+
+Despublicar hace que las siguientes consultas devuelvan **Este menú no está disponible**. Un enlace despublicado y un ID inexistente responden igual. No se puede retirar información que una persona ya haya visto o copiado mientras era pública.
+
+La configuración requiere un dueño con acceso personal autorizado, permisos vigentes y control de versión. Las referencias de productos incluyen el negocio mediante claves compuestas. Los reintentos conservan el UUID, el payload y el resultado aceptado; la autorización se comprueba otra vez antes de devolverlo. El navegador conserva únicamente el payload de configuración pendiente por negocio y actor, sin credenciales. Una respuesta perdida se recupera con **Reintentar solicitud original**.
+
+`public-menu` es una Edge Function de lectura con `verify_jwt=false`, límite de entrada 8 KiB, claves exactas y CORS explícito. Sólo acepta un UUID público conocido. Usa una RPC exclusiva para `service_role`, con `search_path` vacío; las tablas privadas tienen RLS y no se conceden al navegador. La respuesta se construye campo por campo: excluye bancos, costos, conteos de stock, empleados, credenciales, nombres de cocina, SKU, códigos de barras, permisos y atributos internos. Las fotografías sólo usan datos JPEG ya guardados en el negocio.
+
+La relación compuesta entre menú y producto conserva la frontera del negocio y elimina el enlace cuando se elimina su producto. La migración 21 corrige la cascada durante una eliminación completa del tenant o la limpieza de fixtures, independientemente del orden de las relaciones. Esto no añade un recorrido de eliminación de negocios al POS ni modifica comprobantes financieros.
+
+El backend y `public-menu` deben desplegarse antes de publicar el frontend que usa el recorrido. Los menús y sus publicaciones en desarrollo pertenecen exclusivamente al stack local de esa tarea.
+
+Evidencia del 7 de octubre de 2026: la revisión independiente de código y UI realizada por la tarea `/root/business_setup_devices`, antes de la evaluación final de MiroFish, reprodujo un filtro obsoleto. Si la categoría seleccionada desaparecía al actualizar, el DTO conservaba productos de otra categoría pero la página quedaba vacía. La regresión de `tests/components/public-menus.test.tsx` usa el DTO público actual y una actualización por regreso a la pestaña; la corrección restablece **Todo** sólo cuando la categoría ya no existe, dentro del mismo control que rechaza respuestas de otra ruta.
+
+La revisión independiente de `/root/catalog_contract_audit`, reproducida por `/root/business_setup_devices`, también identificó una respuesta tardía que podía borrar la recuperación de una sesión posterior del mismo actor. El guardado, la clasificación de un rechazo y el borrado ahora comprueban la sesión vigente y el UUID/payload realmente conservado antes de tocar almacenamiento. Las regresiones aceptan o rechazan la solicitud antigua después de recuperar su resultado y crear otra; conservan la nueva solicitud y reintentan exactamente su UUID. Un error de acceso no acredita que una solicitud previa de resultado desconocido no se aceptó.
