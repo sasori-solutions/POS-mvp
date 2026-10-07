@@ -4,7 +4,7 @@ import type { AccountError, AccountErrorCode, AccountRequest } from '../../../sr
 import { isUuid, parseAccountRequest, RequestValidationError } from './validation.ts'
 import { mailConfiguration, sendPinRecovery } from './email.ts'
 import { claimsFromVerifiedJwt, verifiedGoogleAuthentication } from './authentication.ts'
-import { processPointResult } from '../point/service.ts'
+import { authorizedPointRpcClient, PointServiceError, processPointResult } from '../point/service.ts'
 import { backgroundPointWork } from '../point/background.ts'
 
 const maxBodyBytes = 8192
@@ -288,21 +288,31 @@ Deno.serve(async (request: Request) => {
       return new Response(JSON.stringify({ data: { sent: true, retryAfterSeconds: 60 } }), { status: 200, headers })
     }
     if (action.action === 'point' || action.action === 'device_point') {
-      let result = await processPointResult(admin, action, data.data,
+      const pointAdmin = authorizedPointRpcClient(admin, verifiedDevice.keyHash)
+      let result = await processPointResult(pointAdmin, action, data.data,
         identityArgs.p_user_id ? { userId: identityArgs.p_user_id, authSessionId: identityArgs.p_auth_session_id } : undefined,
         undefined, scope => backgroundPointWork(admin, scope))
       if (['connect_sandbox','oauth_callback','verify_connection','link_terminal','test_terminal'].includes(action.command)) {
         const refreshed = action.action === 'point'
-          ? await admin.rpc('point_execute', { ...identityArgs, p_business_id: action.businessId, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
-          : await admin.rpc('point_device', { p_device_token: action.deviceToken, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
-        if (refreshed.error || !refreshed.data?.data) return errorResponse('SERVER_ERROR', headers)
-        result = await processPointResult(admin, { ...action, command: 'settings' }, refreshed.data.data)
+          ? await pointAdmin.rpc('point_execute', { ...identityArgs, p_business_id: action.businessId, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
+          : await pointAdmin.rpc('point_device', { p_device_token: action.deviceToken, p_operator_token: action.operatorToken, p_payload: { command: 'settings' } })
+        if (refreshed.error) {
+          const message = typeof refreshed.error === 'object' ? (refreshed.error as { message?: unknown }).message : undefined
+          return errorResponse(typeof message === 'string' && Object.hasOwn(errorDefinitions, message) ? message as AccountErrorCode : 'SERVER_ERROR', headers)
+        }
+        const refreshedEnvelope = refreshed.data as { data?: unknown; error?: { code?: unknown } } | null
+        if (refreshedEnvelope?.error) {
+          const code = refreshedEnvelope.error.code
+          return errorResponse(typeof code === 'string' && Object.hasOwn(errorDefinitions, code) ? code as AccountErrorCode : 'SERVER_ERROR', headers)
+        }
+        if (!refreshedEnvelope || !Object.hasOwn(refreshedEnvelope, 'data')) return errorResponse('SERVER_ERROR', headers)
+        result = await processPointResult(pointAdmin, { ...action, command: 'settings' }, refreshedEnvelope.data)
       }
       return new Response(JSON.stringify({ data: result }), { status: 200, headers })
     }
     return new Response(JSON.stringify(data), { status: 200, headers })
   } catch (error) {
-    if (error instanceof Error && Object.hasOwn(errorDefinitions, error.message) && error.message.startsWith('POINT_')) return errorResponse(error.message as AccountErrorCode, headers)
+    if (error instanceof Error && Object.hasOwn(errorDefinitions, error.message) && (error.message.startsWith('POINT_') || error instanceof PointServiceError)) return errorResponse(error.message as AccountErrorCode, headers)
     if (error instanceof DeviceProofError) return errorResponse('DEVICE_PROOF_INVALID', headers)
     if (error instanceof RequestValidationError) return errorResponse('VALIDATION_ERROR', headers)
     if (error instanceof BodyTooLargeError) return errorResponse('PAYLOAD_TOO_LARGE', headers)

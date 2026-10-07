@@ -43,6 +43,13 @@ test('new business external-card selection stays separate from Point and saves w
   await expect(card).not.toBeChecked();
   expect(calls.filter(call => call.action === 'create_business')).toHaveLength(0);
 
+  const tax = page.getByLabel('¿Qué IVA usas en tus precios?', { exact: true });
+  await expect(tax).toHaveValue('');
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Tu forma de trabajar', exact: true })).toBeVisible();
+  await expect(page.getByTestId('pin-input')).not.toBeVisible();
+  expect(calls.filter(call => call.action === 'create_business')).toHaveLength(0);
+  await tax.selectOption('vat_16');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await fillAccountPin(page);
   await page.getByRole('button', { name: 'Crear negocio', exact: true }).click();
@@ -50,6 +57,7 @@ test('new business external-card selection stays separate from Point and saves w
   const creations = calls.filter(call => call.action === 'create_business');
   expect(creations).toHaveLength(1);
   expect(creations[0].profile.paymentMethods).toEqual(['cash', 'card_external']);
+  expect(creations[0].profile.defaultVatTreatment).toBe('vat_16');
   expect(creations[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
   const pointCommands = calls.filter(call => call.action === 'point' || call.action === 'device_point').map(call => call.command);
   expect(pointCommands.filter(command => command !== 'settings')).toEqual([]);
@@ -62,6 +70,7 @@ test('creation saves branch, register and progressive profile for later editing'
   await page.getByRole('button', { name: 'Crear mi negocio', exact: true }).click();
   await page.getByLabel('Nombre del negocio').fill('Café del centro');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await page.getByLabel('¿Qué IVA usas en tus precios?', { exact: true }).selectOption('vat_16');
   await page.getByText('Sucursal y contacto', { exact: true }).click();
   await page.getByLabel('Sucursal', { exact: true }).fill('Centro');
   await page.getByLabel('Caja', { exact: true }).fill('Mostrador');
@@ -77,6 +86,7 @@ test('creation saves branch, register and progressive profile for later editing'
   expect(create).toMatchObject({ profile: {
     branchName: 'Centro', registerName: 'Mostrador', city: 'Guadalajara', state: 'Jalisco',
     paymentMethods: ['cash', 'card_integrated', 'transfer'],
+    defaultVatTreatment: 'vat_16',
   } });
   await openOwnerTask(page, 'Datos del negocio');
   await page.getByText('Sucursal y contacto', { exact: true }).click();
@@ -104,6 +114,7 @@ test('invalid branch, payment methods and phone stay on business details before 
   await page.getByRole('button', { name: 'Crear mi negocio', exact: true }).click();
   await page.getByLabel('Nombre del negocio', { exact: true }).fill('Café de validación');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
+  await page.getByLabel('¿Qué IVA usas en tus precios?', { exact: true }).selectOption('vat_16');
   await page.getByText('Sucursal y contacto', { exact: true }).click();
   await page.getByLabel('Sucursal', { exact: true }).fill('   ');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
@@ -276,11 +287,11 @@ test('employee management gives each person one action and separates devices', a
   await expect(people.getByRole('button')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Agregar empleado', exact: true })).toHaveCount(1);
   await expect(page.getByRole('heading', { name: 'Invitaciones', exact: true })).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Vincular dispositivo', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Vincular caja compartida', exact: true })).not.toBeVisible();
   await capture(page, testInfo.project.name, 'focused-employees');
   await openOwnerTask(page, 'Dispositivos de caja');
   await expect(people).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Vincular dispositivo', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Vincular caja compartida', exact: true })).toBeVisible();
 });
 
 test('employee forms focus on one person and keep their PIN private', async ({ page }, testInfo) => {
@@ -650,7 +661,7 @@ test('the owner creates employee access and invitations with explicit permission
   expect(calls.filter((call) => call.action === 'create_invitation')).toHaveLength(0);
   await page.getByRole('button', { name: 'Volver a empleados', exact: true }).click();
   await openOwnerTask(page, 'Dispositivos de caja');
-  await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click();
+  await page.getByRole('button', { name: 'Vincular caja compartida', exact: true }).click();
   await expect(page.getByLabel('Código para vincular dispositivo', { exact: true })).toHaveValue(fixturePairingCode);
   await assertNoOperatorSecrets(page);
 });

@@ -1,0 +1,25 @@
+# Point y navegador autorizado — 7 de octubre de 2026
+
+Codex, corrección de la rama `feat/restaurante-piloto`, posterior al CI del PR 33. La nueva vinculación del navegador del dueño en `20261007110000_device_visibility.sql` hizo visible un fallo del recorrido Point: la solicitud inicial firmada establece `app.employee_device_key` dentro de `account_secure`, pero las RPC de refresco y finalización de OAuth posteriores usan otras transacciones. Sin conservar el hash verificado, el mismo operador recibía `SESSION_INVALID`; Edge lo presentaba como `SERVER_ERROR`. El primer callback OAuth rechazado abortaba la preparación de la integración y los casos posteriores encontraban Tarjeta desactivada.
+
+La reproducción con Auth, Edge y PostgreSQL loopback reales creó un negocio sintético propio: `settings` por HTTP firmado respondió 200, la RPC directa de refresco falló con `SESSION_INVALID` y una finalización OAuth sintética después de consumir el estado falló igual. El negocio y la identidad Auth propios se eliminaron; no se utilizó un proveedor ni se tocaron datos de desarrollo existentes.
+
+## Corrección y fronteras
+
+La migración nueva `20261007240000_point_verified_browser_context.sql` conserva las firmas públicas de `point_execute` y `point_service`. Sólo service role puede ejecutarlas. Sus implementaciones anteriores pasan a `app_private`, sin ejecución directa concedida al navegador ni a service role. Los wrappers aceptan el campo interno `serverDeviceKeyHash`, verifican sus 64 caracteres hexadecimales, lo eliminan antes de validar el comando o calcular su huella y restauran el contexto previo tanto al terminar como al fallar.
+
+Account Edge lo obtiene exclusivamente de la prueba del navegador ya verificada para esa solicitud. El cliente RPC Point conserva ese hash durante el I/O; no busca la nueva clave de una sesión para hacerla coincidir ni vuelve a consumir el nonce. El contrato HTTP sigue rechazando el campo interno. La sesión Auth, operador, membresía, propietario y estado OAuth se comprueban nuevamente en servidor. Otra clave, una clave ausente en una sesión vinculada, una sesión bloqueada o revocada y la sustitución del navegador siguen siendo rechazadas. Edge conserva los códigos de autorización estables en esos rechazos.
+
+Los dispositivos de caja mantienen su credencial restringida. Worker y conciliación conservan sus leases, evidencia del proveedor y snapshot de cobro ya aceptado; no reciben una clave de navegador tomada de una sesión nueva. La corrección no cambia importes, ventas, devoluciones, estados de pago, activación de terminal ni configuración de proveedor.
+
+## Verificación
+
+Pruebas focalizadas: **35/35** entre las nuevas `tests/unit/point-device-context.test.ts` y `tests/sql/point-device-context.test.ts`, y las suites OAuth anteriores. Cubren transporte del hash verificado, rechazo del campo en HTTP, restauración del contexto, finalización una sola vez, revocación/reemplazo después del I/O, replay con la huella original bajo autorización actual, firmas y grants. La regresión compatible de reservas/ledger Point, sandbox y conciliación rápida añadió **65/65** casos distintos aprobados. TypeScript, lint, revisión de diff y Deno check del código Account y su bundle standalone pasaron.
+
+La integración `tests/integration/point.integration.test.ts` pasó **17/17 sin omisiones** en 12,44 segundos el 7 de octubre, con Auth, Edge y PostgreSQL reales y proveedor HTTP loopback. Se ejecutó con `scripts/test-point-local-integration.mjs` sobre el mismo stack persistente `pos-dev-fe2a8635e6` (API 40601 y proveedor 40617), después de aplicar la migración 24. Incluye OAuth rechazado/consumido/conectado, renovación concurrente, reservas, importes, cobros parciales, doble envío/competencia, conciliación, respuestas perdidas, devoluciones y webhooks. El runner usa receptor y terminal sintéticos propios y conserva el proveedor de desarrollo sin reset. Las identidades Auth y los negocios propios se eliminaron; los contadores de esos fixtures en PostgreSQL quedaron en cero. Esto no acredita proveedor oficial, OAuth humano, terminal físico ni publicación cloud.
+
+## Publicación del backend
+
+La vinculación de la migración 11 y el transporte de la 24 deben tratarse como un conjunto con Account Edge compatible. El Edge anterior no conserva ese contexto entre RPC; aplicar la vinculación antes de actualizar Edge puede interrumpir Point temporalmente. El Edge nuevo tampoco debe enviarlo a las RPC antiguas, que rechazan claves adicionales.
+
+La publicación requiere una ventana coordinada de mantenimiento de Point: terminar o identificar los cobros pendientes, aplicar el bloque de migraciones en su orden registrado, desplegar Account Edge compatible, comprobar grants/contexto y los recorridos de configuración/OAuth, y después restablecer el acceso. La conciliación durable de cobros anteriores se conserva; no se resuelven pagos desconocidos por el mantenimiento. El frontend se integra después de verificar el backend, conforme a `DEPLOYMENT.md`. Este documento no afirma publicación cloud ni compatibilidad sin interrupción durante ese bloque.

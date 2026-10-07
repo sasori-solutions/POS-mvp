@@ -37,7 +37,7 @@ Base: `origin/main` `ded0f20dea1b36ceb3bfd1b661abb1359061612f`. Rama `feat/resta
 
 ## Evidencia de desarrollo
 
-Se conservaron los datos del stack local propio `pos-dev-fe2a8635e6`; no se reseteó la base ni se tocaron otros stacks. Las migraciones nuevas `20261007100000` a `20261007220000` se aplicaron en orden y están congeladas. Correcciones posteriores usan otra migración.
+Se conservaron los datos del stack local propio `pos-dev-fe2a8635e6`; no se reseteó la base ni se tocaron otros stacks. Las 15 migraciones nuevas `20261007100000` a `20261007240000` se aplicaron en orden y están congeladas. Correcciones posteriores usan otra migración.
 
 Integraciones ejecutadas contra Auth, firmas de dispositivo, Edge y Postgres reales en loopback, con fixtures sintéticos y limpieza comprobada:
 
@@ -45,8 +45,11 @@ Integraciones ejecutadas contra Auth, firmas de dispositivo, Edge y Postgres rea
 - Restaurante: 4 casos, tiempos, visitas, ocupación, sobremesa, pago parcial y compatibilidad de perfiles anteriores.
 - Catálogo: 4 casos, biblioteca, negativos/repeticiones/agotados, anidados/combos y promociones con actor/tenant/reintentos.
 - Menú público: 1 recorrido completo, privacidad, publicación, restricciones del dueño personal, consulta anónima, actualización y despublicación.
+- Compatibilidad de servicio: 24 casos de operaciones anteriores y los 4 de restaurante pasaron nuevamente después de la migración 23. Mover o cerrar una cuenta anterior mantiene las mesas de su visita; cobrar una cuenta no libera la visita prematuramente.
+- Equipo: 9 casos reales adicionales pasaron, incluyendo la proyección actual del perfil con cuenta de transferencia opcional.
+- Point: 17/17 con el proveedor HTTP local persistente, worker manual, conexión OAuth, cobros, devoluciones, conciliación y reintentos. La limpieza de los negocios y usuarios sintéticos se verificó; no se reinició el proveedor ni se alteraron cuentas de desarrollo existentes. No acredita una terminal física ni OAuth humano de Mercado Pago.
 
-Comprobación final: `test:smoke` 528/528, componentes 554/554 en 60 archivos, SQL seleccionado 77/77 en 11 archivos, compatibilidad de cuentas anteriores 4/4 adicionales y regresiones de pagos Point 44/44. Las 12 integraciones anteriores pasaron sin omisiones. `npm run build`, incluido TypeScript y la comprobación de ausencia de acceso/credenciales de desarrollo en los artefactos, `npm run lint`, `git diff --check` y `deno check` del standalone account y public-menu pasaron. Estas pruebas no sustituyen hardware ni OAuth reales; no se ejecutó toda la batería manual del repositorio.
+Comprobación local final: `test:smoke` 531/531, componentes 554/554 en 60 archivos y toda la suite SQL 334/334 en 31 archivos. Las integraciones anteriores cubren 62 casos distintos con servicios reales y fixtures sintéticos, sin omisiones. En las nueve suites E2E seleccionadas pasaron 216 de 222 casos inicialmente; se corrigió la proyección del modo del negocio en el fixture de empleado y los seis casos fallidos pasaron al repetirse. No se presenta ese resultado como una ejecución única de 222 casos sin fallos. `npm run build`, incluido TypeScript y la comprobación de ausencia de acceso/credenciales de desarrollo en los artefactos, `npm run lint`, `git diff --check` y `deno check` del standalone account y public-menu pasaron. Estas pruebas no sustituyen hardware ni OAuth reales. El resultado del CI requerido completo se registra en el PR.
 
 En navegador se observó el flujo de servicio completo con venta de $35, sobremesa de $28, cuentas originales conservadas y mesa liberada; luego el modo directo con venta de $36, recibido de $50, cambio de $14 y comanda automática. Se creó un plano y se publicó el menú sintético; cambiar un precio conservó el enlace. El proveedor de navegador recibió tamaños solicitados de teléfono, pero se midieron 487 píxeles CSS en la vista estrecha: no se afirma prueba en un teléfono físico ni 390 píxeles CSS exactos.
 
@@ -57,6 +60,8 @@ En navegador se observó el flujo de servicio completo con venta de $35, sobreme
 | Revisión de interfaz | Desaparecer la categoría seleccionada dejaba el QR vacío. | Vuelve a Todo cuando la selección deja de existir. |
 | Navegador | Primera mesa sin posición causaba una pantalla blanca. | Las mesas sin plano siguen disponibles como tarjetas; regresión del primer guardado. |
 | Navegador + backend | Perfiles antiguos sin flag explícito permitían cuentas en UI y rechazaban sobremesa en SQL. | Migración 22 conserva el contrato existente: desactivado sólo cuando el flag es false. Actor, sesión, permisos y replay se mantienen. |
+| CI + integración real | Mover/cerrar cuentas mediante comandos anteriores no actualizaba la ocupación de su visita y podía producir VISIT_CHANGED o TABLE_OCCUPIED. | Migración 23 conserva la autorización y el resultado de reintentos; actualiza las mesas atómicamente y evita liberar visitas con varias cuentas o consumos retenidos. |
+| CI + reproducción real | Point perdía la prueba del navegador en las RPC posteriores al I/O y convertía SESSION_INVALID en SERVER_ERROR. | Migración 24 y Edge conservan sólo el hash ya verificado, mantienen las comprobaciones vivas y restauran el contexto entre llamadas. [Detalle](point-browser-context.md). |
 | Revisión de promociones | Recuperación incompleta podía fallar; más de 24 categorías y criterios heredados invisibles. | Validación de recuperación sin canonicalizar la solicitud, límites y criterios removibles visibles. Biblioteca actualizable. |
 | Revisión de concurrencia | Respuesta antigua podía borrar/sobrescribir la recuperación nueva de menú o CSV del mismo actor. | Guard de sesión vigente y comparación exacta de ledger/UUID/payload antes de persistir o borrar. |
 | Navegador | Cuenta pagada con saldo cero se etiquetaba Pago parcial y liberación esperaba polling. | Etiqueta pagada y actualización inmediata tras acciones de servicio. |
@@ -65,6 +70,8 @@ En navegador se observó el flujo de servicio completo con venta de $35, sobreme
 
 ## Backend y publicación
 
-Esta rama añade contratos y backend; antes de fusionar se deben aplicar y verificar las 13 migraciones nuevas en el proyecto correcto, publicar `account` con sus validadores compatibles y publicar la función `public-menu` con su configuración de acceso anónimo restringido. Las funciones privadas conservan RLS/grants mínimos y la autorización del endpoint account. Seguir [DEPLOYMENT.md](../DEPLOYMENT.md); CI no aplica migraciones ni publica Edge Functions.
+Esta rama añade contratos y backend. Antes de fusionar, verificar el proyecto y su historial, aplicar las 15 migraciones nuevas en orden y publicar `account`, `public-menu` y los endpoints que empaquetan los módulos Point compatibles. Las funciones privadas conservan RLS/grants mínimos y la autorización del endpoint account. Seguir [DEPLOYMENT.md](../DEPLOYMENT.md); CI no aplica migraciones ni publica Edge Functions.
+
+La migración 11 vincula sesiones personales al navegador y la 24 transporta esa prueba entre RPC de Point. El Edge anterior no conserva el contexto; el Edge nuevo no debe enviar el campo interno a las RPC antiguas. Este bloque exige una ventana coordinada para Point: pausar operaciones nuevas, identificar y conservar cobros pendientes o inciertos, aplicar el bloque en el orden del historial y publicar las funciones compatibles. Comprobar después grants, contexto del navegador, OAuth/configuración y conciliación durable antes de restablecer Point; fusionar el frontend sólo cuando el backend esté verificado. No se resuelven cobros desconocidos por el mantenimiento ni se promete continuidad durante ese bloque. [Fronteras y plan](point-browser-context.md).
 
 El PR permite revisar una entrega concreta. Un build local o un PR abierto no acreditan publicación. No se hizo merge ni se modificó el backend alojado para esta entrega.

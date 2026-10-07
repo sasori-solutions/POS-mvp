@@ -25,7 +25,7 @@ export function buildAccountSource() {
     if (path.endsWith('/point-validation.ts')) body = `namespace PointValidation {\n${body}\n}\nconst parsePointCommand = PointValidation.parsePointCommand;\n`
     return `// Source: ${path}; SHA-256 ${hash(text)}\n${body.trimEnd()}\n`
   })
-  return { source, edge: npmImport + '\n\n' + buildPointModules() + '\nconst processPointResult = PointService.processPointResult;\nconst backgroundPointWork = PointBackground.backgroundPointWork;\n' + bodies.join('\n') }
+  return { source, edge: npmImport + '\n\n' + buildPointModules() + '\nconst authorizedPointRpcClient = PointService.authorizedPointRpcClient;\nconst PointServiceError = PointService.PointServiceError;\nconst processPointResult = PointService.processPointResult;\nconst backgroundPointWork = PointBackground.backgroundPointWork;\n' + bodies.join('\n') }
 }
 
 function hash(value) { return createHash('sha256').update(value).digest('hex') }
