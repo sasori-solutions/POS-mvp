@@ -33,6 +33,12 @@ async function chargeCash(page: Page, total: string) {
   await expect(checkout.getByRole('button', { name: 'Registrar pago', exact: true })).toBeEnabled()
   await checkout.getByRole('button', { name: 'Registrar pago', exact: true }).click()
   await expect(checkout).not.toBeVisible()
+  const receipt = page.getByRole('dialog', { name: 'Pago registrado', exact: true })
+  await expect(receipt).toBeVisible()
+  await expect(receipt.locator('.sale-detail')).toContainText(total)
+  await expect(receipt.getByRole('button', { name: 'Imprimir / guardar PDF', exact: true })).toBeVisible()
+  await receipt.getByRole('button', { name: 'Listo', exact: true }).click()
+  await expect(receipt).not.toBeVisible()
 }
 async function showReceipt(page: Page) {
   await page.getByRole('button', { name: 'Historial', exact: true }).filter({ visible: true }).first().click()
