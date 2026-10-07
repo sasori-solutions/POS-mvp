@@ -48,8 +48,12 @@ async function printReceipt(page: Page) {
 }
 
 async function history(page: Page) {
-  const receiptDialog = page.getByRole('dialog').filter({ has: page.getByRole('button', { name: printLabel, exact: true }) })
-  if (await receiptDialog.isVisible()) await receiptDialog.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  const receiptDialog = page.getByRole('dialog', { name: 'Pago registrado', exact: true })
+  if (await receiptDialog.isVisible()) {
+    await expect(receiptDialog.getByRole('button', { name: printLabel, exact: true })).toBeVisible()
+    await receiptDialog.getByRole('button', { name: 'Listo', exact: true }).click()
+    await expect(receiptDialog).not.toBeVisible()
+  }
   const direct = page.getByRole('button', { name: 'Historial', exact: true }).filter({ visible: true }).first()
   if (await direct.isVisible()) await direct.click()
   else await openOwnerTask(page, 'Ventas')
@@ -170,8 +174,13 @@ test('a lost external-card registration recovers once and prints its accepted me
     const calls = backend.calls.filter(command => command.command === 'record_checkout')
     const mutation = (command: PosCommand) => Object.fromEntries(Object.entries(command).filter(([key]) => !['operatorToken', 'deviceToken', 'deviceProof'].includes(key)))
     expect(mutation(calls[1])).toEqual(mutation(calls[0]))
+    const immediate = await printReceipt(page)
+    await expect(immediate.document.locator('dl')).toContainText('Método de pagoTarjeta externa')
+    await expect(immediate.document.locator('.total dd')).toHaveText('$58.00')
+    await expect(immediate.document.locator('body')).not.toContainText('Mercado Pago Point')
     await history(page)
     const printed = await printReceipt(page)
+    expect(printed.html).toBe(immediate.html)
     await expect(printed.document.locator('dl')).toContainText('Método de pagoTarjeta externa')
     await expect(printed.document.locator('.total dd')).toHaveText('$58.00')
     await expect(printed.document.locator('body')).not.toContainText('Mercado Pago Point')
