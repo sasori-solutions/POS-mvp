@@ -7,6 +7,8 @@ import type { Product, ProductDetails, Sale } from '../../src/lib/pos-contracts'
 import type { KitchenBatch, OperationalOrder } from '../../src/lib/operations-contracts'
 
 type Backend = Awaited<ReturnType<typeof mockPos>>
+// Preview fixtures default to counter checkout; these scenarios explicitly own a service business.
+const serviceFixture = { empty: true, accountsEnabled: true } satisfies NonNullable<Parameters<typeof mockPos>[1]>
 
 async function seeded(backend: Backend, name: string, overrides: Partial<ProductDetails> = {}, priceCents = 5801) {
   return backend.execute<Product>({ command: 'save_product', operationId: crypto.randomUUID(), productId: crypto.randomUUID(),
@@ -23,26 +25,27 @@ async function accounts(page: Page) {
 }
 async function openAccount(page: Page, name: string) {
   await page.getByRole('button', { name: 'Abrir cuenta', exact: true }).click()
-  await page.getByLabel('Nombre de la cuenta', { exact: true }).fill(name)
-  return page.getByRole('dialog', { name: 'Abrir cuenta', exact: true })
+  const editor = page.getByRole('dialog', { name: 'Abrir cuenta', exact: true })
+  await editor.getByLabel('Nombre de la cuenta', { exact: true }).fill(name)
+  return editor
 }
-async function add(page: Page, name: string) { await page.getByRole('button', { name: new RegExp(`^Agregar ${name},`) }).click() }
+async function add(page: Page, name: string) { await page.getByRole('dialog', { name: /^(Abrir|Editar) cuenta$/ }).getByRole('button', { name: new RegExp(`^Agregar ${name},`) }).click() }
 async function save(page: Page, backend: Backend, name: string) {
-  await page.getByRole('button', { name: 'Guardar cuenta', exact: true }).click()
+  await page.getByRole('dialog', { name: /^(Abrir|Editar) cuenta$/ }).getByRole('button', { name: 'Guardar cuenta', exact: true }).click()
   await expect(page.getByRole('dialog', { name, exact: true })).toBeVisible()
   const orders = await backend.execute<{ orders: OperationalOrder[] }>({ command: 'orders' })
   return orders.orders.find(order => order.name === name)!
 }
 
 test('account editing exposes food details and preserves customer, kitchen and money snapshots through payment', async ({ page }, info) => {
-  const backend = await mockPos(page, { empty: true })
+  const backend = await mockPos(page, serviceFixture)
   try {
     const product = await seeded(backend, 'Bowl administrativo', { customerName: 'Bowl de temporada', kitchenName: 'BOWL ORIGINAL',
       description: 'Ensalada de prueba', calories: 410, dietary: 'Vegetariano', allergens: 'Leche, nueces',
       customAttributes: [{ name: 'Origen', value: 'Oaxaca' }] }, 3401)
     await accounts(page)
     const editor = await openAccount(page, 'Cuenta informada')
-    await page.getByRole('button', { name: 'Detalles de Bowl administrativo', exact: true }).click()
+    await editor.getByRole('button', { name: 'Detalles de Bowl administrativo', exact: true }).click()
     const details = page.getByRole('dialog', { name: 'Bowl administrativo', exact: true })
     await expect(details).toContainText('410 kcal')
     await expect(details).toContainText('Vegetariano')
@@ -93,7 +96,7 @@ test('account editing exposes food details and preserves customer, kitchen and m
 })
 
 test('account catalog advertises available variant prices and open pricing and saves selected amounts exactly', async ({ page }) => {
-  const backend = await mockPos(page, { empty: true })
+  const backend = await mockPos(page, serviceFixture)
   try {
     const varied = await seeded(backend, 'Café con tamaños', { skipCustomization: true, variations: [
       { id: crypto.randomUUID(), name: 'Chico agotado', priceCents: 2000, sku: 'SMALL', barcode: '', soldOut: true },
@@ -106,21 +109,23 @@ test('account catalog advertises available variant prices and open pricing and s
     await expect(editor.getByRole('button', { name: 'Agregar Café con tamaños, Desde $62.03', exact: true })).toBeVisible()
     await expect(editor.getByRole('button', { name: 'Agregar Servicio por importe, Precio abierto', exact: true })).toBeVisible()
     await add(page, varied.name)
-    await expect(page.getByRole('radio', { name: /Chico agotado/ })).toBeDisabled()
-    await page.getByRole('radio', { name: /Grande/ }).check()
-    await page.getByRole('button', { name: 'Agregar · $70.04', exact: true }).click()
+    const variantSelection = page.getByRole('dialog', { name: varied.name, exact: true })
+    await expect(variantSelection.getByRole('radio', { name: /Chico agotado/ })).toBeDisabled()
+    await variantSelection.getByRole('radio', { name: /Grande/ }).check()
+    await variantSelection.getByRole('button', { name: 'Agregar · $70.04', exact: true }).click()
     await add(page, open.name)
-    await page.getByLabel('Precio de esta venta MXN', { exact: true }).fill('49.99')
-    await page.getByRole('button', { name: 'Agregar · $49.99', exact: true }).click()
+    const openSelection = page.getByRole('dialog', { name: open.name, exact: true })
+    await openSelection.getByLabel('Precio de esta venta MXN', { exact: true }).fill('49.99')
+    await openSelection.getByRole('button', { name: 'Agregar · $49.99', exact: true }).click()
     await expect(editor.locator('.order-editor-subtotal dd')).toHaveText('$120.03')
     const initial = await save(page, backend, 'Cuenta con opciones')
     expect(initial.totalCents).toBe(12003)
     expect(initial.items.map(item => item.unitPriceCents).sort((a, b) => a - b)).toEqual([4999, 7004])
     await page.getByRole('button', { name: 'Editar artículos', exact: true }).click()
-    await page.getByRole('searchbox', { name: 'Buscar producto', exact: true }).fill('MEDIUM')
+    await page.getByRole('dialog', { name: 'Editar cuenta', exact: true }).getByRole('searchbox', { name: 'Buscar producto', exact: true }).fill('MEDIUM')
     await add(page, varied.name)
-    await page.getByRole('radio', { name: /Mediano/ }).check()
-    await page.getByRole('button', { name: 'Agregar · $62.03', exact: true }).click()
+    await variantSelection.getByRole('radio', { name: /Mediano/ }).check()
+    await variantSelection.getByRole('button', { name: 'Agregar · $62.03', exact: true }).click()
     const updated = await save(page, backend, 'Cuenta con opciones')
     expect(updated.totalCents).toBe(18206)
     expect(updated.items.map(item => item.unitPriceCents).sort((a, b) => a - b)).toEqual([4999, 6203, 7004])
@@ -128,7 +133,7 @@ test('account catalog advertises available variant prices and open pricing and s
 })
 
 test('account quick add preserves optional customization while required extras and open prices cannot be skipped', async ({ page }) => {
-  const backend = await mockPos(page, { empty: true })
+  const backend = await mockPos(page, serviceFixture)
   try {
     await seeded(backend, 'Café rápido', { skipCustomization: true, modifierSets: [{ id: crypto.randomUUID(), name: 'Leche opcional', min: 0, max: 1,
       options: [{ id: crypto.randomUUID(), name: 'Avena opcional', priceCents: 11 }] }] })
@@ -140,18 +145,21 @@ test('account quick add preserves optional customization while required extras a
     await add(page, 'Café rápido')
     await expect(page.getByRole('dialog', { name: 'Café rápido', exact: true })).not.toBeVisible()
     await expect(editor.locator('.order-editor-lines > li')).toHaveCount(1)
-    await page.getByRole('button', { name: 'Detalles de Café rápido', exact: true }).click()
-    await page.getByRole('radio', { name: /Avena opcional/ }).check()
-    await page.getByRole('button', { name: 'Agregar · $58.12', exact: true }).click()
+    await editor.getByRole('button', { name: 'Detalles de Café rápido', exact: true }).click()
+    const optionalSelection = page.getByRole('dialog', { name: 'Café rápido', exact: true })
+    await optionalSelection.getByRole('radio', { name: /Avena opcional/ }).check()
+    await optionalSelection.getByRole('button', { name: 'Agregar · $58.12', exact: true }).click()
     await add(page, 'Café obligatorio')
-    await expect(page.getByRole('dialog', { name: 'Café obligatorio', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Agregar · $58.01', exact: true })).toBeDisabled()
-    await page.getByRole('radio', { name: /Avena requerida/ }).check()
-    await page.getByRole('button', { name: 'Agregar · $58.23', exact: true }).click()
+    const requiredSelection = page.getByRole('dialog', { name: 'Café obligatorio', exact: true })
+    await expect(requiredSelection).toBeVisible()
+    await expect(requiredSelection.getByRole('button', { name: 'Agregar · $58.01', exact: true })).toBeDisabled()
+    await requiredSelection.getByRole('radio', { name: /Avena requerida/ }).check()
+    await requiredSelection.getByRole('button', { name: 'Agregar · $58.23', exact: true }).click()
     await add(page, 'Precio capturado')
-    await expect(page.getByRole('dialog', { name: 'Precio capturado', exact: true })).toBeVisible()
-    await page.getByLabel('Precio de esta venta MXN', { exact: true }).fill('49.99')
-    await page.getByRole('button', { name: 'Agregar · $49.99', exact: true }).click()
+    const openSelection = page.getByRole('dialog', { name: 'Precio capturado', exact: true })
+    await expect(openSelection).toBeVisible()
+    await openSelection.getByLabel('Precio de esta venta MXN', { exact: true }).fill('49.99')
+    await openSelection.getByRole('button', { name: 'Agregar · $49.99', exact: true }).click()
     await expect(editor.locator('.order-editor-subtotal dd')).toHaveText('$224.35')
     const order = await save(page, backend, 'Cuenta rápida')
     expect(order.totalCents).toBe(22435)
@@ -160,7 +168,7 @@ test('account quick add preserves optional customization while required extras a
 })
 
 test('account subtotal guard uses saved prices and recovers without sending an invalid order', async ({ page }) => {
-  const backend = await mockPos(page, { empty: true })
+  const backend = await mockPos(page, serviceFixture)
   try {
     const product = await seeded(backend, 'Precio máximo', {}, 99_999_999)
     const original = await backend.execute<OperationalOrder>({ command: 'save_order', operationId: crypto.randomUUID(), orderId: crypto.randomUUID(), expectedRevision: null,
