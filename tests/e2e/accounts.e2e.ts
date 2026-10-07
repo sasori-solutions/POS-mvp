@@ -46,7 +46,7 @@ test('accounts mode sends editable service orders before payment and only sends 
     await account.getByRole('button', { name: 'Editar artículos', exact: true }).click()
     const editor = page.getByRole('dialog', { name: 'Editar cuenta', exact: true })
     await editor.getByRole('button', { name: 'Añadir Latte', exact: true }).click()
-    await editor.getByRole('region', { name: 'Añadir productos' }).getByRole('button', { name: /^Croissant/ }).click()
+    await editor.getByRole('region', { name: 'Añadir productos' }).getByRole('button', { name: /^Agregar Croissant,/ }).click()
     await editor.getByRole('button', { name: 'Guardar cuenta', exact: true }).click()
     await expect(account).toBeVisible()
     await expect(account.getByText('2 × Latte')).toBeVisible()

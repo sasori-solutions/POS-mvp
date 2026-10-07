@@ -131,7 +131,7 @@ test('editable service accounts can add and correct free amounts without changin
     await page.getByRole('button', { name: 'Abrir cuenta', exact: true }).click()
     const editor = page.getByRole('dialog', { name: 'Abrir cuenta', exact: true })
     await editor.getByLabel('Nombre de la cuenta').fill(name)
-    await editor.getByRole('region', { name: 'Añadir productos' }).getByRole('button', { name: /^Latte/ }).click()
+    await editor.getByRole('region', { name: 'Añadir productos' }).getByRole('button', { name: /^Agregar Latte,/ }).click()
     await editor.getByRole('button', { name: 'Añadir importe libre', exact: true }).click()
     await editor.getByLabel('Importe', { exact: true }).fill('10.01')
     await editor.getByRole('button', { name: 'Añadir concepto' }).click()
