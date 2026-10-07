@@ -44,6 +44,20 @@ test('going back preserves the operation draft and selecting another type applie
   expect((screen.getByRole('radio', { name: /^Cobro directo/ }) as HTMLInputElement).checked).toBe(true);
 });
 
+test('creation preserves external cards and Point as independent payment methods', () => {
+  const submit = vi.fn();
+  render(<Setup submit={submit} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+  expect((screen.getByRole('checkbox', { name: 'Mercado Pago Point' }) as HTMLInputElement).checked).toBe(true);
+  for (const label of ['Tarjeta externa', 'Transferencia']) {
+    fireEvent.click(screen.getByRole('checkbox', { name: label }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+  expect(submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    profile: expect.objectContaining({ paymentMethods: ['cash', 'card_integrated', 'card_external', 'transfer'] }),
+  }));
+});
+
 test('new product uses the selected business IVA without changing existing product treatment', () => {
   const props = { access: { businessId: 'business', operatorToken: 'a'.repeat(64) }, products: [], onClose: vi.fn(), onSaved: vi.fn(), onRefresh: vi.fn() };
   const view = render(<ProductEditor {...props} product={null} defaultVatTreatment="exempt" />);

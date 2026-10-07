@@ -20,6 +20,7 @@ export const fixtureBusiness = {
     state: '',
     contactPhone: '',
     paymentMethods: ['cash', 'card_external'],
+    accountsEnabled: true,
   },
 };
 

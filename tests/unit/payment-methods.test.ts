@@ -2,18 +2,19 @@ import { expect, test } from 'vitest'
 import { collectionPaymentMethod, collectionPaymentMethods, isManualCollectionMethod, pointCardReady } from '../../src/lib/payment-methods'
 import { pointSettings } from '../fixtures/point'
 
-test('collection display canonicalizes legacy cards once while preserving the persisted input', () => {
+test('collection display preserves external and integrated identities independently without mutating persisted input', () => {
   const stored = ['cash', 'card_external', 'transfer', 'card_integrated'] as const
-  expect(collectionPaymentMethods(stored)).toEqual(['cash', 'card_integrated', 'transfer'])
+  expect(collectionPaymentMethods(stored)).toEqual(['cash', 'card_external', 'transfer', 'card_integrated'])
   expect(stored).toEqual(['cash', 'card_external', 'transfer', 'card_integrated'])
-  expect(collectionPaymentMethod('card_external')).toBe('card_integrated')
+  expect(collectionPaymentMethod('card_external')).toBe('card_external')
+  expect(collectionPaymentMethods(['card_external', 'cash', 'card_external'])).toEqual(['card_external', 'cash'])
 })
 
-test.each(['card_external', 'card_integrated'] as const)('%s cannot be newly collected manually', method => {
+test.each(['card_integrated'] as const)('%s cannot be newly collected manually', method => {
   expect(isManualCollectionMethod(method)).toBe(false)
 })
 
-test.each(['cash', 'transfer'] as const)('%s is an explicitly recorded collection', method => {
+test.each(['cash', 'transfer', 'card_external'] as const)('%s is an explicitly recorded collection', method => {
   expect(isManualCollectionMethod(method)).toBe(true)
 })
 

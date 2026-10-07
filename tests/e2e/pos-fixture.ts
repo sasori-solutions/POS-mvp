@@ -21,7 +21,7 @@ export const seedProducts = [
 ]
 
 /** Actual migrations/RPCs with synthetic Auth rows. Browser OAuth stays network-intercepted. */
-export async function createPosDatabase() {
+export async function createPosDatabase(options: { accountsEnabled?: boolean } = {}) {
   const db = new PGlite({ extensions: { pgcrypto } })
   await db.exec(`create schema auth; create schema extensions; create role anon; create role authenticated; create role service_role;
     create table auth.users(id uuid primary key); create table auth.sessions(id uuid primary key,user_id uuid references auth.users(id),created_at timestamptz default now(),not_after timestamptz);`)
@@ -31,7 +31,7 @@ export async function createPosDatabase() {
   const employeeId = 'b1d6d131-729c-4eab-90f3-328044b164ce'
   await db.query('insert into auth.users(id) values($1)', [session.user.id])
   await db.query('insert into auth.sessions(id,user_id) values($1,$2)', [claims.session_id, session.user.id])
-  await db.query(`insert into app_private.businesses(id,name,business_type,timezone,profile) values($1,$2,'cafe','America/Mexico_City','{"paymentMethods":["cash","card_external","transfer"],"branchName":"Principal","registerName":"Caja 1"}')`, [fixtureBusiness.id, fixtureBusiness.name])
+  await db.query(`insert into app_private.businesses(id,name,business_type,timezone,profile) values($1,$2,'cafe','America/Mexico_City',$3::jsonb)`, [fixtureBusiness.id, fixtureBusiness.name, JSON.stringify({ paymentMethods: ['cash', 'card_external', 'transfer'], branchName: 'Principal', registerName: 'Caja 1', accountsEnabled: options.accountsEnabled ?? true })])
   await db.query(`insert into app_private.business_memberships(business_id,user_id) values($1,$2)`, [fixtureBusiness.id, session.user.id])
   await db.query(`insert into app_private.employees(id,business_id,user_id,name,role) values($1,$2,$3,'Dueño sintético','owner')`, [employeeId, fixtureBusiness.id, session.user.id])
   await db.query(`insert into app_private.operator_sessions(business_id,user_id,auth_session_id,token_hash) values($1,$2,$3,extensions.digest($4,'sha256'))`, [fixtureBusiness.id, session.user.id, claims.session_id, fixtureOperatorToken])
@@ -46,8 +46,8 @@ export async function createPosDatabase() {
   return { db, session, execute, seed }
 }
 
-export async function mockPos(page: Page, options: { empty?: boolean; legacy?: boolean; saleResponseLosses?: number; productResponseLosses?: number; deletionResponseLosses?: number; delayDeletionMs?: number; delaySaleMs?: number; catalogFailures?: number } = {}) {
-  const backend = await createPosDatabase()
+export async function mockPos(page: Page, options: { empty?: boolean; legacy?: boolean; accountsEnabled?: boolean; saleResponseLosses?: number; productResponseLosses?: number; deletionResponseLosses?: number; delayDeletionMs?: number; delaySaleMs?: number; catalogFailures?: number } = {}) {
+  const backend = await createPosDatabase({ accountsEnabled: options.accountsEnabled })
   if (!options.empty) await backend.seed()
   if (!options.legacy) {
     await backend.execute({ command: 'activate_operations', operationId: randomUUID() })
@@ -60,7 +60,7 @@ export async function mockPos(page: Page, options: { empty?: boolean; legacy?: b
   let catalogFailures = options.catalogFailures ?? 0
   async function attach(page: Page) {
     await page.route('**/*', route => ['localhost', '127.0.0.1', '[::1]'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort('blockedbyclient'))
-    await mockAccount(page, { existingBusiness: true, sessionOverrides: backend.session })
+    await mockAccount(page, { existingBusiness: true, sessionOverrides: backend.session, business: { ...fixtureBusiness, profile: { ...fixtureBusiness.profile, accountsEnabled: options.accountsEnabled ?? true } } })
     await page.route('http://127.0.0.1:54321/functions/v1/account', async route => {
       const body = route.request().postDataJSON()
       if (body?.action !== 'pos') return route.fallback()

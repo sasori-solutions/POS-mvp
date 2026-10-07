@@ -24,6 +24,7 @@ import ProductsScreen from "./ProductsScreen";
 import SaleScreen from "./SaleScreen";
 import CheckoutPanel from "./CheckoutPanel";
 import SalesScreen from "./SalesScreen";
+import SaleReceiptDialog from "./SaleReceiptDialog";
 import { accessErrorCodes, useCatalog } from "./useCatalog";
 import { posRequest } from "../lib/pos";
 import { PosDialog } from "./PosShared";
@@ -112,6 +113,7 @@ export default function HomeScreen({
   const checkoutDraft = useRef<{ scope: string; value: CheckoutDraft } | null>(null);
   const [backError, setBackError] = useState("");
   const operatorScope = `${business.id}:${operatorToken}:${deviceToken ?? ''}`;
+  const [receipt, setReceipt] = useState<{ scope: string; saleId: string; afterCheckout: boolean } | null>(null);
   const currentOperator = useRef<string | null>(operatorScope);
   currentOperator.current = operatorScope;
   useEffect(() => {
@@ -123,6 +125,7 @@ export default function HomeScreen({
   const active = allowed.includes(destination) ? destination : initialDestination(business);
   const isOwner = business.role === 'owner';
   const canReadReports = hasPermission(business, 'reports.read');
+  const canReadReceipts = hasPermission(business, 'sales.read_own') || hasPermission(business, 'sales.read_all');
   const canReadOwnMetrics = !isOwner && hasPermission(business, 'reports.read_own');
   const [operating, setOperating] = useState(!isOwner || active === 'Venta' || active === 'Comandas');
   const [saleVisited, setSaleVisited] = useState(active === 'Venta');
@@ -264,13 +267,16 @@ export default function HomeScreen({
     else if (saved.orderKind === 'service' && saved.id === counterOrderId.current) { counterOrderId.current = null; setSavedCounter(null); }
     setSelectedOrder(saved);
   }
-  function paymentRecorded(saved: OperationalOrder) {
+  function paymentRecorded(saved: OperationalOrder, saleId?: string) {
     if (currentOperator.current !== operatorScope) return;
     const settled = ['paid', 'closed', 'waived', 'cancelled'].includes(saved.status);
+    const closingCheckout = settled && checkoutRequested && selectedOrder?.id === saved.id;
+    if (settled && saleId && canReadReceipts) setReceipt({ scope: operatorScope, saleId, afterCheckout: closingCheckout });
     if (settled && checkoutDraft.current?.value.orderId === saved.id) checkoutDraft.current = null;
     if (saved.id === counterOrderId.current) setSavedCounter(saved);
-    setSelectedOrder(saved);
-    setPaymentComplete(selectedOrder?.id === saved.id && settled);
+    setSelectedOrder(settled && !closingCheckout ? null : saved);
+    setPaymentComplete(closingCheckout);
+    if (settled && !closingCheckout) setCheckoutRequested(false);
     backOrder.current = null;
     setBackError("");
   }
@@ -333,7 +339,10 @@ export default function HomeScreen({
           setSelectedOrder(saved);
         }
       }
-      if (['record_payment', 'record_checkout'].includes(command.command)) paymentRecorded((result as OperationsResponses['record_payment']).order);
+      if (['record_payment', 'record_checkout'].includes(command.command)) {
+        const accepted = result as OperationsResponses['record_payment'];
+        paymentRecorded(accepted.order, accepted.attempt.saleId ?? undefined);
+      }
       return operation.refresh();
     }).catch(() => {});
   }
@@ -499,6 +508,7 @@ export default function HomeScreen({
           <div hidden={active !== "Venta"}>
             <SaleScreen
               access={access}
+              businessName={business.name}
               employeeId={business.employee?.id ?? "owner"}
               catalog={catalog}
               onProducts={() => setActive("Productos")}
@@ -539,6 +549,7 @@ export default function HomeScreen({
         ) : active === "Ventas" ? (
           <SalesScreen
             key={`${business.employee?.id}:${JSON.stringify(business.permissions)}`}
+            businessName={business.name}
             access={access}
             ownOnly={!hasPermission(business, 'sales.read_all')}
             canReverse={hasPermission(business, 'sales.reverse')}
@@ -606,6 +617,7 @@ export default function HomeScreen({
           {mutation.error && <p role="alert">{mutation.error}</p>}
           {!mutation.busy && mutation.pending && <><p>Reintenta la solicitud guardada sin repetir el cobro.</p><button className="pos-button pos-secondary" onClick={retryOperation}>Reintentar solicitud guardada</button></>}
           {editingOrder ? <OrderEditor key={editingOrder.order?.id ?? 'new'} order={editingOrder.order} serviceAccount={!editingOrder.order || !isCounterOrder(editingOrder.order)} products={catalog.products} catalogLoading={!catalog.loaded && !catalog.error} catalogError={!catalog.loaded ? catalog.error : ''} onRetryCatalog={catalog.refresh} mutation={mutation} onSaved={saved => { setEditingOrder(null); setCheckoutRequested(false); orderSaved(saved); void operation.refresh(); }} onCancel={() => setEditingOrder(null)} /> : order && <OrderDetail key={order.id} checkoutView={checkoutView} serviceAccount={order.orderKind === 'service'} onStartCheckout={() => setCheckoutRequested(true)} access={access} onSessionError={onSessionError} order={order} business={business} methods={catalog.paymentMethods} attempts={snapshot?.attempts ?? []} mutation={mutation} collectionAllowed={snapshot?.shift?.status === 'open'} onSaved={orderSaved} onPaymentRecorded={paymentRecorded} onEdit={() => setEditingOrder({ order })} refresh={operation.refresh} pointSettings={point.settings} onPointBlocked={setPointBlocked}
+            onReceipt={canReadReceipts ? saleId => { if (currentOperator.current === operatorScope) setReceipt({ scope: operatorScope, saleId, afterCheckout: false }); } : undefined}
             draft={checkoutDraft.current?.scope === operatorScope ? checkoutDraft.current.value : undefined}
             onDraftChange={value => { if (!paymentComplete && currentOperator.current === operatorScope) checkoutDraft.current = { scope: operatorScope, value }; }}
             onOpenCash={hasPermission(business, 'cash.read') ? () => { void prepareBackToOrder().then(canClose => {
@@ -617,7 +629,8 @@ export default function HomeScreen({
           />}
         </div>
       </OrderPanel>}
-      {recoverPoint && <CheckoutPanel title="Recuperar cobro integrado" busy={pointBlocked} onClose={() => setRecoverPoint(null)}><PointPayment access={access} initialCheckout={recoverPoint} settings={point.settings} onSessionError={onSessionError} onBlocked={setPointBlocked} onResolved={() => { void operation.refresh(); void point.refresh(); }} onDone={() => { setRecoverPoint(null); setPointBlocked(false); void operation.refresh(); void point.refresh(); }} /></CheckoutPanel>}
+      {receipt?.scope === operatorScope && canReadReceipts && (!receipt.afterCheckout || !selectedOrder) && <SaleReceiptDialog key={`${operatorScope}:${receipt.saleId}`} access={access} businessName={business.name} saleId={receipt.saleId} onSessionError={onSessionError} onClose={() => setReceipt(null)} />}
+      {recoverPoint && <CheckoutPanel title="Recuperar cobro integrado" busy={pointBlocked} onClose={() => setRecoverPoint(null)}><PointPayment access={access} businessName={business.name} initialCheckout={recoverPoint} settings={point.settings} onSessionError={onSessionError} onBlocked={setPointBlocked} onResolved={() => { void operation.refresh(); void point.refresh(); }} onDone={() => { setRecoverPoint(null); setPointBlocked(false); void operation.refresh(); void point.refresh(); }} /></CheckoutPanel>}
 
 
     </WorkspaceShell>
