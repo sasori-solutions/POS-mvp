@@ -31,9 +31,17 @@ async function openCart(page: Page) {
 async function add(page: Page, name: string) { await page.getByRole('button', { name: new RegExp(`^Agregar ${name},`) }).click() }
 async function actions(page: Page, name: string) { await page.getByLabel(`Acciones de ${name}`, { exact: true }).click() }
 
-async function recorded(page: Page, backend: Awaited<ReturnType<typeof mockPos>>) {
+async function recorded(page: Page, backend: Awaited<ReturnType<typeof mockPos>>, options: { keepReceipt?: boolean } = {}) {
   await expect.poll(async () => (await backend.sales()).sales.length).toBe(1)
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pos-operations:')))).toEqual([])
+  if (backend.calls.some(command => command.command === 'record_checkout')) {
+    const receipt = page.getByRole('dialog', { name: 'Pago registrado', exact: true })
+    await expect(receipt).toBeVisible()
+    if (!options.keepReceipt) {
+      await receipt.getByRole('button', { name: 'Listo', exact: true }).click()
+      await expect(receipt).not.toBeVisible()
+    }
+  }
 }
 async function showReceipt(page: Page, recoveredAmount?: string) {
   const checkout = page.getByRole('dialog', { name: 'Cobrar', exact: true })
@@ -545,7 +553,7 @@ test('expanded product editor persists a photo, variants and extras with manual 
     await expect(retryPayment(page)).toBeEnabled()
     await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page)
     await retryPayment(page).click()
-    await recorded(page, backend)
+    await recorded(page, backend, { keepReceipt: true })
     await showReceipt(page, '$62.13')
     await expect(page.locator('.sale-detail')).toContainText('Grande, Avena')
     expect((await backend.catalog()).products[0].details?.trackStock).toBe(false)

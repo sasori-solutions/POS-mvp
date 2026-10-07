@@ -32,7 +32,23 @@ npx vitest run tests/sql tests/components
 deno test supabase/functions/account/*.deno.ts
 ```
 
-Start this checkout's persistent stack with `npm run dev`. Configure the existing `TEST_SUPABASE_*` variables and `TEST_LOCAL_DB_CONTAINER` from that stack for real integration; never use hosted credentials. `lean-operations-browser.mjs` reads `.local-dev` and accepts `TEST_APP_ORIGIN`, `TEST_SUPABASE_WORKDIR` and `TEST_SCREENSHOT_DIRECTORY`. The standard development smoke uses `DEV_SMOKE_ORIGIN`. See [MVP delivery](../docs/lean-pos-mvp.md) and [operational contracts](../docs/lean-operations-backend.md). Review and backend-first publication follow DEPLOYMENT.md; these results do not establish a production release.
+The `lean-operations-browser.mjs` result above belongs to the 2 October candidate; its selectors and account flow predate the current PWA. Use the first-client acceptance harness below for the combined preview. The standard development-login smoke uses `DEV_SMOKE_ORIGIN`. See [MVP delivery](../docs/lean-pos-mvp.md) and [operational contracts](../docs/lean-operations-backend.md). Review and backend-first publication follow DEPLOYMENT.md; these results do not establish a production release.
+
+## First-client acceptance — current manual procedure
+
+`tests/integration/first-client-browser.mjs` exercises the combined accounts/free-amount/catalog/receipts/shift-summary preview against real local Auth, signed Edge requests and PostgreSQL. It creates its own synthetic user and business, checks both sale modes, required extras, kitchen quantities/notes, cash/external-card/transfer payments, lost-response reload and exact replay, full-receipt refund, cash movements and blind closing. It deletes only that run's synthetic fixtures and checks persisted receipts and shift totals. Local password Auth and browser viewports do not accredit hosted Google, a physical device, payment authorization or printing hardware. Current evidence and pending client checks are in [first-client readiness](../docs/first-client-readiness.md).
+
+Start the persistent combined checkout with Node 24, `npm ci` and `npm run dev`; identify its existing loopback stack and apply the compatible shift-summary migration without resetting data. Start a separate Vite frontend on `http://127.0.0.1:5175` using that same backend's public configuration, development mode and explicit `VITE_LOCAL_PASSWORD_AUTH=true`. Keep the interactive dev frontend separate. This harness starts no server or container and does not connect to an existing browser.
+
+Pass `TEST_SUPABASE_URL`, `TEST_SUPABASE_ANON_KEY`, `TEST_SUPABASE_SERVICE_ROLE_KEY`, `TEST_SUPABASE_WORKDIR` and `TEST_EXPECTED_PROJECT_ID` from the identified local stack in memory; never write them to a credentials file, print them or use hosted keys. `TEST_SUPABASE_WORKDIR` is the absolute stack workdir containing `supabase/config.toml` (normally `<checkout>/.local-dev`). The API port and synthetic Auth identity must match that same stack. Optional `TEST_LOCAL_DB_CONTAINER` must be its `supabase_db_<project_id>` container; `TEST_APP_ORIGIN` must be the dedicated 5175 origin. Optional `TEST_SCREENSHOT_DIRECTORY` selects the synthetic capture directory.
+
+Run from the combined checkout, with those environment variables already supplied:
+
+```sh
+node tests/integration/first-client-browser.mjs
+```
+
+This is a manual acceptance check, not an automatically skipped CI suite. It requires the combined preview; the individual feature branches alone do not contain all prerequisites. Existing focused HTTP integration suites use the same identified loopback stack without a reset.
 
 ## Routine CI — small automatic gate
 
