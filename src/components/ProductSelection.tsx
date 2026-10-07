@@ -49,8 +49,25 @@ export default function ProductSelection({
       {d.description && (
         <p className="selection-description mb-4">{d.description}</p>
       )}
-      {d.allergens && (
-        <p className="product-help text-sm">Alérgenos: {d.allergens}</p>
+      {d.customerName && d.customerName !== product.name && (
+        <p className="product-help mb-4 text-sm">En la cuenta: {d.customerName}</p>
+      )}
+      {(d.calories !== null || d.dietary || d.allergens) && (
+        <div className="mb-4 flex flex-col gap-2 rounded-lg bg-surface p-4" aria-label="Información alimentaria">
+          {d.calories !== null && <p className="text-sm">Calorías: {d.calories} kcal</p>}
+          {d.dietary && <p className="text-sm">Preferencias alimentarias: {d.dietary}</p>}
+          {d.allergens && <p className="text-sm">Alérgenos: {d.allergens}</p>}
+        </div>
+      )}
+      {Boolean(d.customAttributes?.length) && (
+        <dl className="mb-4 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-x-4 gap-y-2 text-sm" aria-label="Atributos del producto">
+          {d.customAttributes!.map((attribute, index) => (
+            <div key={index} className="col-span-full grid grid-cols-subgrid gap-x-4">
+              <dt className="text-muted [overflow-wrap:anywhere]">{attribute.name}</dt>
+              <dd className="m-0 [overflow-wrap:anywhere]">{attribute.value}</dd>
+            </div>
+          ))}
+        </dl>
       )}
       {d.variations.length > 0 && (
         <fieldset className="selection-group mt-6 border-0 p-0 [&_legend]:w-full [&_legend]:pb-3 [&_legend]:font-medium [&_legend_small]:mt-1 [&_legend_small]:block [&_legend_small]:text-[13px] [&_legend_small]:font-normal [&_legend_small]:text-muted">
