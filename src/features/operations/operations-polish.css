@@ -126,7 +126,12 @@
 .order-editor .order-editor-search input { min-height: 52px; padding-left: 48px; border: 0; background: var(--operations-surface); }
 .order-editor-products { grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: 12px; max-height: 56dvh; overflow-y: auto; overscroll-behavior: contain; padding: 2px; }
 .order-editor .order-editor-products button { display: flex; min-height: 80px; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border-radius: 10px; background: var(--color-white, #ffffff); transition: background-color 140ms ease, border-color 140ms ease; }
+.order-editor-product { display: flex; min-width: 0; align-items: stretch; gap: 4px; }
+.order-editor-product-add { min-width: 0; flex: 1; }
+.order-editor .order-editor-products .order-editor-product-details { min-width: 48px; min-height: 48px; align-self: center; justify-content: center; padding: 0; }
 .order-editor-products button > span { min-width: 0; }
+.order-editor-products small { overflow-wrap: anywhere; }
+.order-editor .product-selection-dialog .selection-choice { flex-direction: row; gap: 12px; }
 .order-editor-products strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 15px; font-weight: 500; line-height: 1.35; }
 .order-editor-products button > svg { flex-shrink: 0; }
 .order-editor-products button:hover { background: var(--operations-surface); }
