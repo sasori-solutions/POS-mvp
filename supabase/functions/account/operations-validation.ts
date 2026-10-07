@@ -41,6 +41,12 @@ export function parseOperationsCommand(input: Record<string, unknown>, accessKey
       if (input.orderKind === 'counter' && input.tableId !== null) invalid()
       if (!Array.isArray(input.items) || (input.items.length===0 && input.expectedRevision===null) || input.items.length>40) invalid()
       const items: OrderInputLine[]=input.items.map(value => {
+        const candidate=object(value)
+        if (candidate.kind === 'amount') {
+          exact(candidate,['lineId','kind','name','quantity','unitPriceCents','note'])
+          if (candidate.note !== '') invalid()
+          return { lineId:uuid(candidate.lineId), kind:'amount' as const, name:text(candidate.name,100), quantity:integer(candidate.quantity,999), unitPriceCents:integer(candidate.unitPriceCents,99_999_999), note:'' }
+        }
         const line=object(value); exact(line,['lineId','productId','quantity','unitPriceCents','version','note',...(Object.hasOwn(line,'selection')?['selection']:[])])
         return {lineId:uuid(line.lineId),productId:uuid(line.productId),quantity:integer(line.quantity,999),unitPriceCents:integer(line.unitPriceCents,99_999_999,0),version:integer(line.version),note:text(line.note,160),...(Object.hasOwn(line,'selection')?{selection:parseSelection(line.selection)}:{})}
       }).sort((a,b)=>a.lineId.localeCompare(b.lineId))

@@ -8,6 +8,7 @@ export interface Variation {
 }
 export interface Modifier { id: string; name: string; priceCents: number }
 export interface ModifierSet { id: string; name: string; min: number; max: number; options: Modifier[] }
+export interface ProductAttribute { name: string; value: string }
 export interface ProductDetails {
   description: string; imageId: string | null; tileColor: string; tileLabel: string
   itemType: 'prepared' | 'physical' | 'service' | 'digital' | 'event' | 'other'
@@ -17,6 +18,7 @@ export interface ProductDetails {
   costCents: number | null; taxBps: number; taxTreatment?: VatTreatment
   calories: number | null; dietary: string; allergens: string
   variations: Variation[]; modifierSets: ModifierSet[]
+  skipCustomization?: boolean; customAttributes?: ProductAttribute[]
 }
 export interface ItemSelection { variationId: string | null; modifierIds: string[]; variablePriceCents: number | null }
 
@@ -40,23 +42,30 @@ export interface ProductInput {
   details?: ProductDetails
 }
 
-export interface CartLine {
+export interface ProductCartLine {
+  kind?: 'product'
   product: Product
   quantity: number
   selection?: ItemSelection
 }
+export interface AmountCartLine { kind: 'amount'; id: string; name: string; quantity: number; unitPriceCents: number }
+export type CartLine = ProductCartLine | AmountCartLine
 
-export interface SaleInputLine {
+export interface ProductSaleInputLine {
+  kind?: undefined
   productId: string
   quantity: number
   unitPriceCents: number
   version: number
   selection?: ItemSelection
 }
+export interface AmountSaleInputLine { kind: 'amount'; name: string; quantity: number; unitPriceCents: number }
+export type SaleInputLine = ProductSaleInputLine | AmountSaleInputLine
 
 export interface SaleItem {
   allocatedGrossCents?: number
-  productId: string
+  kind?: 'product' | 'amount'
+  productId: string | null
   name: string
   category: string
   quantity: number

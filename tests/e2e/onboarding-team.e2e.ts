@@ -24,20 +24,23 @@ test('a new Google account chooses whether to create or join a business', async 
   await capture(page, testInfo.project.name, 'onboarding-choice');
 });
 
-test('new business card selection saves only Tarjeta without activating or linking Point', async ({ page }) => {
+test('new business external-card selection stays separate from Point and saves without linking a terminal', async ({ page }) => {
   const { calls } = await mockOnboarding(page);
   await page.goto('/business/new');
   await page.getByLabel('Nombre del negocio', { exact: true }).fill('Café de tarjeta');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
-  const card = page.getByRole('checkbox', { name: 'Tarjeta', exact: true });
+  const card = page.getByRole('checkbox', { name: 'Mercado Pago Point', exact: true });
+  const external = page.getByRole('checkbox', { name: 'Tarjeta externa', exact: true });
   await expect(card).toBeChecked();
-  await expect(page.getByRole('checkbox')).toHaveCount(3);
-  await expect(page.getByRole('checkbox', { name: /Tarjeta en terminal|Tarjeta externa|Mercado Pago/ })).toHaveCount(0);
+  await expect(external).not.toBeChecked();
+  await expect(page.getByRole('checkbox')).toHaveCount(4);
+  for (const name of ['Efectivo', 'Tarjeta externa', 'Mercado Pago Point', 'Transferencia']) await expect(page.getByRole('checkbox', { name, exact: true })).toBeVisible();
   await card.uncheck();
   await expect(card).not.toBeChecked();
   await expect(page.getByRole('checkbox', { name: 'Efectivo', exact: true })).toBeChecked();
-  await card.check();
-  await expect(card).toBeChecked();
+  await external.check();
+  await expect(external).toBeChecked();
+  await expect(card).not.toBeChecked();
   expect(calls.filter(call => call.action === 'create_business')).toHaveLength(0);
 
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
@@ -46,7 +49,7 @@ test('new business card selection saves only Tarjeta without activating or linki
   await expect(page.getByRole('heading', { name: 'Inicio', exact: true })).toBeVisible();
   const creations = calls.filter(call => call.action === 'create_business');
   expect(creations).toHaveLength(1);
-  expect(creations[0].profile.paymentMethods).toEqual(['cash', 'card_integrated']);
+  expect(creations[0].profile.paymentMethods).toEqual(['cash', 'card_external']);
   expect(creations[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
   const pointCommands = calls.filter(call => call.action === 'point' || call.action === 'device_point').map(call => call.command);
   expect(pointCommands.filter(command => command !== 'settings')).toEqual([]);
@@ -107,11 +110,15 @@ test('invalid branch, payment methods and phone stay on business details before 
   await expect(page.getByRole('alert')).toContainText(/sucursal|caja/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   await page.getByLabel('Sucursal', { exact: true }).fill('Principal');
-  await page.getByLabel('Efectivo', { exact: true }).uncheck();
-  await page.getByLabel('Tarjeta', { exact: true }).uncheck();
+  for (const name of ['Efectivo', 'Tarjeta externa', 'Mercado Pago Point', 'Transferencia']) {
+    const method = page.getByRole('checkbox', { name, exact: true });
+    await method.uncheck();
+    await expect(method).not.toBeChecked();
+  }
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/método|pago/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
+  expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
   await page.getByLabel('Efectivo', { exact: true }).check();
   await page.getByLabel('Teléfono', { exact: true }).fill('abcde');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
@@ -121,6 +128,7 @@ test('invalid branch, payment methods and phone stay on business details before 
   await page.getByLabel('Teléfono', { exact: true }).fill('');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).toBeVisible();
+  expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
 });
 
 test('joining retries invalid invitations and applies assigned permissions without self selection', async ({ page }) => {

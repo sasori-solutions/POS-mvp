@@ -2,6 +2,7 @@ import { useRef, useState, type FormEvent } from 'react';
 import { ArrowLeft, ArrowRight, Coffee, Store, Utensils } from 'lucide-react';
 import type { BusinessProfile, BusinessType } from '../lib/contracts';
 import { businessTimezones } from '../lib/business-profile';
+import { paymentLabels } from '../lib/payment-methods';
 import BusinessOperationFields from './BusinessOperationFields';
 import './business-profile.css';
 
@@ -56,10 +57,11 @@ export default function BusinessSetup({ draft, onChange, onSubmit, error }: {
         <fieldset className="business-choice-group">
           <legend>Formas de pago</legend>
           <div className="flex flex-wrap gap-3">
-            {([['cash', 'Efectivo'], ['card_integrated', 'Tarjeta'], ['transfer', 'Transferencia']] as const).map(([value, label]) => <label className="flex min-h-12 items-center gap-3 rounded-lg border border-line px-4 [&_input]:size-5" key={value}>
+            {([['cash', paymentLabels.cash], ['card_external', paymentLabels.card_external], ['card_integrated', paymentLabels.card_integrated], ['transfer', paymentLabels.transfer]] as const).map(([value, label]) => <label className="flex min-h-12 items-center gap-3 rounded-lg border border-line px-4 [&_input]:size-5" key={value}>
               <input type="checkbox" checked={draft.profile.paymentMethods.includes(value)} onChange={event => setProfile({ ...draft.profile, paymentMethods: event.target.checked ? [...draft.profile.paymentMethods, value] : draft.profile.paymentMethods.filter(method => method !== value) })} />{label}
             </label>)}
           </div>
+          <p className="mt-3 text-sm text-muted">Tarjeta externa registra un pago aprobado en la terminal del comercio. Mercado Pago Point envía el cobro a una terminal vinculada.</p>
         </fieldset>
         <details className="business-extra-settings">
           <summary>Sucursal y contacto</summary>

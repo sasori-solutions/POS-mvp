@@ -1,17 +1,24 @@
 import type { PaymentMethod } from './contracts'
 import type { PointSettings } from './point-contracts'
 
-/** Historical external-card records keep their contract; new card collections use Point. */
+export const paymentLabels: Record<PaymentMethod, string> = {
+  cash: 'Efectivo',
+  card_external: 'Tarjeta externa',
+  card_integrated: 'Mercado Pago Point',
+  transfer: 'Transferencia',
+}
+
+/** Each method keeps the collection and recovery identity stored by the server. */
 export function collectionPaymentMethod(method: PaymentMethod): PaymentMethod {
-  return method === 'card_external' ? 'card_integrated' : method
+  return method
 }
 
 export function collectionPaymentMethods(methods: readonly PaymentMethod[]): PaymentMethod[] {
   return [...new Set(methods.map(collectionPaymentMethod))]
 }
 
-export function isManualCollectionMethod(method: PaymentMethod): method is 'cash' | 'transfer' {
-  return method === 'cash' || method === 'transfer'
+export function isManualCollectionMethod(method: PaymentMethod): method is 'cash' | 'transfer' | 'card_external' {
+  return method === 'cash' || method === 'transfer' || method === 'card_external'
 }
 
 /** Presentation readiness is conservative; the provider and SQL still authorize each charge. */

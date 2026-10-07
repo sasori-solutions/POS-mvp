@@ -3,17 +3,26 @@ import type { ItemSelection, SaleInputLine, VatTreatment } from './pos-contracts
 
 export type ShiftStatus = 'open' | 'closing' | 'closed'
 export interface CashMovement { id: string; kind: 'in' | 'out'; amountCents: number; reason: string; actorName: string; createdAt: string }
+export interface ShiftPaymentSummary {
+  collectedCents: number; refundedCents: number; netCents: number
+  payments: { paymentMethod: PaymentMethod; collectedCents: number; refundedCents: number; netCents: number }[]
+  /** Provider refunds have no persisted cash-shift attribution; their report remains authoritative. */
+  pointRefundsNotAttributed: true
+}
 export interface CashShift {
   id: string; revision: number; status: ShiftStatus; openedAt: string; closedAt: string | null
   openedBy: string; closedBy: string | null; openingCents: number
   countedCents: number | null; expectedCents: number | null; differenceCents: number | null
   movements: CashMovement[]
+  /** Absent on older accepted responses, masked reads and blind counting. */
+  paymentSummary?: ShiftPaymentSummary
 }
 export interface DiningTable { id: string; name: string; active: boolean; revision: number; orderId: string | null }
-export interface OrderInputLine extends SaleInputLine { lineId: string; note: string }
+export type OrderInputLine = SaleInputLine & { lineId: string; note: string }
 export interface OrderLine {
   version: number; selection?: ItemSelection | null
-  lineId: string; productId: string; name: string; kitchenName: string; category: string; selectionLabel: string; note: string
+  kind?: 'product' | 'amount'
+  lineId: string; productId: string | null; name: string; kitchenName: string; category: string; selectionLabel: string; note: string
   quantity: number; paidQuantity: number; sentQuantity: number; unitPriceCents: number
   paidTotalCents?: number; paidDiscountCents?: number; paidTaxCents?: number
   grossCents: number; discountCents: number; totalCents: number; taxCents: number; taxBps: number; taxTreatment: VatTreatment | 'legacy'
@@ -42,7 +51,7 @@ export interface CheckoutAttempt {
   taxCents: number; discountCents: number; operatorName: string; resolverName: string | null
   createdAt: string; resolvedAt: string | null; reason: string
   amountsCents?: number[]
-  items: { allocatedGrossCents?: number; lineId: string; productId: string; name: string; quantity: number; unitPriceCents: number; discountCents: number; totalCents: number; taxCents: number }[]
+  items: { kind?: 'product' | 'amount'; allocatedGrossCents?: number; lineId: string; productId: string | null; name: string; quantity: number; unitPriceCents: number; discountCents: number; totalCents: number; taxCents: number }[]
 }
 export interface BalanceWaiver { id: string; orderId: string; revision: number; status: 'prepared' | 'completed'; amountCents: number; reason: string; operatorName: string; resolvedAt: string | null }
 export interface BusinessDayReport {
@@ -52,7 +61,7 @@ export interface BusinessDayReport {
   unallocatedRefundCents?: number; unknownReversalTaxCents?: number
   payments: { paymentMethod: PaymentMethod; salesCents: number; reversalCents: number; netCents: number }[]
   operators: { name: string; salesCents: number; reversalCents: number; netCents: number }[]
-  products: { productId: string; name: string; quantity: number; salesCents: number; taxCents: number; reversalQuantity: number; reversalCents: number; reversalTaxCents: number; netCents: number; netTaxCents: number }[]
+  products: { kind?: 'product' | 'amount'; productId: string | null; name: string; quantity: number; salesCents: number; taxCents: number; reversalQuantity: number; reversalCents: number; reversalTaxCents: number; netCents: number; netTaxCents: number }[]
   cashDifferences: { shiftId: string; closedAt: string; expectedCents: number; countedCents: number; differenceCents: number }[]
 }
 export interface OperationsSnapshot { enabled: boolean; shift: CashShift | null; orders: OperationalOrder[]; tables: DiningTable[]; attempts: CheckoutAttempt[]; pendingKitchenCount?: number }

@@ -23,6 +23,7 @@ export default function SalesScreen({
   mutation,
   onOperationSaved,
   collectionAllowed = true,
+  businessName = '',
 }: {
   access: PosAccess;
   ownOnly: boolean;
@@ -32,6 +33,7 @@ export default function SalesScreen({
   mutation?: OperationalMutation;
   onOperationSaved?: () => Promise<void>;
   collectionAllowed?: boolean;
+  businessName?: string;
 }) {
   const [sales, setSales] = useState<SaleSummary[]>([]);
   const [cursor, setCursor] = useState<SaleCursor | null>(null);
@@ -170,6 +172,7 @@ export default function SalesScreen({
       {selectedId && (
         <SaleDetailDialog
           access={access}
+          businessName={businessName}
           saleId={selectedId}
           onClose={() => setSelectedId(null)}
           onSessionError={onSessionError}
@@ -186,6 +189,7 @@ export default function SalesScreen({
 
 function SaleDetailDialog({
   access,
+  businessName,
   saleId,
   onClose,
   onSessionError,
@@ -196,6 +200,7 @@ function SaleDetailDialog({
   collectionAllowed = true,
 }: {
   access: PosAccess;
+  businessName: string;
   saleId: string;
   onClose: () => void;
   onSessionError?: (error: AccountClientError) => void;
@@ -271,7 +276,7 @@ function SaleDetailDialog({
           </button>
         </div>
       )}
-      {sale && <div className="operations-polish sales-detail-content" aria-busy={loading}><SaleDetail sale={sale} /></div>}
+      {sale && <div className="operations-polish sales-detail-content" aria-busy={loading}><SaleDetail sale={sale} businessName={businessName} /></div>}
       {sale?.paymentMethod === 'card_integrated' && canReverse && <PointRefund access={access} saleId={sale.id} onSessionError={onSessionError} />}
       {sale && sale.paymentMethod !== 'card_integrated' && canReverse && mutation && <div className="ops-section operations-polish sale-reversal-panel">
         {mutation.error && <p role="alert">{mutation.error}</p>}

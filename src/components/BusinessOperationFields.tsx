@@ -11,8 +11,8 @@ export default function BusinessOperationFields({ profile, onChange, disabled = 
       <legend>Cómo cobras</legend>
       <div className="business-operation-options">
         {[
-          { enabled: false, Icon: ShoppingBag, title: 'Cobro directo', description: 'Arma la venta y cobra.' },
-          { enabled: true, Icon: ReceiptText, title: 'Cuentas abiertas', description: 'Abre una cuenta y cobra al final.' },
+          { enabled: false, Icon: ShoppingBag, title: 'Cobro directo', description: 'Cobra primero; el pago genera la comanda.' },
+          { enabled: true, Icon: ReceiptText, title: 'Cuentas abiertas', description: 'Guarda y modifica la cuenta, envía comandas y cobra al final.' },
         ].map(({ enabled, Icon, title, description }) => <label key={title} className={`business-operation-choice${accounts === enabled ? ' selected' : ''}`}>
           <input type="radio" name={`${prefix}-account-mode`} value={String(enabled)} checked={accounts === enabled} disabled={disabled} onChange={() => onChange({ ...profile, accountsEnabled: enabled })} />
           <Icon size={23} aria-hidden="true" />

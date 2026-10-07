@@ -37,7 +37,7 @@ test('a zero-value account reserves before the single final payment and still re
   const paid={...order,status:'closed' as const,frozen:true,revision:4}
   vi.mocked(request.execute).mockResolvedValueOnce({order:paid,attempt:{...quote,status:'completed'}})
   fireEvent.click(screen.getByRole('button',{name:'Registrar pago'}))
-  await waitFor(() => expect(onPaymentRecorded).toHaveBeenCalledWith(paid))
+  await waitFor(() => expect(onPaymentRecorded).toHaveBeenCalledWith(paid, undefined))
   expect(request.execute).toHaveBeenLastCalledWith(expect.objectContaining({command:'record_checkout',attemptId:quote.id,confirmed:true}))
 })
 
