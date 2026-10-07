@@ -29,8 +29,9 @@ export function parseSelection(value: unknown): ItemSelection {
 }
 export function parseProductDetails(value: unknown): ProductDetails {
   const explicitTax = Boolean(value && typeof value === 'object' && Object.hasOwn(value, 'taxTreatment'))
+  const optionalKeys = ['skipCustomization', 'customAttributes'].filter(key => Boolean(value && typeof value === 'object' && Object.hasOwn(value, key)))
   const d = object(value, ['description', 'imageId', 'tileColor', 'tileLabel', 'itemType', 'customerName', 'kitchenName', 'sku', 'barcode',
-    'soldOut', 'favorite', 'variablePrice', 'trackStock', 'stock', 'lowStockAlert', 'costCents', 'taxBps', 'calories', 'dietary', 'allergens', 'variations', 'modifierSets', ...(explicitTax ? ['taxTreatment'] : [])])
+    'soldOut', 'favorite', 'variablePrice', 'trackStock', 'stock', 'lowStockAlert', 'costCents', 'taxBps', 'calories', 'dietary', 'allergens', 'variations', 'modifierSets', ...(explicitTax ? ['taxTreatment'] : []), ...optionalKeys])
   if (!['prepared', 'physical', 'service', 'digital', 'event', 'other'].includes(d.itemType as string) || typeof d.tileColor !== 'string' || !/^#[0-9A-Fa-f]{6}$/.test(d.tileColor)) fail()
   if (explicitTax) {
     const rates: Record<string, number> = { vat_16: 1600, vat_0: 0, exempt: 0, border_8: 800, unconfigured: 0 }
@@ -50,11 +51,22 @@ export function parseProductDetails(value: unknown): ProductDetails {
     if (min > max) fail()
     return { id: uuid(s.id), name: string(s.name, 60, 1), min, max, options }
   })
+  const customAttributes = Object.hasOwn(d, 'customAttributes') ? array(d.customAttributes, 8).map(value => {
+    const attribute = object(value, ['name', 'value'])
+    const name = string(attribute.name, 40, 1), content = string(attribute.value, 120, 1)
+    if (!name || !content) fail()
+    return { name, value: content }
+  }) : []
+  const attributeNames = customAttributes.map(attribute => attribute.name.normalize('NFC').toLowerCase())
+  if (new Set(attributeNames).size !== attributeNames.length) fail()
   const ids = [...variations.map(v => v.id), ...modifierSets.flatMap(s => [s.id, ...s.options.map(o => o.id)])]
-  if (new Set(ids).size !== ids.length || (d.variablePrice && variations.length)) fail()
+  if (new Set(ids).size !== ids.length || (d.variablePrice && variations.length)
+    || modifierSets.reduce((sum, set) => sum + set.min, 0) > 24) fail()
   return { description: string(d.description, 1000), imageId: d.imageId === null ? null : uuid(d.imageId), tileColor: d.tileColor, tileLabel: string(d.tileLabel, 8),
     itemType: d.itemType as ProductDetails['itemType'], customerName: string(d.customerName, 100), kitchenName: string(d.kitchenName, 100), sku: string(d.sku, 60), barcode: string(d.barcode, 32),
     soldOut: bool(d.soldOut), favorite: bool(d.favorite), variablePrice: bool(d.variablePrice), trackStock: bool(d.trackStock), stock: integer(d.stock, 999999), lowStockAlert: integer(d.lowStockAlert, 999999),
     costCents: d.costCents === null ? null : integer(d.costCents, 99_999_999), taxBps: integer(d.taxBps, 10000), calories: d.calories === null ? null : integer(d.calories, 100000),
-    dietary: string(d.dietary, 200), allergens: string(d.allergens, 200), variations, modifierSets, ...(explicitTax ? {taxTreatment: d.taxTreatment as VatTreatment} : {}) }
+    dietary: string(d.dietary, 200), allergens: string(d.allergens, 200), variations, modifierSets, ...(explicitTax ? {taxTreatment: d.taxTreatment as VatTreatment} : {}),
+    ...(Object.hasOwn(d, 'skipCustomization') ? { skipCustomization: bool(d.skipCustomization) } : {}),
+    ...(Object.hasOwn(d, 'customAttributes') ? { customAttributes } : {}) }
 }

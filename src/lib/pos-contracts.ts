@@ -8,6 +8,7 @@ export interface Variation {
 }
 export interface Modifier { id: string; name: string; priceCents: number }
 export interface ModifierSet { id: string; name: string; min: number; max: number; options: Modifier[] }
+export interface ProductAttribute { name: string; value: string }
 export interface ProductDetails {
   description: string; imageId: string | null; tileColor: string; tileLabel: string
   itemType: 'prepared' | 'physical' | 'service' | 'digital' | 'event' | 'other'
@@ -17,6 +18,7 @@ export interface ProductDetails {
   costCents: number | null; taxBps: number; taxTreatment?: VatTreatment
   calories: number | null; dietary: string; allergens: string
   variations: Variation[]; modifierSets: ModifierSet[]
+  skipCustomization?: boolean; customAttributes?: ProductAttribute[]
 }
 export interface ItemSelection { variationId: string | null; modifierIds: string[]; variablePriceCents: number | null }
 

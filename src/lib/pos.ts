@@ -45,7 +45,9 @@ export function searchText(value: string): string {
 export function filterProducts(products: Product[], query: string, category: string): Product[] {
   const search = searchText(query)
   return products.filter(product => (!category || product.category === category)
-    && (!search || searchText([product.name, product.details?.sku, product.details?.barcode, ...product.details?.variations?.map(v => `${v.name} ${v.sku} ${v.barcode}`) ?? []].join(' ')).includes(search)))
+    && (!search || searchText([product.name, product.details?.customerName, product.details?.kitchenName, product.details?.sku, product.details?.barcode,
+      ...product.details?.customAttributes?.map(attribute => `${attribute.name} ${attribute.value}`) ?? [],
+      ...product.details?.variations?.map(v => `${v.name} ${v.sku} ${v.barcode}`) ?? []].join(' ')).includes(search)))
 }
 
 export interface PosAccess { businessId: string; operatorToken: string; deviceToken?: string }

@@ -41,6 +41,8 @@ import {
 } from "../lib/pending-sale";
 import {
   productDetails,
+  quickProductSelection,
+  tileForegroundColor,
   isSoldOut,
   lineKey,
   selectedPrice,
@@ -868,14 +870,11 @@ function SaleScreenSession({
                 >
                   <button
                     className="touch-product sale-product"
-                    onClick={() =>
-                      d.variations.length ||
-                      d.modifierSets.length ||
-                      d.allergens ||
-                      d.variablePrice
-                        ? setChoosing(product)
-                        : add(product)
-                    }
+                    onClick={() => {
+                      const selection = quickProductSelection(product);
+                      if (selection) add(product, selection);
+                      else setChoosing(product);
+                    }}
                     disabled={frozen || checkout || soldOut}
                     aria-label={`Agregar ${product.name}, ${money(shownPrice)}${soldOut ? ', agotado' : ''}`}
                   >
@@ -892,7 +891,7 @@ function SaleScreenSession({
                           loading="lazy"
                         />
                       ) : (
-                        <span className="tile-monogram">
+                        <span className="tile-monogram" style={{ color: tileForegroundColor(d.tileColor), overflowWrap: 'anywhere' }}>
                           {d.tileLabel ||
                             product.name.slice(0, 2).toLocaleUpperCase("es-MX")}
                         </span>
@@ -900,7 +899,7 @@ function SaleScreenSession({
                     </span>
                     <span className="tile-copy">
                       <strong title={product.name}>{product.name}</strong>
-                      <b className={canAvailability ? 'pr-11' : undefined}>
+                      <b className="pr-11">
                         {d.variablePrice
                           ? "Precio variable"
                           : `${prices.length ? "Desde " : ""}${money(shownPrice)}`}
@@ -916,9 +915,9 @@ function SaleScreenSession({
                       </span>
                     )}
                   </button>
-                  {canAvailability && <button
+                    <button
                     className="tile-menu pos-icon-button"
-                    aria-label={`Disponibilidad de ${product.name}`}
+                    aria-label={`${canAvailability ? "Disponibilidad" : "Opciones"} de ${product.name}`}
                     disabled={frozen || checkout || availabilityBusy}
                     onClick={() => {
                       setAvailability(product);
@@ -926,7 +925,7 @@ function SaleScreenSession({
                     }}
                   >
                     <MoreHorizontal size={20} aria-hidden="true" />
-                  </button>}
+                  </button>
                 </div>
               );
             })}
@@ -1203,6 +1202,18 @@ function SaleScreenSession({
             </p>
           )}
           <div className="dialog-actions mt-6 flex flex-col gap-3">
+            <button
+              className="pos-button pos-secondary"
+              type="button"
+              disabled={availabilityBusy || favoriteBusy}
+              onClick={() => {
+                setChoosing(availability);
+                setAvailability(null);
+                availabilityRequest.current = null;
+              }}
+            >
+              Ver detalles y opciones
+            </button>
             {canFavorite && (
               <button
                 className="pos-button pos-secondary"
@@ -1220,14 +1231,14 @@ function SaleScreenSession({
                 {productDetails(availability).favorite ? "Quitar de favoritos" : "Añadir a favoritos"}
               </button>
             )}
-            <button
+            {canAvailability && <button
               className="pos-button pos-primary"
               disabled={availabilityBusy || favoriteBusy}
               onClick={() => void toggleAvailability(availability)}
             >
               {availabilityBusy && <PendingIndicator label="Guardando disponibilidad" />}
               {productDetails(availability).soldOut ? "Marcar disponible" : "Marcar agotado"}
-            </button>
+            </button>}
           </div>
         </PosDialog>
       )}

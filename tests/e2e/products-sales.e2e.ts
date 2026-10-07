@@ -568,9 +568,7 @@ test('MVP mobile product fields persist distinct Mexican IVA treatments and keep
       await page.getByLabel('Nombre',{exact:true}).fill(name)
       await page.getByLabel('Precio final MXN',{exact:true}).fill(price)
       await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('vat_16')
-      for(const label of ['Tipo de producto','Costo por unidad (opcional)','Nombre para el cliente','Nombre para cocina','Calorías (opcional)','Preferencias alimentarias','SKU','Código de barras / GTIN','Etiqueta de la cuadrícula'])
-        await expect(page.getByLabel(label,{exact:true})).toHaveCount(0)
-      await expect(page.getByRole('button',{name:'Crear variantes',exact:true})).toHaveCount(0)
+      await expect(page.getByLabel('Costo por unidad (opcional)',{exact:true})).toHaveCount(0)
       await page.getByLabel('IVA del producto',{exact:true}).selectOption(treatment)
       if(treatment==='vat_16') await expect(page.getByRole('definition')).toHaveText(['$100.00','$16.00','$116.00'])
       if(treatment==='border_8'){
@@ -612,28 +610,39 @@ test('MVP mobile product fields persist distinct Mexican IVA treatments and keep
   } finally {await backend.db.close()}
 })
 
-test('old unclassified IVA and variable-price products need an explicit choice before editing', async ({page}) => {
+test('old unclassified IVA needs a choice while open prices survive edits until explicitly changed', async ({page}) => {
   const backend=await mockPos(page,{empty:true})
   try {
     const {emptyDetails}=await import('../../src/lib/product-details')
     const old=await backend.execute<Product>({command:'save_product',operationId:crypto.randomUUID(),productId:crypto.randomUUID(),expectedVersion:null,name:'Anterior',category:'',priceCents:0,details:{...emptyDetails(),variablePrice:true,sku:'KEEP',kitchenName:'Etiqueta anterior'}})
     await unlock(page); await navigate(page,'Productos')
     await page.getByRole('button',{name:'Editar Anterior',exact:true}).click()
-    await expect(page.getByLabel('Precio final MXN',{exact:true})).toHaveValue('')
+    await expect(page.getByRole('radio',{name:/^Precio abierto/})).toBeChecked()
+    await expect(page.getByLabel('Precio final MXN',{exact:true})).toHaveCount(0)
     await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('')
     await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
     await expect(page.getByRole('dialog')).toBeVisible()
-    await page.getByLabel('Precio final MXN',{exact:true}).fill('58')
-    await page.getByLabel('Alérgenos (opcional)',{exact:true}).fill('Leche')
     await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
+    await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    const preserved=(await backend.catalog()).products.find(product=>product.id===old.id)!
+    expect(preserved.priceCents).toBe(0)
+    expect(preserved.details).toMatchObject({variablePrice:true,taxTreatment:'vat_16',sku:'KEEP',kitchenName:'Etiqueta anterior'})
+    await page.getByRole('button',{name:'Editar Anterior',exact:true}).click()
+    await page.getByRole('radio',{name:/^Precio fijo/}).check()
+    await page.getByLabel('Precio final MXN',{exact:true}).fill('58')
+    await page.getByText('Información alimentaria (opcional)',{exact:true}).click()
+    await page.getByLabel('Alérgenos (opcional)',{exact:true}).fill('Leche')
     await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
     const saved=(await backend.catalog()).products.find(product=>product.id===old.id)!
     expect(saved.priceCents).toBe(5800)
     expect(saved.details).toMatchObject({variablePrice:false,taxTreatment:'vat_16',taxBps:1600,sku:'KEEP',kitchenName:'Etiqueta anterior'})
     await navigate(page,'Venta'); await add(page,'Anterior')
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    await page.getByRole('button',{name:'Disponibilidad de Anterior',exact:true}).click()
+    await page.getByRole('button',{name:'Ver detalles y opciones',exact:true}).click()
     await expect(page.getByRole('dialog')).toContainText('Alérgenos: Leche')
-    await page.getByRole('button',{name:'Agregar · $58.00',exact:true}).click()
   } finally {await backend.db.close()}
 })
 
