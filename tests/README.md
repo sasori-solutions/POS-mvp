@@ -12,6 +12,8 @@ Run the focused SQL suites with `npx vitest run tests/sql/amount-checkout.test.t
 
 ## Financial integrity
 
+El resumen de Caja por turno tiene pruebas focalizadas en `tests/sql/shift-payment-summary.test.ts`, `tests/unit/shift-payment-summary.test.ts` y `tests/components/shift-payment-summary.test.tsx`. Ejecútalas con `npx vitest run` y esas tres rutas. La integración real reutiliza los fixtures de `lean-operations.integration.test.ts`; con el backend loopback actualizado y las variables `TEST_SUPABASE_*` / `TEST_LOCAL_DB_CONTAINER`, filtra `-t 'summarizes persisted payments and next-shift refunds' --no-file-parallelism --maxWorkers=1 --testTimeout=45000 --hookTimeout=60000`. No requiere reset. El [contrato y límites](../docs/shift-payment-summary.md) distingue devoluciones manuales atribuidas al turno de las Point sin esa atribución.
+
 `npm run test:integrity` runs the exact money kernel, payload/retry tests, checkout components and financial PostgreSQL invariants without a browser. `npm run test:integrity:integration` exercises real loopback Auth/Edge/Postgres, including separate-session races; start this checkout with `npm run dev` first. A skipped integration suite is not evidence of a working backend. No database reset is required. See [contract, findings and current evidence](../docs/financial-integrity-2026-10-03.md).
 
 ## Lean POS MVP — current candidate, 2 October 2026

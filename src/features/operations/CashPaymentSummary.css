@@ -1,0 +1,11 @@
+.cash-payment-summary { margin-top: 24px; border-top: 1px solid var(--operations-line); padding-top: 20px; min-width: 0; }
+.cash-payment-summary h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.cash-payment-list { list-style: none; margin: 16px 0; padding: 0; }
+.cash-payment-list > li { border-bottom: 1px solid var(--operations-line); padding: 12px 0; min-width: 0; }
+.cash-payment-list > li > strong { font-size: 14px; font-weight: 600; }
+.cash-payment-amounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 8px 0 0; }
+.cash-payment-amounts > div { min-width: 0; }
+.cash-payment-amounts dt { color: var(--operations-muted); font-size: 12px; line-height: 1.4; }
+.cash-payment-amounts dd { margin: 4px 0 0; font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.cash-payment-list > .cash-payment-total { border-bottom: 0; }
+.cash-payment-total dd { font-weight: 600; }

@@ -1,13 +1,14 @@
 import { AccountClientError } from './account'
 import type { PosCommand } from './pos-contracts'
 import type { Sale } from './pos-contracts'
-import type { CheckoutAttempt, OperationalOrder, OrderLine } from './operations-contracts'
+import type { CashShift, CheckoutAttempt, OperationalOrder, OrderLine } from './operations-contracts'
 import { assertMonetaryLineSnapshot, FinancialIntegrityError, isBoundedInteger, maxOperationalLines, maxOperationalMoneyCents, maxOperationalQuantity, maxOperationalUnitPriceCents, monetaryLineSlice } from './operational-money'
 import { checkoutAmountTotals } from './checkout-amounts'
 
 type ObjectValue = Record<string, unknown>
 const orderCommands = new Set(['order', 'save_order', 'set_order_discount', 'cancel_order', 'send_order', 'begin_order_checkout', 'resume_order_service', 'move_order', 'close_order'])
 const attemptCommands = new Set(['attempt', 'prepare_checkout', 'update_checkout', 'start_checkout', 'mark_checkout_uncertain', 'resolve_checkout', 'prepare_reversal'])
+const shiftCommands = new Set(['open_shift', 'cash_movement', 'begin_shift_close', 'abort_shift_close', 'close_shift'])
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const sameId = (first: string, second: string) => first.toLowerCase() === second.toLowerCase()
 function requireValue(valid: boolean): asserts valid { if (!valid) throw new FinancialIntegrityError() }
@@ -38,6 +39,33 @@ function items(value: unknown, minimum: number): ObjectValue[] {
     requireValue(!identities.has(id)); identities.add(id)
     return item
   })
+}
+
+/** Aggregate receipts can exceed one order's limit; compare safe cents with BigInt. */
+export function assertFinancialShift(value: unknown): asserts value is CashShift {
+  const shift = object(value)
+  if (shift.paymentSummary === undefined) return // Original accepted responses remain valid.
+  header(shift)
+  requireValue(shift.status === 'open' || shift.status === 'closed')
+  const summary = object(shift.paymentSummary)
+  requireValue(summary.pointRefundsNotAttributed === true && Array.isArray(summary.payments) && summary.payments.length === 4)
+  const methods = new Set(['cash', 'card_external', 'card_integrated', 'transfer'])
+  let collected = 0n, refunded = 0n
+  const signedCents = (amount: unknown): bigint => {
+    requireValue(typeof amount === 'number' && Number.isSafeInteger(amount))
+    return BigInt(amount)
+  }
+  for (const raw of summary.payments) {
+    const row = object(raw)
+    requireValue(typeof row.paymentMethod === 'string' && methods.delete(row.paymentMethod))
+    const rowCollected = BigInt(cents(row.collectedCents, Number.MAX_SAFE_INTEGER))
+    const rowRefunded = BigInt(cents(row.refundedCents, Number.MAX_SAFE_INTEGER))
+    requireValue(signedCents(row.netCents) === rowCollected - rowRefunded)
+    collected += rowCollected; refunded += rowRefunded
+  }
+  requireValue(BigInt(cents(summary.collectedCents, Number.MAX_SAFE_INTEGER)) === collected
+    && BigInt(cents(summary.refundedCents, Number.MAX_SAFE_INTEGER)) === refunded
+    && signedCents(summary.netCents) === collected - refunded)
 }
 
 /** Validate only financial DTOs consumed by checkout. Never repair a malformed server result. */
@@ -206,6 +234,14 @@ export function assertFinancialResponse(command: PosCommand, value: unknown): vo
       if (command.command === 'resolve_checkout') requireValue(value.status === (command.resolution === 'complete' ? 'completed' : 'aborted'))
       if (command.command === 'update_checkout' || command.command === 'start_checkout' || command.command === 'mark_checkout_uncertain' || command.command === 'resolve_checkout') requireValue(value.revision > command.expectedRevision)
     } else if (command.command === 'record_checkout' || command.command === 'record_payment') completedPayment(value, command)
+    else if (shiftCommands.has(command.command)) {
+      assertFinancialShift(value)
+      if ('shiftId' in command && value.paymentSummary !== undefined) requireValue(sameId(value.id, command.shiftId))
+    } else if (command.command === 'shifts') {
+      const result = object(value)
+      requireValue(Array.isArray(result.shifts))
+      for (const shift of result.shifts) assertFinancialShift(shift)
+    }
     else if (command.command === 'sale' || command.command === 'complete_sale') {
       assertFinancialSale(value)
       if (command.command === 'sale') requireValue(sameId(value.id, command.saleId))
@@ -225,6 +261,7 @@ export function assertFinancialResponse(command: PosCommand, value: unknown): vo
         requireValue(!orderIds.has(order.id.toLowerCase())); orderIds.add(order.id.toLowerCase())
       }
       if (command.command === 'operations') {
+        if (result.shift !== undefined && result.shift !== null) assertFinancialShift(result.shift)
         requireValue(Array.isArray(result.attempts))
         const attemptIds = new Set<string>()
         for (const attempt of result.attempts) {

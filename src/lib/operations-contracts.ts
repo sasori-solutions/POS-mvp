@@ -3,11 +3,19 @@ import type { ItemSelection, SaleInputLine, VatTreatment } from './pos-contracts
 
 export type ShiftStatus = 'open' | 'closing' | 'closed'
 export interface CashMovement { id: string; kind: 'in' | 'out'; amountCents: number; reason: string; actorName: string; createdAt: string }
+export interface ShiftPaymentSummary {
+  collectedCents: number; refundedCents: number; netCents: number
+  payments: { paymentMethod: PaymentMethod; collectedCents: number; refundedCents: number; netCents: number }[]
+  /** Provider refunds have no persisted cash-shift attribution; their report remains authoritative. */
+  pointRefundsNotAttributed: true
+}
 export interface CashShift {
   id: string; revision: number; status: ShiftStatus; openedAt: string; closedAt: string | null
   openedBy: string; closedBy: string | null; openingCents: number
   countedCents: number | null; expectedCents: number | null; differenceCents: number | null
   movements: CashMovement[]
+  /** Absent on older accepted responses, masked reads and blind counting. */
+  paymentSummary?: ShiftPaymentSummary
 }
 export interface DiningTable { id: string; name: string; active: boolean; revision: number; orderId: string | null }
 export interface OrderInputLine extends SaleInputLine { lineId: string; note: string }
