@@ -110,11 +110,15 @@ test('invalid branch, payment methods and phone stay on business details before 
   await expect(page.getByRole('alert')).toContainText(/sucursal|caja/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
   await page.getByLabel('Sucursal', { exact: true }).fill('Principal');
-  await page.getByLabel('Efectivo', { exact: true }).uncheck();
-  await page.getByLabel('Tarjeta', { exact: true }).uncheck();
+  for (const name of ['Efectivo', 'Tarjeta externa', 'Mercado Pago Point', 'Transferencia']) {
+    const method = page.getByRole('checkbox', { name, exact: true });
+    await method.uncheck();
+    await expect(method).not.toBeChecked();
+  }
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText(/método|pago/i);
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).not.toBeVisible();
+  expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
   await page.getByLabel('Efectivo', { exact: true }).check();
   await page.getByLabel('Teléfono', { exact: true }).fill('abcde');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
@@ -124,6 +128,7 @@ test('invalid branch, payment methods and phone stay on business details before 
   await page.getByLabel('Teléfono', { exact: true }).fill('');
   await page.getByRole('button', { name: 'Continuar', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Crea tu PIN', exact: true })).toBeVisible();
+  expect(calls.filter((call) => call.action === 'create_business')).toHaveLength(0);
 });
 
 test('joining retries invalid invitations and applies assigned permissions without self selection', async ({ page }) => {
