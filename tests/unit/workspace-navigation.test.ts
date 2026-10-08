@@ -29,6 +29,16 @@ test('role titles never grant access and previously granted special modules rema
   expect(availableDestinations({ role: 'cashier', permissions: ['catalog.read', 'sales.create', 'cash.read', 'reports.read'] })).toEqual(['Venta', 'Productos', 'Caja', 'Reportes', 'Más'])
 })
 
+test('taking service accounts is available without granting collection on phone and desktop', () => {
+  const employee = { role: 'cashier' as const, permissions: ['catalog.read', 'orders.read', 'orders.manage'] as BusinessContext['permissions'], profile: { accountsEnabled: true } as BusinessContext['profile'] }
+  expect(initialDestination(employee)).toBe('Venta')
+  expect(primaryDestinations(employee, true)).toEqual(['Venta', 'Comandas', 'Más'])
+  expect(sidebarDestinations(employee, true)).toContain('Venta')
+  const direct = { ...employee, profile: { ...employee.profile, accountsEnabled: false } }
+  expect(availableDestinations(direct)).not.toContain('Venta')
+  expect(availableDestinations(direct)).toContain('Comandas')
+})
+
 
 test('the employee sidebar directly exposes all granted modules and personal reports', () => {
   const business = { role: 'cashier', permissions: ['catalog.read', 'sales.create', 'sales.read_own', 'cash.read', 'reports.read_own'] } as Pick<BusinessContext, 'role' | 'permissions'>

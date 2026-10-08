@@ -38,3 +38,7 @@
 @keyframes discount-editor-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (max-width: 374px) { .order-discount-actions { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .order-discount-editor { animation: none; } }
+
+.order-discount-scope { display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow: auto; padding: 12px; border: 1px solid var(--operations-line); border-radius: 12px; }
+.order-discount-scope label { min-height: 48px; align-items: center; }
+.order-discount-scope legend { padding: 0 4px; font-size: 14px; }

@@ -1,24 +1,38 @@
+import type { ServiceCommand, ServiceResponses, ServiceErrorCode } from './service-contracts.ts'
+import type { MenuCommand, MenuResponses, MenuErrorCode } from './menu-contracts.ts'
+import type { PromotionCommand, PromotionResponses, PromotionErrorCode, PromotionScope, PromotionSnapshot } from './promotion-contracts.ts'
 import type { PaymentMethod } from './contracts.ts'
-import type { ItemSelection, SaleInputLine, VatTreatment } from './pos-contracts.ts'
+import type { ComboComponentSnapshot, ItemSelection, SaleInputLine, VatTreatment } from './pos-contracts.ts'
 
 export type ShiftStatus = 'open' | 'closing' | 'closed'
 export interface CashMovement { id: string; kind: 'in' | 'out'; amountCents: number; reason: string; actorName: string; createdAt: string }
+export interface ShiftPaymentSummary {
+  collectedCents: number; refundedCents: number; netCents: number
+  payments: { paymentMethod: PaymentMethod; collectedCents: number; refundedCents: number; netCents: number }[]
+  /** Provider refunds have no persisted cash-shift attribution; their report remains authoritative. */
+  pointRefundsNotAttributed: true
+}
 export interface CashShift {
   id: string; revision: number; status: ShiftStatus; openedAt: string; closedAt: string | null
   openedBy: string; closedBy: string | null; openingCents: number
   countedCents: number | null; expectedCents: number | null; differenceCents: number | null
   movements: CashMovement[]
+  /** Absent on older accepted responses, masked reads and blind counting. */
+  paymentSummary?: ShiftPaymentSummary
 }
-export interface DiningTable { id: string; name: string; active: boolean; revision: number; orderId: string | null }
-export interface OrderInputLine extends SaleInputLine { lineId: string; note: string }
+export interface TableLayout { zone: string; row: number; column: number; seats: number; shape: 'square' | 'round' | 'rectangle' }
+export interface DiningTable { id: string; name: string; active: boolean; revision: number; orderId: string | null; visitId?: string | null; layout?: TableLayout | null }
+export type OrderInputLine = SaleInputLine & { lineId: string; note: string }
 export interface OrderLine {
+  comboComponents?: ComboComponentSnapshot[]
   version: number; selection?: ItemSelection | null
-  lineId: string; productId: string; name: string; kitchenName: string; category: string; selectionLabel: string; note: string
+  kind?: 'product' | 'amount'
+  lineId: string; productId: string | null; name: string; kitchenName: string; category: string; selectionLabel: string; note: string
   quantity: number; paidQuantity: number; sentQuantity: number; unitPriceCents: number
   paidTotalCents?: number; paidDiscountCents?: number; paidTaxCents?: number
   grossCents: number; discountCents: number; totalCents: number; taxCents: number; taxBps: number; taxTreatment: VatTreatment | 'legacy'
 }
-export interface OrderDiscount { kind: 'fixed' | 'percent'; value: number; reason: string }
+export interface OrderDiscount { kind: 'fixed' | 'percent'; value: number; reason: string; scope?: PromotionScope; promotion?: PromotionSnapshot }
 export type OrderKind = 'counter' | 'service'
 export interface OperationalOrder {
   id: string; revision: number; name: string; tableId: string | null
@@ -32,7 +46,7 @@ export interface OperationalOrder {
 export interface KitchenBatch {
   id: string; orderId: string; orderName: string; tableName: string | null; createdAt: string
   revision: number; status: 'queued' | 'preparing' | 'ready' | 'delivered'; kind: 'items' | 'cancellation'
-  reason: string; fullyCancelled: boolean; items: { lineId: string; name: string; selectionLabel: string; note: string; quantity: number; cancelledQuantity?: number }[]
+  reason: string; fullyCancelled: boolean; items: { lineId: string; name: string; selectionLabel: string; note: string; quantity: number; cancelledQuantity?: number; comboComponents?: ComboComponentSnapshot[] }[]
 }
 export type AttemptStatus = 'prepared' | 'collection_started' | 'completed' | 'aborted' | 'uncertain'
 export interface CheckoutSelection { lineId: string; quantity: number }
@@ -42,7 +56,7 @@ export interface CheckoutAttempt {
   taxCents: number; discountCents: number; operatorName: string; resolverName: string | null
   createdAt: string; resolvedAt: string | null; reason: string
   amountsCents?: number[]
-  items: { allocatedGrossCents?: number; lineId: string; productId: string; name: string; quantity: number; unitPriceCents: number; discountCents: number; totalCents: number; taxCents: number }[]
+  items: { kind?: 'product' | 'amount'; allocatedGrossCents?: number; lineId: string; productId: string | null; name: string; quantity: number; unitPriceCents: number; discountCents: number; totalCents: number; taxCents: number }[]
 }
 export interface BalanceWaiver { id: string; orderId: string; revision: number; status: 'prepared' | 'completed'; amountCents: number; reason: string; operatorName: string; resolvedAt: string | null }
 export interface BusinessDayReport {
@@ -52,7 +66,7 @@ export interface BusinessDayReport {
   unallocatedRefundCents?: number; unknownReversalTaxCents?: number
   payments: { paymentMethod: PaymentMethod; salesCents: number; reversalCents: number; netCents: number }[]
   operators: { name: string; salesCents: number; reversalCents: number; netCents: number }[]
-  products: { productId: string; name: string; quantity: number; salesCents: number; taxCents: number; reversalQuantity: number; reversalCents: number; reversalTaxCents: number; netCents: number; netTaxCents: number }[]
+  products: { kind?: 'product' | 'amount'; productId: string | null; name: string; quantity: number; salesCents: number; taxCents: number; reversalQuantity: number; reversalCents: number; reversalTaxCents: number; netCents: number; netTaxCents: number }[]
   cashDifferences: { shiftId: string; closedAt: string; expectedCents: number; countedCents: number; differenceCents: number }[]
 }
 export interface OperationsSnapshot { enabled: boolean; shift: CashShift | null; orders: OperationalOrder[]; tables: DiningTable[]; attempts: CheckoutAttempt[]; pendingKitchenCount?: number }
@@ -70,7 +84,7 @@ export interface BusinessPeriodReport {
   series: ReportSeriesPoint[]; previousSeries: ReportSeriesPoint[]
 }
 
-export type OperationsCommand =
+export type OperationsCommand = ServiceCommand | MenuCommand | PromotionCommand
   | { command: 'operations' }
   | { command: 'activate_operations'; operationId: string }
   | { command: 'shifts' }
@@ -91,6 +105,7 @@ export type OperationsCommand =
   | { command: 'set_kitchen_status'; operationId: string; batchId: string; expectedRevision: number; status: 'preparing' | 'ready' | 'delivered' }
   | { command: 'tables' }
   | { command: 'save_table'; operationId: string; tableId: string; expectedRevision: number | null; name: string; active: boolean }
+  | { command: 'set_table_layout'; operationId: string; tableId: string; expectedRevision: number; layout: TableLayout | null }
   | { command: 'move_order'; operationId: string; orderId: string; expectedRevision: number; tableId: string | null }
   | { command: 'close_order'; operationId: string; orderId: string; expectedRevision: number }
   | { command: 'prepare_checkout'; amountsCents?: number[]; operationId: string; orderId: string; expectedRevision: number; items: CheckoutSelection[]; paymentMethod: PaymentMethod }
@@ -109,7 +124,7 @@ export type OperationsCommand =
   /** Actor is resolved from the live operator on the server. */
   | { command: 'report_own_period'; date: string; period: ReportPeriod }
 
-export interface OperationsResponses {
+export interface OperationsResponses extends ServiceResponses, MenuResponses, PromotionResponses {
   update_checkout: CheckoutAttempt
   record_checkout: { order: OperationalOrder; attempt: CheckoutAttempt }
   record_payment: { order: OperationalOrder; attempt: CheckoutAttempt }
@@ -120,13 +135,15 @@ export interface OperationsResponses {
   set_order_discount: OperationalOrder; cancel_order: OperationalOrder; send_order: OperationalOrder; begin_order_checkout: OperationalOrder; resume_order_service: OperationalOrder
   kitchen: { batches: KitchenBatch[] }; set_kitchen_status: KitchenBatch
   tables: { tables: DiningTable[] }; save_table: DiningTable; move_order: OperationalOrder; close_order: OperationalOrder
+  set_table_layout: DiningTable
   prepare_checkout: CheckoutAttempt; attempt: CheckoutAttempt; start_checkout: CheckoutAttempt; mark_checkout_uncertain: CheckoutAttempt
   resolve_checkout: CheckoutAttempt; prepare_reversal: CheckoutAttempt
   prepare_waiver: BalanceWaiver; confirm_waiver: BalanceWaiver; report: BusinessDayReport
   report_period: BusinessPeriodReport
   report_own_period: BusinessPeriodReport
 }
-export type OperationsErrorCode = 'OPERATIONS_DISABLED' | 'LEGACY_CHECKOUT_DISABLED' | 'SHIFT_REQUIRED' | 'SHIFT_CHANGED' | 'SHIFT_NOT_OPEN' | 'SHIFT_ALREADY_OPEN'
+export type OperationsErrorCode = ServiceErrorCode | MenuErrorCode | PromotionErrorCode | 'OPERATIONS_DISABLED' | 'LEGACY_CHECKOUT_DISABLED' | 'SHIFT_REQUIRED' | 'SHIFT_CHANGED' | 'SHIFT_NOT_OPEN' | 'SHIFT_ALREADY_OPEN'
   | 'PENDING_COLLECTION' | 'ORDER_CHANGED' | 'ORDER_NOT_FOUND' | 'ORDER_LOCKED' | 'ORDER_HAS_PAYMENTS'
   | 'ATTEMPT_NOT_FOUND' | 'ATTEMPT_CHANGED' | 'ATTEMPT_STATE_INVALID' | 'TABLE_CHANGED' | 'TABLE_OCCUPIED'
   | 'BATCH_CHANGED' | 'WAIVER_CHANGED' | 'SALE_ALREADY_REVERSED'
+  | 'TABLE_POSITION_OCCUPIED'

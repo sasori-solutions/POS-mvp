@@ -251,6 +251,19 @@ test('Point never starts a reservation changed by another register before prepar
   expect(screen.getByRole('button', { name: 'Cancelar cobro' })).toBeTruthy()
 })
 
+test('Point cannot start a different amount concept even when reservation identity and money match', async () => {
+  const expected = pointCheckout()
+  expected.checkout.items = expected.checkout.items.map(line => ({ ...line, kind: 'amount', productId: null, name: 'Servicio original' }))
+  expected.items = expected.items.map(line => ({ ...line, kind: 'amount', productId: null, name: 'Servicio original' }))
+  const changed = { ...expected, checkout: { ...expected.checkout, items: expected.checkout.items.map(line => ({ ...line, name: 'Otro concepto' })) }, items: expected.items.map(line => ({ ...line, name: 'Otro concepto' })) }
+  vi.mocked(pointRequest).mockResolvedValue(changed)
+  render(<PointPayment access={pointAccess} attempt={expected.checkout} settings={pointSettings()} />)
+  fireEvent.click(await screen.findByRole('button', { name: /^Enviar a terminal/ }))
+  await screen.findByText('La reserva cambió. Revisa el importe actualizado o cancela este intento.')
+  expect((screen.getByRole('button', { name: /^Enviar a terminal/ }) as HTMLButtonElement).disabled).toBe(true)
+  expect(vi.mocked(pointRequest).mock.calls.map(([, command]) => command.command)).toEqual(['prepare'])
+})
+
 
 test('an externally verified full refund keeps an uncorrelated pending request visible and cannot offer another refund', async () => {
   const paid = pointPaid()

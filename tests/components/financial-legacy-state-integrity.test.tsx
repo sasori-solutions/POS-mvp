@@ -99,17 +99,36 @@ test('closing legacy checkout while waiting to persist never writes or sends an 
   expect(posRequest).not.toHaveBeenCalled()
 })
 
-test('new legacy checkout never offers manual card collection', async () => {
+test('new legacy checkout records an explicitly confirmed external card without enabling Point', async () => {
   catalog.paymentMethods = ['card_external', 'card_integrated']
+  const response = deferred<Sale>()
+  vi.mocked(posRequest).mockReturnValue(response.promise)
   render(<SaleScreen {...props()} />)
   fireEvent.click(screen.getByRole('button', { name: 'Agregar Café sintético, $10.01' }))
   fireEvent.click(screen.getByRole('button', { name: 'Cobrar' }))
-  const card = await screen.findByRole('radio', { name: 'Tarjeta Mercado Pago' }) as HTMLInputElement
-  expect(card.disabled).toBe(true)
-  expect(screen.queryByRole('radio', { name: /Tarjeta externa|Registro manual/ })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
+  const point = await screen.findByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true }) as HTMLInputElement
+  expect(point.disabled).toBe(true)
+  const external = screen.getByRole('radio', { name: 'Tarjeta externa', exact: true }) as HTMLInputElement
+  expect(external.disabled).toBe(false)
+  fireEvent.click(external)
+  const approval = screen.getByRole('checkbox', { name: 'Confirmo que la terminal externa aprobó este pago.', exact: true }) as HTMLInputElement
+  const register = screen.getByRole('button', { name: 'Registrar pago', exact: true }) as HTMLButtonElement
+  expect(approval.checked).toBe(false)
+  expect(register.disabled).toBe(true)
+  fireEvent.click(register)
   expect(posRequest).not.toHaveBeenCalled()
   expect(localStorage.getItem(key)).toBeNull()
+  fireEvent.click(approval)
+  expect(register.disabled).toBe(false)
+  fireEvent.click(register)
+  await waitFor(() => expect(posRequest).toHaveBeenCalledOnce())
+  const pending = JSON.parse(localStorage.getItem(key)!)
+  expect(pending).toMatchObject({ command: 'complete_sale', paymentMethod: 'card_external', totalCents: 1001, items: command.items })
+  expect(posRequest).toHaveBeenCalledWith(access, pending)
+  await act(async () => response.resolve({ ...sale, paymentMethod: 'card_external' }))
+  expect(await screen.findByRole('heading', { name: 'Venta registrada' })).toBeTruthy()
+  expect(localStorage.getItem(key)).toBeNull()
+  expect(posRequest).toHaveBeenCalledOnce()
 })
 
 test('an uncertain historical card operation retries its exact payload and UUID without creating a Point payment', async () => {

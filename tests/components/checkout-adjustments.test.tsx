@@ -12,6 +12,7 @@ import { posRequest } from '../../src/lib/pos'
 import { orderDiscountPreview } from '../../src/features/operations/order-discount-model'
 
 vi.mock('../../src/lib/pos', async original => ({ ...await original<object>(), posRequest: vi.fn() }))
+const operationalRead = vi.fn<typeof posRequest>()
 const business = { id: 'synthetic-business', name: 'Café sintético', role: 'owner', permissions: [], profile: { paymentMethods: ['cash', 'transfer'] } } as unknown as BusinessContext
 const order: OperationalOrder = {
   id: 'synthetic-order', revision: 1, name: 'Cuenta sintética', tableId: null, status: 'open', phase: 'checkout', frozen: false,
@@ -31,7 +32,12 @@ beforeAll(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
 })
-beforeEach(() => vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))))
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+  // Library reads must never consume an order/attempt response or its lost-response error.
+  vi.mocked(posRequest).mockImplementation((currentAccess, command) => command.command === 'promotions'
+    ? Promise.resolve({ promotions: [] }) as never : operationalRead(currentAccess, command))
+})
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals() })
 afterAll(() => { HTMLDialogElement.prototype.showModal = originalShow; HTMLDialogElement.prototype.close = originalClose })
 function Harness({ request, attempts = [], initial = order, onSaved = vi.fn(), collectionAllowed = true }: { request: OperationalMutation; attempts?: CheckoutAttempt[]; initial?: OperationalOrder; onSaved?: (value: OperationalOrder) => void; collectionAllowed?: boolean }) {
@@ -42,6 +48,12 @@ function fillDiscount() {
   fireEvent.click(screen.getByRole('button', { name: 'Añadir descuento' }))
   fireEvent.click(screen.getByRole('button', { name: '10%' }))
   fireEvent.change(screen.getByLabelText('Motivo'), { target: { value: 'Cortesía sintética' } })
+}
+async function confirmTransfer() {
+  const confirmation = await screen.findByRole('checkbox', { name: 'Confirmo que el comercio recibió esta transferencia.' }) as HTMLInputElement
+  await waitFor(() => expect(confirmation.disabled).toBe(false))
+  expect((screen.getByRole('button', { name: 'Registrar pago' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(confirmation)
 }
 
 test('editing pauses the pending reservation and applies the discount through the required order phases', async () => {
@@ -60,7 +72,7 @@ test('editing pauses the pending reservation and applies the discount through th
     if (command.command === 'begin_order_checkout') { server = { ...server, revision: server.revision + 1, phase: 'checkout' }; return server }
     throw new Error('Unexpected command')
   })
-  vi.mocked(posRequest).mockImplementation(async () => ({ ...quoteFor(server), paymentMethod: 'cash' }))
+  operationalRead.mockImplementation(async () => ({ ...quoteFor(server), paymentMethod: 'cash' }))
   render(<Harness request={request} />)
   fillDiscount()
   expect(screen.queryByRole('button', { name: 'Registrar pago' })).toBeNull()
@@ -88,7 +100,7 @@ test('a reserved discount applies directly and retries a failed read without abo
     if (command.command === 'prepare_checkout') return { ...quoteFor(server), id: 'synthetic-new-quote' }
     throw new Error('Unexpected command')
   })
-  vi.mocked(posRequest).mockRejectedValueOnce(new Error('Sin conexión. Inténtalo de nuevo.')).mockImplementation(async (_access, command) => command.command === 'order' ? server : { ...quoteFor(server), id: 'synthetic-new-quote' })
+  operationalRead.mockRejectedValueOnce(new Error('Sin conexión. Inténtalo de nuevo.')).mockImplementation(async (_access, command) => command.command === 'order' ? server : { ...quoteFor(server), id: 'synthetic-new-quote' })
   render(<Harness request={request} attempts={[quote]} />)
   fillDiscount()
   expect((screen.getByRole('button', { name: 'Aplicar descuento' }) as HTMLButtonElement).disabled).toBe(false)
@@ -126,7 +138,7 @@ test('removing a reserved discount directly replaces its quote using the fresh o
     if (command.command === 'prepare_checkout') return { ...quoteFor(server), id: 'synthetic-undiscounted-quote', paymentMethod: command.paymentMethod }
     throw new Error('Unexpected command')
   })
-  vi.mocked(posRequest).mockImplementation(async (_access, command) => command.command === 'order' ? server : { ...quoteFor(server), id: 'synthetic-undiscounted-quote' })
+  operationalRead.mockImplementation(async (_access, command) => command.command === 'order' ? server : { ...quoteFor(server), id: 'synthetic-undiscounted-quote' })
   render(<Harness request={request} initial={server} attempts={[quote]} />)
   fireEvent.click(screen.getByRole('button', { name: /Editar descuento/ }))
   expect(screen.queryByRole('checkbox')).toBeNull()
@@ -136,6 +148,7 @@ test('removing a reserved discount directly replaces its quote using the fresh o
   expect(screen.queryByText(/recibí|recibiste|confirma/i)).toBeNull()
   expect(vi.mocked(request.execute).mock.calls.filter(([command]) => command.command === 'resolve_checkout')).toHaveLength(1)
   expect(vi.mocked(request.execute).mock.calls.filter(([command]) => command.command === 'set_order_discount')).toHaveLength(1)
+  await confirmTransfer()
   await waitFor(() => expect((screen.getByRole('button', { name: 'Registrar pago' }) as HTMLButtonElement).disabled).toBe(false))
   expect(server.totalCents).toBe(3003)
 })
@@ -143,12 +156,12 @@ test('removing a reserved discount directly replaces its quote using the fresh o
 test('the checkout stays locked during a discount read and a late reply after unmount never continues the workflow', async () => {
   const request = mutation(), quote = quoteFor(), onClose = vi.fn(), onSaved = vi.fn()
   let complete!: (value: OperationalOrder) => void
-  vi.mocked(posRequest).mockImplementation(() => new Promise(resolve => { complete = resolve }))
+  operationalRead.mockImplementation(() => new Promise(resolve => { complete = resolve }))
   vi.mocked(request.execute).mockResolvedValue({ ...quote, revision: 2, status: 'aborted' })
   const view = render(<CheckoutPanel onClose={onClose}><Harness request={request} attempts={[quote]} onSaved={onSaved} /></CheckoutPanel>)
   fillDiscount()
   fireEvent.click(screen.getByRole('button', { name: 'Aplicar descuento' }))
-  await waitFor(() => expect(posRequest).toHaveBeenCalled())
+  await waitFor(() => expect(operationalRead).toHaveBeenCalledWith(access, { command: 'order', orderId: order.id }))
   const close = document.querySelector<HTMLButtonElement>('.checkout-back')!
   expect(close.disabled).toBe(true)
   fireEvent.click(close)
@@ -164,6 +177,7 @@ test('quantities, mode and method stay fixed while a payment is being recorded',
   let complete!: (value: unknown) => void
   vi.mocked(request.execute).mockImplementation(() => new Promise(resolve => { complete = resolve }) as never)
   render(<Harness request={request} attempts={[quote]} />)
+  await confirmTransfer()
   fireEvent.click(screen.getByRole('button', { name: 'Registrar pago' }))
   expect((screen.getByRole('button', { name: 'Añadir Café a este cobro' }) as HTMLButtonElement).disabled).toBe(true)
   expect((screen.getByRole('radio', { name: 'Cobrar todo' }) as HTMLInputElement).disabled).toBe(true)
@@ -196,7 +210,7 @@ test('recovering the exact discount request accepts the saved amount and closes 
     if (command.command === 'prepare_checkout') return { ...quoteFor(discounted), paymentMethod: command.paymentMethod }
     throw new Error('Unexpected command')
   })
-  vi.mocked(posRequest).mockImplementation(async (_access, command) => command.command === 'order' ? discounted : quoteFor(discounted))
+  operationalRead.mockImplementation(async (_access, command) => command.command === 'order' ? discounted : quoteFor(discounted))
   const view = render(<Harness request={request} onSaved={onSaved} />)
   fillDiscount()
   fireEvent.click(screen.getByRole('button', { name: 'Aplicar descuento' }))
@@ -227,7 +241,7 @@ test('recovering resume service keeps the discount draft and uses the recovered 
     if (command.command === 'prepare_checkout') return { ...quoteFor(discounted), paymentMethod: command.paymentMethod }
     throw new Error('Unexpected command')
   })
-  vi.mocked(posRequest).mockImplementation(async (_access, command) => command.command === 'order' ? serviceOrder : quoteFor(discounted))
+  operationalRead.mockImplementation(async (_access, command) => command.command === 'order' ? serviceOrder : quoteFor(discounted))
   const view = render(<Harness request={request} onSaved={onSaved} />)
   fillDiscount()
   fireEvent.click(screen.getByRole('button', { name: 'Aplicar descuento' }))

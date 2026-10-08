@@ -35,6 +35,48 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     }
   },60_000)
 
+  it('summarizes persisted payments and next-shift refunds through signed HTTP without exposing blind or ungranted totals', async () => {
+    const { owner, staff, shift } = await fixture(['catalog.read', 'sales.create'])
+    const initial = await activeShift(owner)
+    expect(initial.paymentSummary).toMatchObject({ collectedCents: 0, refundedCents: 0, netCents: 0, pointRefundsNotAttributed: true })
+    const account = await checkoutPhase(owner, await createOrder(owner))
+    const quote = await prepare(owner, account)
+    const command = { command: 'record_checkout' as const, operationId: randomUUID(), attemptId: quote.id, expectedRevision: quote.revision, confirmed: true as const }
+    const lost = await raw(owner.identity, { action: 'pos', ...args(owner), ...command })
+    expect(lost.status).toBe(200); await lost.body?.cancel()
+    const receipt = data(await pos<{ order: OperationalOrder; attempt: CheckoutAttempt }>(owner, command))
+    expect(data(await pos(owner, command))).toEqual(receipt)
+    const transferOrder = await checkoutPhase(owner, await createOrder(owner))
+    const transfer = data(await pos<CheckoutAttempt>(owner, { ...prepareCommand(transferOrder), paymentMethod: 'transfer' }))
+    data(await pos(owner, { command: 'record_checkout', operationId: randomUUID(), attemptId: transfer.id, expectedRevision: transfer.revision, confirmed: true }))
+    const current = await activeShift(owner)
+    expect(current.revision).toBe(initial.revision)
+    expect(current.paymentSummary).toMatchObject({ collectedCents: 2002, refundedCents: 0, netCents: 2002 })
+    expect(current.paymentSummary!.payments.find(row => row.paymentMethod === 'cash')).toMatchObject({ collectedCents: 1001 })
+    expect((await activeShift(staff)).paymentSummary).toBeUndefined()
+    expect(await pos(staff, { command: 'shifts' })).toMatchObject({ status: 403, body: { error: { code: 'PERMISSION_DENIED' } } })
+    const closing = data(await pos<CashShift>(owner, { command: 'begin_shift_close', operationId: randomUUID(), shiftId: shift.id, expectedRevision: current.revision }))
+    expect(closing.paymentSummary).toBeUndefined()
+    expect((await activeShift(owner)).paymentSummary).toBeUndefined()
+    expect(data(await pos<{ shifts: CashShift[] }>(owner, { command: 'shifts' })).shifts.find(row => row.id === shift.id)!.paymentSummary).toBeUndefined()
+    const closeCommand = { command: 'close_shift' as const, operationId: randomUUID(), shiftId: shift.id, expectedRevision: closing.revision, countedCents: 11001 }
+    const closed = data(await pos<CashShift>(owner, closeCommand))
+    expect(closed).toMatchObject({ expectedCents: 11001, differenceCents: 0, paymentSummary: current.paymentSummary })
+    const next = data(await pos<CashShift>(owner, { command: 'open_shift', operationId: randomUUID(), openingCents: 2000 }))
+    let reversal = data(await pos<CheckoutAttempt>(owner, { command: 'prepare_reversal', operationId: randomUUID(), saleId: receipt.attempt.saleId!, reason: 'Devolución sintética en otro turno' }))
+    reversal = data(await pos<CheckoutAttempt>(owner, { command: 'start_checkout', operationId: randomUUID(), attemptId: reversal.id, expectedRevision: reversal.revision }))
+    const refundCommand = confirmation(reversal)
+    const refunded = data(await pos(owner, refundCommand))
+    expect(data(await pos(owner, refundCommand))).toEqual(refunded)
+    expect((await activeShift(owner)).paymentSummary).toMatchObject({ collectedCents: 0, refundedCents: 1001, netCents: -1001 })
+    const history = data(await pos<{ shifts: CashShift[] }>(owner, { command: 'shifts' })).shifts
+    expect(history.find(row => row.id === shift.id)!.paymentSummary).toEqual(closed.paymentSummary)
+    expect(data(await pos(owner, closeCommand))).toEqual(closed)
+    const foreign = await fixture(['catalog.read', 'sales.create'])
+    expect(data(await pos<{ shifts: CashShift[] }>(foreign.owner, { command: 'shifts' })).shifts.some(row => row.id === next.id)).toBe(false)
+    expect(count(owner, 'sales')).toBe(2); expect(count(owner, 'sale_reversals')).toBe(1)
+  }, 45_000)
+
   it('persists the three kitchen stages through signed HTTP without changing the confirmed payment', async () => {
     const { owner, staff } = await fixture(['kitchen.read', 'kitchen.operate'])
     const order = await createOrder(owner)
@@ -111,6 +153,42 @@ describe.skipIf(!config)('lean operations through real Auth/Edge and simultaneou
     expect(data(await pos(staff, command))).toEqual(saved)
     expect(data(await pos<OperationalOrder>(owner, { command: 'order', orderId: saved.id }))).toMatchObject({ orderKind: 'counter', paidCents: 1001, balanceCents: 0, status: 'paid' })
     expect(count(owner, 'sales')).toBe(1)
+  }, 45_000)
+
+  it('collects a catalog-free amount through signed HTTP with exact replay, VAT, receipt and refund snapshots', async () => {
+    const { owner, staff } = await fixture(['catalog.read', 'sales.create', 'sales.read_all', 'sales.reverse', 'reports.read'])
+    data(await call(owner.identity, { action: 'update_business', ...args(owner), name: owner.operator.business.name, businessType: owner.operator.business.businessType,
+      timezone: owner.operator.business.timezone, profile: { ...owner.operator.business.profile, defaultVatTreatment: 'vat_16' } }))
+    const line: OrderInputLine = { lineId: randomUUID(), kind: 'amount', name: 'Servicio sintético', quantity: 1, unitPriceCents: 1001, note: '' }
+    const save = { command: 'save_order' as const, operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, orderKind: 'counter' as const, name: 'Importe directo', tableId: null, items: [line] }
+    const catalogBefore = data(await pos<{ products: Product[] }>(owner, { command: 'catalog' }))
+    for (const invalid of [{ unitPriceCents: 0 }, { unitPriceCents: 1001.5 }, { productId: randomUUID() }, { selection: {} }, { version: 1 }]) {
+      const reply = await call(staff.identity, { action: 'pos', ...args(staff), ...save, operationId: randomUUID(), items: [{ ...line, ...invalid }] })
+      expect(reply).toMatchObject({ status: 400, body: { error: { code: 'VALIDATION_ERROR' } } })
+    }
+    const discarded = await raw(staff.identity, { action: 'pos', ...args(staff), ...save })
+    expect(discarded.status).toBe(200); await discarded.body?.cancel()
+    let order = data(await pos<OperationalOrder>(staff, save))
+    expect(order.items[0]).toMatchObject({ kind: 'amount', productId: null, name: line.name, totalCents: 1001, taxCents: 138, sentQuantity: 0, taxTreatment: 'vat_16' })
+    expect(data(await pos(owner, { command: 'catalog' }))).toEqual(catalogBefore)
+    order = await checkoutPhase(staff, order)
+    const quote = await prepare(staff, order)
+    const record = { command: 'record_checkout' as const, operationId: randomUUID(), attemptId: quote.id, expectedRevision: quote.revision, confirmed: true as const }
+    const [first, second] = await Promise.all([pos<{ order: OperationalOrder; attempt: CheckoutAttempt }>(staff, record), pos<{ order: OperationalOrder; attempt: CheckoutAttempt }>(staff, record)])
+    expect(data(first)).toEqual(data(second))
+    const paid = data(first)
+    expect(paid.order).toMatchObject({ paidCents: 1001, balanceCents: 0, items: [{ sentQuantity: 0, paidQuantity: 1 }] })
+    expect((await kitchen(owner)).filter(batch => batch.orderId === order.id)).toEqual([])
+    expect(count(owner, 'sales')).toBe(1)
+    const receipt = data(await pos<Sale>(staff, { command: 'sale', saleId: paid.attempt.saleId! }))
+    expect(receipt.items).toMatchObject([{ kind: 'amount', productId: null, name: line.name, unitPriceCents: 1001, totalCents: 1001, taxCents: 138 }])
+    const reversal = data(await pos<CheckoutAttempt>(staff, { command: 'prepare_reversal', operationId: randomUUID(), saleId: receipt.id, reason: 'Corrección sintética' }))
+    const started = data(await pos<CheckoutAttempt>(staff, { command: 'start_checkout', operationId: randomUUID(), attemptId: reversal.id, expectedRevision: reversal.revision }))
+    const reversed = data(await pos<CheckoutAttempt>(staff, confirmation(started)))
+    expect(reversed.items[0]).toMatchObject({ kind: 'amount', productId: null, name: line.name, totalCents: 1001, taxCents: 138 })
+    const report = data(await pos<BusinessDayReport>(owner, { command: 'report', date: businessDate(owner.operator.business.timezone) }))
+    expect(report).toMatchObject({ salesCents: 1001, reversalCents: 1001, netCents: 0, taxCents: 138 })
+    expect(report.products).toMatchObject([{ kind: 'amount', productId: null, name: 'Importe libre', salesCents: 1001, reversalCents: 1001, netCents: 0 }])
   }, 45_000)
 
   it('collects an amount plan through signed Auth/Edge with duplicate taps and exact remaining balance',async()=>{

@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite'
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import type { PosCommand, Product } from '../../src/lib/pos-contracts'
+import type { BusinessContext } from '../../src/lib/contracts'
 import type { KitchenBatch, OperationalOrder } from '../../src/lib/operations-contracts'
 
 type Actor = { businessId: string; userId: string; sessionId: string; employeeId: string; token: string; keyHash: string }
@@ -65,6 +66,50 @@ describe('persisted three-stage kitchen workflow', () => {
     await expect(execute(reader, command)).rejects.toThrow('PERMISSION_DENIED')
     expect((await execute<{ batches: KitchenBatch[] }>(reader, { command: 'kitchen' })).batches.find(item => item.id === batch.id)?.status).toBe('queued')
   })
+
+  test('configured open accounts send incremental unpaid work, stay editable after disabling new accounts and pay without duplicate kitchen work', async () => {
+    const owner = await actor()
+    expect((await configureAccounts(owner, false)).profile.accountsEnabled).toBe(false)
+    const product = await execute<Product>(owner, { command: 'save_product', operationId: randomUUID(), productId: randomUUID(), expectedVersion: null, name: 'Café sintético', category: '', priceCents: 1001 })
+    const line = { lineId: randomUUID(), productId: product.id, version: product.version, unitPriceCents: product.priceCents, quantity: 1, note: '' }
+    const draft = { command: 'save_order' as const, operationId: randomUUID(), orderId: randomUUID(), expectedRevision: null, orderKind: 'service' as const, name: 'Mostrador', tableId: null, items: [line] }
+    await expect(execute(owner, draft)).rejects.toThrow('PERMISSION_DENIED')
+    expect(await execute(owner, { ...draft, operationId: randomUUID(), orderId: randomUUID(), orderKind: 'counter' })).toMatchObject({ orderKind: 'counter', paidCents: 0 })
+
+    expect((await configureAccounts(owner, true)).profile.accountsEnabled).toBe(true)
+    let order = await execute<OperationalOrder>(owner, draft)
+    expect(order).toMatchObject({ orderKind: 'service', phase: 'service', frozen: false, paidCents: 0, balanceCents: 1001 })
+    expect((await execute<{ batches: KitchenBatch[] }>(owner, { command: 'kitchen' })).batches).toEqual([])
+    order = await execute(owner, { command: 'send_order', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision })
+    const firstBatch = (await execute<{ batches: KitchenBatch[] }>(owner, { command: 'kitchen' })).batches[0]
+    expect(firstBatch.items).toEqual([expect.objectContaining({ lineId: line.lineId, quantity: 1 })])
+
+    expect((await configureAccounts(owner, false)).profile.accountsEnabled).toBe(false)
+    await expect(execute(owner, { ...draft, operationId: randomUUID(), orderId: randomUUID() })).rejects.toThrow('PERMISSION_DENIED')
+    order = await execute(owner, { ...draft, operationId: randomUUID(), expectedRevision: order.revision, items: [{ ...line, quantity: 3 }] })
+    expect(order).toMatchObject({ phase: 'service', frozen: false, paidCents: 0, balanceCents: 3003, items: [expect.objectContaining({ quantity: 3, sentQuantity: 1, paidQuantity: 0 })] })
+    const send = { command: 'send_order' as const, operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision }
+    order = await execute(owner, send)
+    const sentOrder = order
+    expect(await execute(owner, send)).toEqual(sentOrder)
+    const beforePayment = (await execute<{ batches: KitchenBatch[] }>(owner, { command: 'kitchen' })).batches
+    expect(beforePayment).toHaveLength(2)
+    expect(beforePayment.find(batch => batch.id === firstBatch.id)).toEqual(firstBatch)
+    expect(beforePayment.find(batch => batch.id !== firstBatch.id)?.items).toEqual([expect.objectContaining({ lineId: line.lineId, quantity: 2 })])
+    expect((await db.query<{ sales: number; attempts: number }>('select (select count(*)::integer from app_private.sales where business_id=$1) sales, (select count(*)::integer from app_private.checkout_attempts where business_id=$1) attempts', [owner.businessId])).rows[0]).toEqual({ sales: 0, attempts: 0 })
+
+    await execute(owner, { command: 'open_shift', operationId: randomUUID(), openingCents: 0 })
+    order = await execute(owner, { command: 'begin_order_checkout', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision })
+    const reservation = await execute<{ id: string; revision: number }>(owner, { command: 'prepare_checkout', operationId: randomUUID(), orderId: order.id, expectedRevision: order.revision, items: [{ lineId: line.lineId, quantity: 3 }], paymentMethod: 'cash' })
+    const payment = { command: 'record_checkout' as const, operationId: randomUUID(), attemptId: reservation.id, expectedRevision: reservation.revision, confirmed: true as const }
+    const paid = await execute<{ order: OperationalOrder }>(owner, payment)
+    expect(paid.order).toMatchObject({ orderKind: 'service', status: 'closed', paidCents: 3003, balanceCents: 0 })
+    expect(await execute(owner, payment)).toEqual(paid)
+    expect((await execute<{ batches: KitchenBatch[] }>(owner, { command: 'kitchen' })).batches).toEqual(beforePayment)
+    expect((await db.query<{ count: number; total: number }>('select count(*)::integer count, sum(total_cents)::integer total from app_private.sales where business_id=$1', [owner.businessId])).rows[0]).toEqual({ count: 1, total: 3003 })
+    expect(await execute(owner, send)).toEqual(sentOrder)
+    expect(await execute(owner, { command: 'order', orderId: order.id })).toEqual(paid.order)
+  })
 })
 
 async function actor(businessId?: string, permissions: string[] = []): Promise<Actor> {
@@ -82,6 +127,12 @@ async function actor(businessId?: string, permissions: string[] = []): Promise<A
 }
 async function execute<T = unknown>(value: Actor, command: PosCommand): Promise<T> {
   const result = (await db.query<{ result: { data: T; error?: { code: string } } }>("select public.account_secure($1,$2,'pos',$3::jsonb,$4,$5) result", [value.userId, value.sessionId, JSON.stringify({ action: 'pos', businessId: value.businessId, operatorToken: value.token, ...command }), value.keyHash, randomUUID()])).rows[0].result
+  if (result.error) throw new Error(result.error.code)
+  return result.data
+}
+async function configureAccounts(value: Actor, enabled: boolean): Promise<BusinessContext> {
+  const payload = { action: 'update_business', businessId: value.businessId, operatorToken: value.token, name: 'Negocio sintético', businessType: 'cafe', timezone: 'America/Mexico_City', profile: { branchName: 'Principal', registerName: 'Caja', address: '', city: '', state: '', contactPhone: '', paymentMethods: ['cash'], accountsEnabled: enabled } }
+  const result = (await db.query<{ result: { data: BusinessContext; error?: { code: string } } }>("select public.account_secure($1,$2,'update_business',$3::jsonb,$4,$5) result", [value.userId, value.sessionId, JSON.stringify(payload), value.keyHash, randomUUID()])).rows[0].result
   if (result.error) throw new Error(result.error.code)
   return result.data
 }

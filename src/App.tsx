@@ -42,10 +42,11 @@ import {
 const InvitationScanner = lazy(() => import("./components/InvitationScanner"));
 import type { Destination } from "./components/HomeScreen";
 import BusinessSetup, { type BusinessDraft } from "./components/BusinessSetup";
-import { newBusinessProfile } from "./lib/business-profile";
+import { detectedBusinessTimezone, newBusinessProfile } from "./lib/business-profile";
 // Capture/scrub the Point return before Auth initialization and PIN entry, including lazy Home loading.
 import "./lib/point-client";
 const HomeScreen = lazy(() => import("./components/HomeScreen"));
+const PublicMenu = lazy(() => import("./components/PublicMenu"));
 import PinField from "./components/PinField";
 import LoadingPlaceholder, { Skeleton } from "./components/LoadingPlaceholder";
 import { AccessButtonContent } from "./components/AccessBusy";
@@ -104,7 +105,7 @@ type Screen =
   | "change-pin"
   | "account-profile";
 const initialDraft: BusinessDraft = {
-  name: "", businessType: "cafe", timezone: "America/Mexico_City", profile: newBusinessProfile('cafe'),
+  name: "", businessType: "cafe", timezone: detectedBusinessTimezone(), profile: newBusinessProfile('cafe'),
 };
 const invitationKey = "pos-mexico-pending-invitation";
 function identitySessionKey(identity: Session | null | undefined) {
@@ -208,6 +209,9 @@ function GoogleMark() {
 }
 
 export default function App() {
+  const publicMenu = /^\/menu\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(window.location.pathname);
+  if (publicMenu)
+    return <Suspense fallback={loadingView}><PublicMenu menuId={publicMenu[1]} /></Suspense>;
   if (DevelopmentLogin && window.location.pathname === "/dev-login")
     return (
       <Suspense fallback={loadingView}>
@@ -397,6 +401,7 @@ function AccountApp() {
         [
           "SESSION_INVALID",
           "SESSION_EXPIRED",
+          "DEVICE_REVOKED",
           "EMPLOYEE_INACTIVE",
           "BUSINESS_ACCESS_DENIED",
           "PERMISSION_DENIED",
@@ -1333,9 +1338,9 @@ function AccountApp() {
       </form>
     </section>
   ) : screen === 'settings' && operator?.business.role === 'owner' ? (
-    <BusinessSettings business={operator.business} focusPaymentMethods={moreReturn === "payment-methods"} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
+    <BusinessSettings embeddedTitle business={operator.business} focusPaymentMethods={moreReturn === "payment-methods"} operatorToken={operator.operatorToken} onSaved={savedBusiness} onBack={() => navigate('home')} onSessionError={showFailure} />
   ) : (screen === 'team' || screen === 'devices') && operator?.business.role === 'owner' ? (
-    <TeamPanel key={screen} section={screen === 'devices' ? 'devices' : 'employees'} business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
+    <TeamPanel key={screen} embeddedTitle section={screen === 'devices' ? 'devices' : 'employees'} business={operator.business} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} />
   ) : screen === 'notifications' && operator?.business.role === 'owner' ? (
     <NotificationsPanel businessId={operator.business.id} operatorToken={operator.operatorToken} onBack={() => navigate('home')} onSessionError={showFailure} onUnreadCount={setUnreadCount} />
   ) : undefined;

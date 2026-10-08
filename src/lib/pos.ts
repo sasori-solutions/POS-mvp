@@ -25,7 +25,14 @@ export function priceInput(cents: number): string {
 export function cartTotal(lines: CartLine[]): number {
   if (lines.length > maxSaleLines) throw new Error(`La venta admite hasta ${maxSaleLines} productos distintos.`)
   let total = 0
-  for (const { product, quantity, selection } of lines) {
+  for (const line of lines) {
+    const quantity = line.quantity
+    if (line.kind === 'amount') {
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > maxQuantity || !Number.isSafeInteger(line.unitPriceCents) || line.unitPriceCents < 1 || line.unitPriceCents > maxProductPrice || typeof line.name !== 'string' || [...line.name].length > 100) throw new Error('Revisa las cantidades y los importes de la cuenta.')
+      total += quantity * line.unitPriceCents
+      continue
+    }
+    const { product, selection } = line
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > maxQuantity
       || !Number.isInteger(product.priceCents) || product.priceCents < 0 || product.priceCents > maxProductPrice) {
       throw new Error('Revisa las cantidades y los precios de la venta.')
@@ -45,7 +52,9 @@ export function searchText(value: string): string {
 export function filterProducts(products: Product[], query: string, category: string): Product[] {
   const search = searchText(query)
   return products.filter(product => (!category || product.category === category)
-    && (!search || searchText([product.name, product.details?.sku, product.details?.barcode, ...product.details?.variations?.map(v => `${v.name} ${v.sku} ${v.barcode}`) ?? []].join(' ')).includes(search)))
+    && (!search || searchText([product.name, product.details?.customerName, product.details?.kitchenName, product.details?.sku, product.details?.barcode,
+      ...product.details?.customAttributes?.map(attribute => `${attribute.name} ${attribute.value}`) ?? [],
+      ...product.details?.variations?.map(v => `${v.name} ${v.sku} ${v.barcode}`) ?? []].join(' ')).includes(search)))
 }
 
 export interface PosAccess { businessId: string; operatorToken: string; deviceToken?: string }

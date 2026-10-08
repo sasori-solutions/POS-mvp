@@ -2,6 +2,14 @@
 
 Originally implemented on `feat/products-sales`, 1 October 2026, and now merged into `main` through PR #4. Frontend publication follows the automatic CI process in [DEPLOYMENT.md](../DEPLOYMENT.md). These implementation notes and local results do not establish that the corresponding Supabase migration/function is deployed; verify and record backend release state separately.
 
+## Cobro y comprobante vigentes — 6 de octubre de 2026
+
+El análisis del primer cliente, entregado en el chat, pide completar la venta con el motor actual. Configuración conserva cuatro métodos independientes: Efectivo, Transferencia, Tarjeta externa y Mercado Pago Point. Tarjeta externa exige confirmar que el pago fue aprobado en la terminal del comercio antes de registrarlo; el POS no envía cargos ni consulta esa terminal. Su recuperación conserva el método y la solicitud originales. Una devolución externa requiere confirmar que ya se realizó fuera del POS. Point mantiene su integración y sus comprobaciones propias; no se acredita compatibilidad física por habilitarlo. La decisión actual sustituye la conversión visual anterior de tarjeta externa a Point.
+
+Las ventas confirmadas pueden imprimir un comprobante o guardarlo como PDF con el diálogo del navegador. Está disponible al terminar un cobro completo, desde el aviso de un pago parcial y al consultar Ventas, según los permisos de lectura de ventas del operador. Usa productos, extras, cantidades o parte de cuenta, descuentos, IVA, fecha/zona, total y método guardados en el recibo; no recalcula con el catálogo actual. El documento se prepara en una vista aislada, con texto escapado y tipografía local, y desaparece al cerrar o cambiar de sesión. No es CFDI ni impresión de comandas; una impresora concreta requiere prueba en el equipo del comercio. No se incorpora envío por correo ni una ruta pública para consultar ventas.
+
+El [criterio del primer cliente](first-client-readiness.md) separa lo comprobable en software de los requisitos del menú, propietario y dispositivos del piloto. Las secciones siguientes conservan el historial fechado; no representan autorización de nuevas publicaciones ni pruebas físicas.
+
 ## Alcance vigente del MVP — 2 de octubre de 2026
 
 La petición humana posterior acota el catálogo al dueño y operador desde su celular, sin hardware propio ni pantalla para el cliente. El editor conserva foto, nombre, descripción/categoría/alérgenos, precio fijo, tamaños, extras, favoritos y disponibilidad manual. Retira tipos digitales/eventos, nombres alternos, códigos de barras/SKU, costos, datos nutricionales, personalización de fichas y generación de combinaciones. Los datos anteriores se conservan. IVA se clasifica por separado (16 %, tasa 0, exento, estímulo fronterizo 8 %) dentro del precio final, con snapshots inmutables y compatibilidad de registros anteriores. Véase [catalogo-mvp-iva.md](catalogo-mvp-iva.md) para decisiones, fuentes fiscales, migración 0014 y límites.

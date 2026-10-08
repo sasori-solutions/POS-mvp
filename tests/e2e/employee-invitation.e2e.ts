@@ -163,7 +163,7 @@ test('shared-register QR opens pairing and stops being shown when it expires', a
   await page.getByTestId('pin-input').fill(fixturePin)
   await submitPinIfPresent(page);
   await openOwnerTask(page, 'Dispositivos de caja')
-  await page.getByRole('button', { name: 'Vincular dispositivo', exact: true }).click()
+  await page.getByRole('button', { name: 'Vincular caja compartida', exact: true }).click()
   await expect(page.getByRole('img', { name: 'QR para vincular la caja' })).toBeVisible()
   expect(await readQr(page, 'QR para vincular la caja')).toBe(`http://127.0.0.1:5174/register#pair=${fixturePairingCode}`)
   await page.clock.fastForward(61_000)

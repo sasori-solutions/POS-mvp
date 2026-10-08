@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Plus, Trash2 } from "lucide-react";
 import { AccountClientError } from "../lib/account";
 import type { PosCommand, Product, ProductDetails, VatTreatment } from "../lib/pos-contracts";
-import { emptyDetails, productDetails } from "../lib/product-details";
+import { emptyDetails, modifierGroupCapacity, modifierHierarchyIssue, productDetails, tileForegroundColor } from "../lib/product-details";
 import { parsePrice, posRequest, priceInput, type PosAccess } from "../lib/pos";
 import { PosDialog } from "./PosShared";
 import MoneyInput from "./MoneyInput";
@@ -10,6 +10,15 @@ import { PendingIndicator } from "./LoadingPlaceholder";
 import ProductVatFields from "./ProductVatFields";
 import { productVat, vatRates } from "../lib/vat";
 import { accessErrorCodes } from "./useCatalog";
+import ProductIdentityFields from "./ProductIdentityFields";
+import ProductNutritionFields from "./ProductNutritionFields";
+import ProductVariationBuilder from "./ProductVariationBuilder";
+import ProductCustomAttributes from "./ProductCustomAttributes";
+import { copyModifierSets } from "../lib/product-modifier-copy";
+import { modifierPriceInput, parseModifierPrice } from "../lib/modifier-price";
+import ModifierGroupFields from "./ModifierGroupFields";
+import { useModifierLibrary } from "./useModifierLibrary";
+import ProductComboFields from "./ProductComboFields";
 
 const sections = [
   ["identity", "Información"],
@@ -49,12 +58,18 @@ export default function ProductEditor({
     product
       ? {
           ...productDetails(product),
-          variablePrice: false,
           taxTreatment: productVat(productDetails(product)),
         }
       : { ...emptyDetails(), taxBps: vatRates[defaultVatTreatment], taxTreatment: defaultVatTreatment },
   );
   const [image, setImage] = useState(product?.image ?? "");
+  const [imageDragging, setImageDragging] = useState(false);
+  const [calories, setCalories] = useState(product?.details?.calories?.toString() ?? "");
+  const [moneyDrafts, setMoneyDrafts] = useState<Record<string, string>>({});
+  const [modifierSource, setModifierSource] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [librarySource, setLibrarySource] = useState("");
+  const library = useModifierLibrary(access, linking, onSessionError);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -85,6 +100,14 @@ export default function ProductEditor({
     value: ProductDetails[K],
   ) {
     setDetails((d) => ({ ...d, [key]: value }));
+  }
+
+  function moneyValue(id: string, cents: number) {
+    return moneyDrafts[id] ?? modifierPriceInput(cents);
+  }
+
+  function changeMoney(id: string, value: string) {
+    setMoneyDrafts((current) => ({ ...current, [id]: value }));
   }
 
   async function chooseImage(file?: File) {
@@ -138,7 +161,7 @@ export default function ProductEditor({
     event.preventDefault();
     if (submitting.current || conflict) return;
     if (!request.current) {
-      const priceCents = parsePrice(price);
+      const priceCents = details.variablePrice ? 0 : parsePrice(price);
       if (productVat(details) === "unconfigured") {
         setError("Selecciona el IVA del producto.");
         return;
@@ -147,9 +170,49 @@ export default function ProductEditor({
         setError("Escribe el nombre y un precio válido.");
         return;
       }
+      if (details.variablePrice && details.variations.length) {
+        setError("El precio abierto no admite variantes. Quita las variantes o elige precio fijo.");
+        return;
+      }
+      if (details.comboComponents?.length && (details.variablePrice || details.variations.length)) { setError("El combo necesita un precio fijo. Quita sus variantes o el precio abierto."); return; }
+      const comboChanged = JSON.stringify(details.comboComponents ?? []) !== JSON.stringify(product?.details?.comboComponents ?? []);
+      if (details.comboComponents?.some(component => !Number.isInteger(component.quantity) || component.quantity < 1 || component.quantity > 24 || component.productId === productId.current || (comboChanged && products.find(product => product.id === component.productId)?.version !== component.version))) { setError("Revisa los componentes y sus cantidades. Si cambiaron, quítalos y vuelve a elegir su preparación."); return; }
+      const calorieValue = calories === "" ? null : Number(calories);
+      if (calorieValue !== null && (!/^\d+$/.test(calories) || !Number.isSafeInteger(calorieValue) || calorieValue > 100000)) {
+        setError("Escribe las calorías como un número entero entre 0 y 100000.");
+        return;
+      }
+      const variationPrices = details.variations.map(variation => parsePrice(moneyValue(variation.id, variation.priceCents)));
+      const modifierPrices = details.modifierSets.flatMap(set => set.options.map(option => parseModifierPrice(moneyValue(option.id, option.priceCents))));
+      if ([...variationPrices, ...modifierPrices].some(value => value === null)) {
+        setError("Revisa los precios de variantes y extras. Para una opción sin costo escribe 0.");
+        return;
+      }
+      if (details.variations.some(variation => !variation.name.trim()) || details.modifierSets.some(set => !set.name.trim() || !Number.isInteger(set.min) || !Number.isInteger(set.max) || set.min < 0 || set.min > set.max || set.max < 1 || set.max > modifierGroupCapacity(set) || set.options.some(option => !option.name.trim() || !Number.isInteger(option.maxQuantity ?? 1) || (option.maxQuantity ?? 1) < 1 || (option.maxQuantity ?? 1) > 24))) {
+        setError("Revisa los nombres y las selecciones mínimas y máximas de las opciones.");
+        return;
+      }
+      const hierarchyIssue = modifierHierarchyIssue(details.modifierSets);
+      if (hierarchyIssue) { setError(hierarchyIssue); return; }
+      const customAttributes = (details.customAttributes ?? []).map(attribute => ({ name: attribute.name.trim(), value: attribute.value.trim() }));
+      if (customAttributes.length > 8 || customAttributes.some(attribute => !attribute.name || !attribute.value) || new Set(customAttributes.map(attribute => attribute.name.normalize("NFC").toLocaleLowerCase("es-MX"))).size !== customAttributes.length) {
+        setError("Completa cada atributo con un nombre y valor. Usa hasta 8 nombres diferentes.");
+        return;
+      }
       const nextDetails = {
         ...details,
         description: details.description.replace(/\s+/g, " ").trim(),
+        customerName: details.customerName.trim(),
+        kitchenName: details.kitchenName.trim(),
+        tileLabel: details.tileLabel.trim(),
+        sku: details.sku.trim(),
+        barcode: details.barcode.trim(),
+        dietary: details.dietary.trim(),
+        allergens: details.allergens.trim(),
+        calories: calorieValue,
+        ...(details.customAttributes !== undefined ? { customAttributes } : {}),
+        variations: details.variations.map((variation, index) => ({ ...variation, name: variation.name.trim(), sku: variation.sku.trim(), barcode: variation.barcode.trim(), priceCents: variationPrices[index]! })),
+        modifierSets: details.modifierSets.map(set => ({ ...set, name: set.name.trim(), options: set.options.map(option => ({ ...option, name: option.name.trim(), priceCents: parseModifierPrice(moneyValue(option.id, option.priceCents))! })) })),
       };
       if (details.modifierSets.reduce((sum, set) => sum + set.min, 0) > 24) {
         setError(
@@ -231,6 +294,10 @@ export default function ProductEditor({
     >
       <form
         onSubmit={(event) => void save(event)}
+        onInvalid={event => {
+          const disclosure = (event.target as HTMLElement).closest("details");
+          if (disclosure) disclosure.open = true;
+        }}
         className="product-editor-form grid grid-cols-[200px_minmax(0,1fr)] max-[60rem]:grid-cols-1"
       >
         <nav
@@ -256,7 +323,10 @@ export default function ProductEditor({
               <div className="image-editor flex flex-col items-center gap-2 max-tablet:items-start">
                 <div
                   className="product-image-preview grid size-36 place-items-center overflow-hidden rounded-lg border border-line text-muted [&_img]:size-full [&_img]:object-cover max-tablet:size-24"
-                  style={{ backgroundColor: details.tileColor }}
+                  style={{ backgroundColor: details.tileColor, color: tileForegroundColor(details.tileColor), outline: imageDragging ? "2px solid #006AFF" : undefined }}
+                  onDragOver={event => { if (!locked && event.dataTransfer.types.includes("Files")) { event.preventDefault(); setImageDragging(true); } }}
+                  onDragLeave={() => setImageDragging(false)}
+                  onDrop={event => { event.preventDefault(); setImageDragging(false); if (!locked) void chooseImage(event.dataTransfer.files[0]); }}
                 >
                   {image ? (
                     <img
@@ -266,7 +336,7 @@ export default function ProductEditor({
                       alt="Imagen del producto"
                     />
                   ) : (
-                    <ImagePlus size={36} strokeWidth={1.5} aria-hidden="true" />
+                    details.tileLabel ? <span className="px-2 text-center text-lg font-medium">{details.tileLabel}</span> : <ImagePlus size={36} strokeWidth={1.5} aria-hidden="true" />
                   )}
                 </div>
                 <label className="image-upload relative grid min-h-12 w-full cursor-pointer place-items-center font-medium text-brand-hover focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand [&_input]:absolute [&_input]:inset-0 [&_input]:size-full [&_input]:cursor-pointer [&_input]:opacity-0 max-tablet:w-24 max-tablet:text-center">
@@ -278,6 +348,7 @@ export default function ProductEditor({
                     onChange={(e) => void chooseImage(e.target.files?.[0])}
                   />
                 </label>
+                <p className="hidden text-center text-xs text-muted tablet:block">También puedes arrastrar una foto.</p>
                 {image && (
                   <button
                     type="button"
@@ -329,6 +400,25 @@ export default function ProductEditor({
                 </div>
               </div>
             </div>
+            {products.some(item => item.id !== product?.id && item.image && item.details?.imageId) && (
+              <div className="field">
+                <label htmlFor="product-reuse-image">Usar imagen de otro producto</label>
+                <select
+                  id="product-reuse-image"
+                  value=""
+                  onChange={event => {
+                    const source = products.find(item => item.id === event.target.value);
+                    if (!source?.image || !source.details?.imageId) return;
+                    imageUpload.current = null;
+                    setImage(source.image);
+                    change("imageId", source.details.imageId);
+                  }}
+                >
+                  <option value="">Elegir una imagen guardada</option>
+                  {products.filter(item => item.id !== product?.id && item.image && item.details?.imageId).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="field">
               <label htmlFor="product-description">Descripción</label>
               <textarea
@@ -340,29 +430,41 @@ export default function ProductEditor({
                 placeholder="Ej. Café con leche"
               />
             </div>
-            <div className="field">
-              <label htmlFor="product-allergens">Alérgenos (opcional)</label>
-              <input
-                id="product-allergens"
-                value={details.allergens}
-                maxLength={200}
-                onChange={(e) => change("allergens", e.target.value)}
-                placeholder="Ej. Leche, nueces"
-              />
-            </div>
+            <ProductIdentityFields details={details} change={change} />
+            <ProductNutritionFields details={details} calories={calories} setCalories={setCalories} change={change} />
+            <ProductCustomAttributes attributes={details.customAttributes ?? []} onChange={attributes => change("customAttributes", attributes)} />
           </section>
           <section
             id="product-pricing"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Precio e IVA</h3>
-            {product?.details?.variablePrice && (
-              <p className="text-sm text-muted">
-                Este producto tenía precio abierto. Define un precio final para
-                guardar.
-              </p>
-            )}
-            <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
+            <fieldset className="min-w-0">
+              <legend className="mb-2 text-sm">Cómo defines el precio</legend>
+              <div className="grid grid-cols-2 gap-3 max-[30rem]:grid-cols-1">
+                {[
+                  { variable: false, label: "Precio fijo", help: "Importe definido en el catálogo." },
+                  { variable: true, label: "Precio abierto", help: "Escribe el importe en cada venta." },
+                ].map(option => (
+                  <label key={option.label} className="flex min-h-12 cursor-pointer items-start gap-3 rounded-lg border border-line p-3">
+                    <input
+                      className="mt-1 size-5"
+                      type="radio"
+                      name="product-price-mode"
+                      checked={details.variablePrice === option.variable}
+                      disabled={option.variable && details.variations.length > 0}
+                      onChange={() => change("variablePrice", option.variable)}
+                    />
+                    <span>
+                      <span className="block font-medium">{option.label}</span>
+                      <span className="mt-1 block text-sm text-muted">{option.help}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            {details.variations.length > 0 && <p className="text-sm text-muted">Quita las variantes para activar el precio abierto.</p>}
+            {details.variablePrice ? <p className="text-sm text-muted">El importe se solicita al añadir el producto a la venta. El IVA elegido se aplica al precio que captures.</p> : <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
               <div className="field">
                 <label htmlFor="product-price">Precio final MXN</label>
                 <MoneyInput
@@ -376,11 +478,11 @@ export default function ProductEditor({
                   IVA incluido.
                 </p>
               </div>
-            </div>
+            </div>}
 
             <ProductVatFields
               treatment={productVat(details)}
-              priceCents={parsePrice(price)}
+              priceCents={details.variablePrice ? null : parsePrice(price)}
               confirmedBorder={product?.details?.taxTreatment === "border_8"}
               onChange={(value) =>
                 setDetails((d) => ({
@@ -390,13 +492,14 @@ export default function ProductEditor({
                 }))
               }
             />
+            <ProductComboFields products={products} productId={productId.current} components={details.comboComponents ?? []} onChange={components => change("comboComponents", components)} />
           </section>
           <section
             id="product-variations"
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Tamaños y presentaciones</h3>
-
+            {details.variablePrice ? <p className="text-sm text-muted">Para ofrecer variantes con precios definidos, cambia a precio fijo.</p> : <ProductVariationBuilder variations={details.variations} priceCents={parsePrice(price)} onChange={variations => change("variations", variations)} />}
             {details.variations.map((v, index) => (
               <div
                 className="editor-option-row flex flex-col gap-4 rounded-lg border border-line p-5 max-tablet:p-4"
@@ -431,21 +534,36 @@ export default function ProductEditor({
                     </label>
                     <MoneyInput
                       id={`variation-price-${v.id}`}
-                      value={priceInput(v.priceCents)}
+                      value={moneyValue(v.id, v.priceCents)}
                       required
-                      onValueChange={(value) =>
-                        change(
-                          "variations",
-                          details.variations.map((item) =>
-                            item.id === v.id
-                              ? { ...item, priceCents: parsePrice(value) ?? 0 }
-                              : item,
-                          ),
-                        )
-                      }
+                      onValueChange={(value) => changeMoney(v.id, value)}
                     />
                   </div>
                 </div>
+
+                <details className="rounded-lg border border-line px-3">
+                  <summary className="min-h-12 cursor-pointer py-3.5 text-sm">Códigos de variante {index + 1}</summary>
+                  <div className="grid grid-cols-2 gap-4 pb-4 max-[30rem]:grid-cols-1">
+                    <div className="field">
+                      <label htmlFor={`variation-sku-${v.id}`}>SKU de variante {index + 1}</label>
+                      <input
+                        id={`variation-sku-${v.id}`}
+                        value={v.sku}
+                        maxLength={60}
+                        onChange={event => change("variations", details.variations.map(item => item.id === v.id ? { ...item, sku: event.target.value } : item))}
+                      />
+                    </div>
+                    <div className="field">
+                      <label htmlFor={`variation-barcode-${v.id}`}>Código de barras de variante {index + 1}</label>
+                      <input
+                        id={`variation-barcode-${v.id}`}
+                        value={v.barcode}
+                        maxLength={32}
+                        onChange={event => change("variations", details.variations.map(item => item.id === v.id ? { ...item, barcode: event.target.value } : item))}
+                      />
+                    </div>
+                  </div>
+                </details>
 
                 <div className="editor-row-actions flex items-center justify-between gap-4">
                   <label className="editor-check flex min-h-12 cursor-pointer items-center gap-3 [&_input]:size-5 [&_small]:mt-1 [&_small]:block [&_small]:text-[13px] [&_small]:text-muted">
@@ -484,7 +602,7 @@ export default function ProductEditor({
             <button
               type="button"
               className="editor-add inline-flex min-h-12 w-full items-center gap-2 rounded-lg border border-dashed border-brand/40 bg-transparent px-4 py-3 text-left text-sm font-medium text-brand-hover hover:bg-brand-soft"
-              disabled={details.variations.length >= 20}
+              disabled={details.variablePrice || details.variations.length >= 20 || parsePrice(price) === null}
               onClick={() =>
                 change("variations", [
                   ...details.variations,
@@ -508,190 +626,82 @@ export default function ProductEditor({
             className="editor-section flex scroll-mt-24 flex-col gap-5 border-b border-line py-7 [&_h3]:text-[19px] [&_h3]:font-medium max-tablet:gap-4 max-tablet:py-6"
           >
             <h3>Modificadores</h3>
-            {details.modifierSets.map((set, index) => (
-              <div
-                className="editor-option-row flex flex-col gap-4 rounded-lg border border-line p-5 max-tablet:p-4"
-                key={set.id}
-              >
+            {products.some(item => item.id !== product?.id && productDetails(item).modifierSets.length) && (
+              <div className="flex flex-col gap-3 rounded-lg border border-line p-4">
                 <div className="field">
-                  <label htmlFor={`modifier-set-${set.id}`}>
-                    Grupo {index + 1}
-                  </label>
-                  <input
-                    id={`modifier-set-${set.id}`}
-                    value={set.name}
-                    placeholder="Ej. Leche"
-                    maxLength={60}
-                    required
-                    onChange={(e) =>
-                      change(
-                        "modifierSets",
-                        details.modifierSets.map((s) =>
-                          s.id === set.id ? { ...s, name: e.target.value } : s,
-                        ),
-                      )
+                  <label htmlFor="product-copy-modifiers">Copiar extras de otro producto</label>
+                  <select id="product-copy-modifiers" value={modifierSource} onChange={event => setModifierSource(event.target.value)}>
+                    <option value="">Elegir producto</option>
+                    {products.filter(item => item.id !== product?.id && productDetails(item).modifierSets.length).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                </div>
+                <p className="text-sm text-muted">Los grupos se copian con sus precios y límites. Los cambios que hagas aquí solo afectan a este producto.</p>
+                <button
+                  type="button"
+                  className="pos-button pos-secondary self-start"
+                  disabled={!modifierSource}
+                  onClick={() => {
+                    const source = products.find(item => item.id === modifierSource);
+                    const sourceSets = source ? productDetails(source).modifierSets : [];
+                    if (!sourceSets.length) return;
+                    try {
+                      change("modifierSets", copyModifierSets(details.modifierSets, sourceSets));
+                      setModifierSource("");
+                      setError("");
+                    } catch (caught) {
+                      setError((caught as Error).message);
                     }
-                  />
-                </div>
-                <div className="editor-two-columns grid grid-cols-2 gap-4 max-[30rem]:grid-cols-1">
-                  {(["min", "max"] as const).map((k) => (
-                    <div className="field" key={k}>
-                      <label htmlFor={`${k}-${set.id}`}>
-                        {k === "min"
-                          ? "Selecciones mínimas"
-                          : "Selecciones máximas"}
-                      </label>
-                      <input
-                        id={`${k}-${set.id}`}
-                        type="number"
-                        min={k === "min" ? 0 : 1}
-                        max={set.options.length}
-                        value={set[k]}
-                        onChange={(e) =>
-                          change(
-                            "modifierSets",
-                            details.modifierSets.map((s) =>
-                              s.id === set.id
-                                ? { ...s, [k]: Number(e.target.value) }
-                                : s,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                  ))}
-                </div>
-                {set.options.map((o, oi) => (
-                  <div
-                    className="modifier-input-row grid grid-cols-[minmax(0,1fr)_130px_48px] items-end gap-2 max-tablet:grid-cols-[minmax(0,1fr)_100px] max-tablet:[&>button]:col-start-2 max-tablet:[&>button]:justify-self-end"
-                    key={o.id}
-                  >
-                    <div className="field">
-                      <label htmlFor={`modifier-${o.id}`}>
-                        Opción {oi + 1} de grupo {index + 1}
-                      </label>
-                      <input
-                        id={`modifier-${o.id}`}
-                        value={o.name}
-                        maxLength={60}
-                        required
-                        placeholder="Ej. Leche de avena"
-                        onChange={(e) =>
-                          change(
-                            "modifierSets",
-                            details.modifierSets.map((s) =>
-                              s.id === set.id
-                                ? {
-                                    ...s,
-                                    options: s.options.map((item) =>
-                                      item.id === o.id
-                                        ? { ...item, name: e.target.value }
-                                        : item,
-                                    ),
-                                  }
-                                : s,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="field">
-                      <label htmlFor={`modifier-price-${o.id}`}>
-                        Precio extra {oi + 1}
-                      </label>
-                      <MoneyInput
-                        id={`modifier-price-${o.id}`}
-                        value={priceInput(o.priceCents)}
-                        onValueChange={(v) =>
-                          change(
-                            "modifierSets",
-                            details.modifierSets.map((s) =>
-                              s.id === set.id
-                                ? {
-                                    ...s,
-                                    options: s.options.map((item) =>
-                                      item.id === o.id
-                                        ? {
-                                            ...item,
-                                            priceCents: parsePrice(v) ?? 0,
-                                          }
-                                        : item,
-                                    ),
-                                  }
-                                : s,
-                            ),
-                          )
-                        }
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="pos-icon-button"
-                      disabled={set.options.length <= 1}
-                      aria-label={`Quitar opción ${oi + 1} de grupo ${index + 1}`}
-                      onClick={() =>
-                        change(
-                          "modifierSets",
-                          details.modifierSets.map((s) =>
-                            s.id === set.id
-                              ? {
-                                  ...s,
-                                  max: Math.min(s.max, s.options.length - 1),
-                                  min: Math.min(s.min, s.options.length - 1),
-                                  options: s.options.filter(
-                                    (item) => item.id !== o.id,
-                                  ),
-                                }
-                              : s,
-                          ),
-                        )
-                      }
-                    >
-                      <Trash2 size={18} />
-                    </button>
+                  }}
+                >
+                  Añadir grupos copiados
+                </button>
+              </div>
+            )}
+            <div className="flex flex-col gap-3 rounded-lg border border-line p-4">
+              <button type="button" className="pos-button pos-secondary" onClick={() => setLinking(value => !value)}>Enlazar grupo de biblioteca</button>
+              {linking && <>
+                <p className="text-sm text-muted">Los cambios del grupo se aplican a todos los productos enlazados. Las cuentas ya creadas conservan sus extras.</p>
+                {library.loading && <p role="status">Cargando grupos…</p>}
+                {library.error && <div role="alert"><p>{library.error}</p><button type="button" className="pos-button pos-secondary" onClick={() => void library.refresh()}>Reintentar biblioteca</button></div>}
+                {!library.loading && !library.error && <>
+                  <div className="field"><label htmlFor="product-library-modifier">Grupo compartido</label>
+                    <select id="product-library-modifier" value={librarySource} onChange={event => setLibrarySource(event.target.value)}><option value="">Elegir grupo</option>
+                      {library.groups.filter(group => !details.modifierSets.some(set => set.id === group.id)).map(group => <option key={group.id} value={group.id}>{group.name} · {group.linkedProducts.length} productos</option>)}
+                    </select>
                   </div>
-                ))}
-                <div className="editor-row-actions flex items-center justify-between gap-4">
-                  <button
-                    type="button"
-                    className="editor-text-button inline-flex min-h-12 items-center gap-2 border-0 bg-transparent py-2 text-left text-sm font-medium text-brand-hover hover:text-brand"
-                    disabled={set.options.length >= 12}
-                    onClick={() =>
-                      change(
-                        "modifierSets",
-                        details.modifierSets.map((s) =>
-                          s.id === set.id
-                            ? {
-                                ...s,
-                                options: [
-                                  ...s.options,
-                                  {
-                                    id: crypto.randomUUID(),
-                                    name: "",
-                                    priceCents: 0,
-                                  },
-                                ],
-                              }
-                            : s,
-                        ),
-                      )
-                    }
-                  >
-                    Añadir opción
-                  </button>
-                  <button
-                    type="button"
-                    className="editor-text-button inline-flex min-h-12 items-center gap-2 border-0 bg-transparent py-2 text-left text-sm font-medium text-brand-hover hover:text-brand"
-                    onClick={() =>
-                      change(
-                        "modifierSets",
-                        details.modifierSets.filter((s) => s.id !== set.id),
-                      )
-                    }
-                  >
-                    Quitar grupo
-                  </button>
+                  {!library.groups.length && <p className="text-sm text-muted">Crea un grupo en Productos → Biblioteca de extras.</p>}
+                  <button type="button" className="pos-button pos-secondary" disabled={!librarySource || details.modifierSets.length >= 6} onClick={() => {
+                    const group = library.groups.find(item => item.id === librarySource);
+                    if (!group) return;
+                    if (details.modifierSets.reduce((sum, item) => sum + item.min, group.min) > 24) { setError("Los grupos pueden exigir como máximo 24 selecciones en total."); return; }
+                    change("modifierSets", [...details.modifierSets, { id: group.id, libraryId: group.id, name: group.name, min: group.min, max: group.max, options: group.options.map(option => ({ ...option })) }]);
+                    setLibrarySource(""); setError("");
+                  }}>Enlazar a este producto</button>
+                </>}
+              </>}
+            </div>
+            {details.modifierSets.map((set, index) => (
+              <div className="editor-option-row flex flex-col gap-4 rounded-lg border border-line p-5 max-tablet:p-4" key={set.id}>
+                <div className="field"><label htmlFor={`modifier-parent-${set.id}`}>Mostrar {set.name || `grupo ${index + 1}`} cuando</label>
+                  <select id={`modifier-parent-${set.id}`} value={set.parentOptionId ?? ""} onChange={event => {
+                    change("modifierSets", details.modifierSets.map(item => {
+                      if (item.id !== set.id) return item;
+                      const { parentOptionId: _parent, ...rest } = item;
+                      return event.target.value ? { ...rest, parentOptionId: event.target.value } : rest;
+                    }));
+                  }}><option value="">Siempre</option>{details.modifierSets.filter(group => group.id !== set.id).flatMap(group => group.options.map(option => <option key={option.id} value={option.id}>{group.name} → {option.name}</option>))}</select>
+                  {set.parentOptionId && <p className="text-sm text-muted">Este grupo se solicita sólo al elegir la opción principal. Sus mínimos aplican a esa preparación.</p>}
                 </div>
+                {set.libraryId ? <>
+                  <strong>{set.name}</strong><p className="text-sm text-muted">Grupo compartido · edítalo en la Biblioteca de extras para cambiar todos los productos enlazados.</p>
+                  <p className="text-sm">{set.options.map(option => option.name).join(", ")}</p>
+                  <button type="button" className="pos-button pos-secondary" onClick={() => {
+                    const copied = copyModifierSets([], [set])[0];
+                    const optionIds = new Map(set.options.map((option, optionIndex) => [option.id, copied.options[optionIndex].id]));
+                    change("modifierSets", details.modifierSets.map(item => item.id === set.id ? copied : item.parentOptionId && optionIds.has(item.parentOptionId) ? { ...item, parentOptionId: optionIds.get(item.parentOptionId)! } : item));
+                  }}>Convertir en copia independiente</button>
+                </> : <ModifierGroupFields group={set} index={index} moneyValue={moneyValue} onMoneyChange={changeMoney} onChange={next => change("modifierSets", details.modifierSets.map(item => item.id === set.id ? next : item))} />}
+                <button type="button" className="editor-text-button inline-flex min-h-12 items-center gap-2 text-left text-sm font-medium text-brand" onClick={() => change("modifierSets", details.modifierSets.filter(item => item.id !== set.id))}>{set.libraryId ? "Desenlazar grupo" : "Quitar grupo"}</button>
               </div>
             ))}
             <button
@@ -716,6 +726,13 @@ export default function ProductEditor({
               <Plus size={18} />
               Añadir grupo de modificadores
             </button>
+            <label className="flex min-h-12 cursor-pointer items-start gap-3 rounded-lg border border-line p-4">
+              <input type="checkbox" className="mt-1 size-5" checked={details.skipCustomization ?? false} onChange={event => change("skipCustomization", event.target.checked)} />
+              <span>
+                <span className="block font-medium">Agregar directo cuando sea posible</span>
+                <span className="mt-1 block text-sm text-muted">Los extras opcionales se pueden elegir desde el menú del producto. Siempre se solicitan las opciones obligatorias y el precio abierto.</span>
+              </span>
+            </label>
           </section>
           <section
             id="product-availability"

@@ -31,22 +31,37 @@ async function openCart(page: Page) {
 async function add(page: Page, name: string) { await page.getByRole('button', { name: new RegExp(`^Agregar ${name},`) }).click() }
 async function actions(page: Page, name: string) { await page.getByLabel(`Acciones de ${name}`, { exact: true }).click() }
 
-async function recorded(page: Page, backend: Awaited<ReturnType<typeof mockPos>>) {
+async function recorded(page: Page, backend: Awaited<ReturnType<typeof mockPos>>, options: { keepReceipt?: boolean } = {}) {
   await expect.poll(async () => (await backend.sales()).sales.length).toBe(1)
   await expect.poll(() => page.evaluate(() => Object.keys(localStorage).filter(key => key.startsWith('pos-operations:')))).toEqual([])
+  if (backend.calls.some(command => command.command === 'record_checkout')) {
+    const receipt = page.getByRole('dialog', { name: 'Pago registrado', exact: true })
+    await expect(receipt).toBeVisible()
+    if (!options.keepReceipt) {
+      await receipt.getByRole('button', { name: 'Listo', exact: true }).click()
+      await expect(receipt).not.toBeVisible()
+    }
+  }
 }
 async function showReceipt(page: Page, recoveredAmount?: string) {
   const checkout = page.getByRole('dialog', { name: 'Cobrar', exact: true })
+  const confirmedReceipt = page.getByRole('dialog', { name: 'Pago registrado', exact: true })
   if (recoveredAmount) {
     const account = page.getByRole('dialog', { name: 'Mostrador', exact: true })
-    await expect(account).toBeVisible()
-    const totals = account.locator('.ops-totals > div')
-    await expect(totals.filter({ has: page.getByText('Pagado', { exact: true }) }).locator('dd')).toHaveText(recoveredAmount)
-    await expect(totals.filter({ has: page.getByText('Saldo', { exact: true }) }).locator('dd')).toHaveText('$0.00')
-    await account.getByRole('button', { name: 'Cerrar', exact: true }).click()
-    await expect(account).not.toBeVisible()
+    await expect.poll(async () => await confirmedReceipt.isVisible() || await account.isVisible()).toBe(true)
+    if (await confirmedReceipt.isVisible()) {
+      await expect(confirmedReceipt.locator('.sale-detail .sale-total')).toContainText(recoveredAmount)
+      await confirmedReceipt.getByRole('button', { name: 'Cerrar', exact: true }).click()
+    } else {
+      const totals = account.locator('.ops-totals > div')
+      await expect(totals.filter({ has: page.getByText('Pagado', { exact: true }) }).locator('dd')).toHaveText(recoveredAmount)
+      await expect(totals.filter({ has: page.getByText('Saldo', { exact: true }) }).locator('dd')).toHaveText('$0.00')
+      await account.getByRole('button', { name: 'Cerrar', exact: true }).click()
+      await expect(account).not.toBeVisible()
+    }
   }
   await expect(checkout).not.toBeVisible()
+  if (await confirmedReceipt.isVisible()) await confirmedReceipt.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await navigate(page, 'Ventas')
   await page.getByRole('button', { name: /^Ver venta/ }).click()
 }
@@ -167,7 +182,7 @@ test('product actions cancel and confirm deletion, preserve receipts and remove 
   const backend = await mockPos(page)
   try {
     const latte = (await backend.catalog()).products.find(p => p.name === 'Latte')!
-    const order = await backend.execute<OperationalOrder>({ command: 'save_order', operationId: crypto.randomUUID(), orderId: crypto.randomUUID(), expectedRevision: null, name: 'Histórico', tableId: null, items: [{ lineId: crypto.randomUUID(), productId: latte.id, quantity: 1, unitPriceCents: latte.priceCents, version: latte.version, note: '' }] })
+    const order = await backend.execute<OperationalOrder>({ command: 'save_order', operationId: crypto.randomUUID(), orderId: crypto.randomUUID(), expectedRevision: null, name: 'Histórico', orderKind: 'counter', tableId: null, items: [{ lineId: crypto.randomUUID(), productId: latte.id, quantity: 1, unitPriceCents: latte.priceCents, version: latte.version, note: '' }] })
     const attempt = await backend.execute<CheckoutAttempt>({ command: 'prepare_checkout', operationId: crypto.randomUUID(), orderId: order.id, expectedRevision: order.revision, items: order.items.map(line => ({ lineId: line.lineId, quantity: line.quantity })), paymentMethod: 'cash' })
     await backend.execute({ command: 'record_checkout', operationId: crypto.randomUUID(), attemptId: attempt.id, expectedRevision: attempt.revision, confirmed: true })
     const receipt = await backend.execute<Sale>({ command: 'sale', saleId: (await backend.sales()).sales[0].id })
@@ -269,7 +284,16 @@ for (const method of ['Efectivo', 'Transferencia']) test(`sale registers ${metho
     await charge(page, '$116.00')
     const option = page.locator('label').filter({has:page.getByRole('radio', {name:method,exact:true})})
     await option.click()
-    if (method === 'Transferencia') await expect(page.getByText(/Verifica que recibiste la transferencia/)).toHaveCount(0)
+    if (method === 'Transferencia') {
+      await expect(page.getByText('Comprueba el abono en la cuenta del comercio antes de registrar el pago.', { exact: true })).toBeVisible()
+      const received = page.getByRole('checkbox', { name: 'Confirmo que el comercio recibió esta transferencia.', exact: true })
+      await expect(received).not.toBeChecked()
+      await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeDisabled()
+      expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(0)
+      expect((await backend.sales()).sales).toHaveLength(0)
+      await received.check()
+      await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeEnabled()
+    }
     await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
     await recorded(page, backend)
     await showReceipt(page)
@@ -287,16 +311,23 @@ for (const method of ['Efectivo', 'Transferencia']) test(`sale registers ${metho
   } finally { await backend.db.close() }
 })
 
-test('legacy card configuration cannot create a manual card payment without a linked terminal', async ({ page }) => {
+test('external cards record a confirmed manual payment without enabling Point', async ({ page }) => {
   const backend = await mockPos(page)
   try {
     await unlock(page); await add(page, 'Latte'); await openCart(page)
     await charge(page, '$58.00')
-    await expect(page.getByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true })).toBeDisabled()
-    await expect(page.getByRole('radio', { name: /Tarjeta externa|Registro manual/ })).toHaveCount(0)
-    await expect(page.getByText('Activa Tarjeta en Formas de pago.')).toBeVisible()
+    await expect(page.getByRole('radio', { name: 'Tarjeta Mercado Pago', exact: true })).toHaveCount(0)
+    const external = page.getByRole('radio', { name: 'Tarjeta externa', exact: true })
+    await expect(external).toBeEnabled()
+    await page.locator('label').filter({ has: external }).click()
+    await expect(page.getByRole('button', { name: 'Registrar pago', exact: true })).toBeDisabled()
     expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(0)
     expect((await backend.sales()).sales).toHaveLength(0)
+    await page.getByRole('checkbox', { name: 'Confirmo que la terminal externa aprobó este pago.', exact: true }).check()
+    await page.getByRole('button', { name: 'Registrar pago', exact: true }).click()
+    await recorded(page, backend)
+    expect((await backend.sales()).sales).toMatchObject([{ totalCents: 5800, paymentMethod: 'card_external' }])
+    expect(backend.calls.filter(command => command.command === 'record_checkout')).toHaveLength(1)
   } finally { await backend.db.close() }
 })
 
@@ -531,7 +562,7 @@ test('expanded product editor persists a photo, variants and extras with manual 
     await expect(retryPayment(page)).toBeEnabled()
     await page.reload(); await page.getByTestId('pin-input').fill(fixturePin); await submitPinIfPresent(page)
     await retryPayment(page).click()
-    await recorded(page, backend)
+    await recorded(page, backend, { keepReceipt: true })
     await showReceipt(page, '$62.13')
     await expect(page.locator('.sale-detail')).toContainText('Grande, Avena')
     expect((await backend.catalog()).products[0].details?.trackStock).toBe(false)
@@ -568,9 +599,7 @@ test('MVP mobile product fields persist distinct Mexican IVA treatments and keep
       await page.getByLabel('Nombre',{exact:true}).fill(name)
       await page.getByLabel('Precio final MXN',{exact:true}).fill(price)
       await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('vat_16')
-      for(const label of ['Tipo de producto','Costo por unidad (opcional)','Nombre para el cliente','Nombre para cocina','Calorías (opcional)','Preferencias alimentarias','SKU','Código de barras / GTIN','Etiqueta de la cuadrícula'])
-        await expect(page.getByLabel(label,{exact:true})).toHaveCount(0)
-      await expect(page.getByRole('button',{name:'Crear variantes',exact:true})).toHaveCount(0)
+      await expect(page.getByLabel('Costo por unidad (opcional)',{exact:true})).toHaveCount(0)
       await page.getByLabel('IVA del producto',{exact:true}).selectOption(treatment)
       if(treatment==='vat_16') await expect(page.getByRole('definition')).toHaveText(['$100.00','$16.00','$116.00'])
       if(treatment==='border_8'){
@@ -612,28 +641,39 @@ test('MVP mobile product fields persist distinct Mexican IVA treatments and keep
   } finally {await backend.db.close()}
 })
 
-test('old unclassified IVA and variable-price products need an explicit choice before editing', async ({page}) => {
+test('old unclassified IVA needs a choice while open prices survive edits until explicitly changed', async ({page}) => {
   const backend=await mockPos(page,{empty:true})
   try {
     const {emptyDetails}=await import('../../src/lib/product-details')
     const old=await backend.execute<Product>({command:'save_product',operationId:crypto.randomUUID(),productId:crypto.randomUUID(),expectedVersion:null,name:'Anterior',category:'',priceCents:0,details:{...emptyDetails(),variablePrice:true,sku:'KEEP',kitchenName:'Etiqueta anterior'}})
     await unlock(page); await navigate(page,'Productos')
     await page.getByRole('button',{name:'Editar Anterior',exact:true}).click()
-    await expect(page.getByLabel('Precio final MXN',{exact:true})).toHaveValue('')
+    await expect(page.getByRole('radio',{name:/^Precio abierto/})).toBeChecked()
+    await expect(page.getByLabel('Precio final MXN',{exact:true})).toHaveCount(0)
     await expect(page.getByLabel('IVA del producto',{exact:true})).toHaveValue('')
     await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
     await expect(page.getByRole('dialog')).toBeVisible()
-    await page.getByLabel('Precio final MXN',{exact:true}).fill('58')
-    await page.getByLabel('Alérgenos (opcional)',{exact:true}).fill('Leche')
     await page.getByLabel('IVA del producto',{exact:true}).selectOption('vat_16')
+    await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    const preserved=(await backend.catalog()).products.find(product=>product.id===old.id)!
+    expect(preserved.priceCents).toBe(0)
+    expect(preserved.details).toMatchObject({variablePrice:true,taxTreatment:'vat_16',sku:'KEEP',kitchenName:'Etiqueta anterior'})
+    await page.getByRole('button',{name:'Editar Anterior',exact:true}).click()
+    await page.getByRole('radio',{name:/^Precio fijo/}).check()
+    await page.getByLabel('Precio final MXN',{exact:true}).fill('58')
+    await page.getByText('Información alimentaria (opcional)',{exact:true}).click()
+    await page.getByLabel('Alérgenos (opcional)',{exact:true}).fill('Leche')
     await page.getByRole('button',{name:'Guardar producto',exact:true}).click()
     await expect(page.getByRole('dialog')).not.toBeVisible()
     const saved=(await backend.catalog()).products.find(product=>product.id===old.id)!
     expect(saved.priceCents).toBe(5800)
     expect(saved.details).toMatchObject({variablePrice:false,taxTreatment:'vat_16',taxBps:1600,sku:'KEEP',kitchenName:'Etiqueta anterior'})
     await navigate(page,'Venta'); await add(page,'Anterior')
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    await page.getByRole('button',{name:'Disponibilidad de Anterior',exact:true}).click()
+    await page.getByRole('button',{name:'Ver detalles y opciones',exact:true}).click()
     await expect(page.getByRole('dialog')).toContainText('Alérgenos: Leche')
-    await page.getByRole('button',{name:'Agregar · $58.00',exact:true}).click()
   } finally {await backend.db.close()}
 })
 

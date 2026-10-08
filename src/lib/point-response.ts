@@ -29,6 +29,8 @@ function checkout(value: unknown): asserts value is PointCheckout {
     const original = snapshot.get(item.lineId.toLowerCase())
     requireValue(original && !identities.has(item.lineId.toLowerCase())); identities.add(item.lineId.toLowerCase())
     for (const key of ['productId', 'quantity', 'unitPriceCents', 'discountCents', 'totalCents', 'taxCents'] as const) requireValue(original[key] === item[key])
+    requireValue((original.kind ?? 'product') === (item.kind ?? 'product'))
+    if (original.kind === 'amount') requireValue(original.name === item.name)
   }
   terminal(data.terminal)
   requireValue(['backend', 'terminal', 'unavailable'].includes(String(data.cancelCapability)) && typeof data.updatedAt === 'string' && Number.isFinite(Date.parse(data.updatedAt)))
@@ -36,7 +38,7 @@ function checkout(value: unknown): asserts value is PointCheckout {
     requireValue(['approved_verified', 'partially_refunded', 'refunded'].includes(String(data.state)))
     assertFinancialSale(data.sale)
     requireValue(data.sale.paymentMethod === 'card_integrated' && reservation.status === 'completed' && reservation.saleId && same(data.sale.id, reservation.saleId) && data.sale.totalCents === reservation.totalCents)
-    const signature = (item: { productId: string; quantity: number; unitPriceCents: number; totalCents: number; discountCents?: number; taxCents?: number | null }) => JSON.stringify([item.productId.toLowerCase(), item.quantity, item.unitPriceCents, item.totalCents, item.discountCents ?? 0, item.taxCents ?? 0])
+    const signature = (item: { kind?: string; productId: string | null; name?: string; quantity: number; unitPriceCents: number; totalCents: number; discountCents?: number; taxCents?: number | null }) => JSON.stringify([item.kind === 'amount' ? ['amount', item.name] : ['product', item.productId?.toLowerCase()], item.quantity, item.unitPriceCents, item.totalCents, item.discountCents ?? 0, item.taxCents ?? 0])
     const expected = reservation.items.map(signature).sort(), actual = data.sale.items.map(signature).sort()
     requireValue(expected.length === actual.length && expected.every((item, index) => item === actual[index]))
   } else requireValue(data.sale === null)

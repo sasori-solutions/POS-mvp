@@ -52,8 +52,8 @@ afterEach(() => {
   else Reflect.deleteProperty(HTMLDialogElement.prototype, 'close')
 })
 
-test('owner enters Inicio without loading the catalog or operational snapshots, then can sell', () => {
-  render(<HomeScreen {...props} />)
+test.each([{ accountsEnabled: false, title: 'Venta' }, { accountsEnabled: true, title: 'Servicio' }])('owner enters Inicio without loading catalog or operations, then opens $title in the configured mode', ({ accountsEnabled, title }) => {
+  render(<HomeScreen {...props} business={{ ...owner, profile: { ...owner.profile, accountsEnabled } }} />)
   expect(screen.getByRole('heading', { name: 'Inicio' })).toBeTruthy()
   expect(vi.mocked(useCatalog).mock.lastCall?.[1]).toBe(false)
   expect(vi.mocked(useOperations).mock.lastCall?.[1]).toBe(false)
@@ -64,7 +64,7 @@ test('owner enters Inicio without loading the catalog or operational snapshots, 
   expect(lastBusinessReportCall()?.[3]).toBe(false)
   expect(screen.getByText('Devoluciones disponibles')).toBeTruthy()
   fireEvent.click(screen.getAllByRole('button', { name: 'Punto de Venta' })[0])
-  expect(screen.getByRole('heading', { name: 'Venta' })).toBeTruthy()
+  expect(screen.getByRole('heading', { name: title })).toBeTruthy()
   expect(vi.mocked(useCatalog).mock.lastCall?.[1]).toBe(true)
 })
 

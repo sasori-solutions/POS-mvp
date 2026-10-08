@@ -15,7 +15,8 @@ jobs:
   web:
     name: Web checks
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Includes SQL setup, browser installation and the full desktop/mobile suite.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4

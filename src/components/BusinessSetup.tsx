@@ -1,8 +1,10 @@
 import { useRef, useState, type FormEvent } from 'react';
 import { ArrowLeft, ArrowRight, Coffee, Store, Utensils } from 'lucide-react';
 import type { BusinessProfile, BusinessType } from '../lib/contracts';
-import { businessTimezones } from '../lib/business-profile';
+import { businessTimezones, businessTimezoneLabel, transferAccountError } from '../lib/business-profile';
+import { paymentLabels } from '../lib/payment-methods';
 import BusinessOperationFields from './BusinessOperationFields';
+import TransferAccountFields from './TransferAccountFields';
 import './business-profile.css';
 
 export interface BusinessDraft {
@@ -13,6 +15,8 @@ export default function BusinessSetup({ draft, onChange, onSubmit, error }: {
   draft: BusinessDraft; onChange: (draft: BusinessDraft) => void; onSubmit: (event: FormEvent) => void; error: string;
 }) {
   const [step, setStep] = useState(0);
+  const [taxChosen, setTaxChosen] = useState(false);
+  const [validationError, setValidationError] = useState('');
   const heading = useRef<HTMLHeadingElement>(null);
   function changeStep(next: number) {
     setStep(next);
@@ -20,7 +24,12 @@ export default function BusinessSetup({ draft, onChange, onSubmit, error }: {
   }
   function submit(event: FormEvent<HTMLFormElement>) {
     if (step === 0) { event.preventDefault(); changeStep(1); }
-    else onSubmit(event);
+    else {
+      if (!taxChosen) { event.preventDefault(); setValidationError('Elige cómo se aplica el IVA. Si aún no lo sabes, puedes definirlo por producto.'); return; }
+      const problem = transferAccountError(draft.profile.transferAccount);
+      if (problem) { event.preventDefault(); setValidationError(problem); return; }
+      setValidationError(''); onSubmit(event);
+    }
   }
   const setProfile = (profile: BusinessProfile) => onChange({ ...draft, profile });
   return <section className="access-flow screen business-setup">
@@ -47,20 +56,29 @@ export default function BusinessSetup({ draft, onChange, onSubmit, error }: {
             </label>)}
           </div>
         </fieldset>
-        <div className="field">
-          <label htmlFor="business-timezone">Zona horaria</label>
-          <select id="business-timezone" value={draft.timezone} onChange={event => onChange({ ...draft, timezone: event.target.value })}>{businessTimezones.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-        </div>
+        <p className="text-sm text-muted">Usaremos la hora de este dispositivo ({businessTimezoneLabel(draft.timezone)}) para tus ventas y cierres.</p>
+        <details className="business-extra-settings">
+          <summary>Mi local está en otro horario</summary>
+          <div className="field mt-4">
+            <label htmlFor="business-timezone">Horario del local</label>
+            <select id="business-timezone" value={draft.timezone} onChange={event => onChange({ ...draft, timezone: event.target.value })}>
+              {!businessTimezones.some(([value]) => value === draft.timezone) && <option value={draft.timezone}>{businessTimezoneLabel(draft.timezone)}</option>}
+              {businessTimezones.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </div>
+        </details>
       </> : <>
-        <BusinessOperationFields profile={draft.profile} onChange={setProfile} />
+        <BusinessOperationFields profile={draft.profile} taxSelectionPending={!taxChosen} onTaxSelected={() => setTaxChosen(true)} onChange={setProfile} />
         <fieldset className="business-choice-group">
           <legend>Formas de pago</legend>
           <div className="flex flex-wrap gap-3">
-            {([['cash', 'Efectivo'], ['card_integrated', 'Tarjeta'], ['transfer', 'Transferencia']] as const).map(([value, label]) => <label className="flex min-h-12 items-center gap-3 rounded-lg border border-line px-4 [&_input]:size-5" key={value}>
+            {([['cash', paymentLabels.cash], ['card_external', paymentLabels.card_external], ['card_integrated', paymentLabels.card_integrated], ['transfer', paymentLabels.transfer]] as const).map(([value, label]) => <label className="flex min-h-12 items-center gap-3 rounded-lg border border-line px-4 [&_input]:size-5" key={value}>
               <input type="checkbox" checked={draft.profile.paymentMethods.includes(value)} onChange={event => setProfile({ ...draft.profile, paymentMethods: event.target.checked ? [...draft.profile.paymentMethods, value] : draft.profile.paymentMethods.filter(method => method !== value) })} />{label}
             </label>)}
           </div>
+          <p className="mt-3 text-sm text-muted">Tarjeta externa registra un pago aprobado en la terminal del comercio. Mercado Pago Point envía el cobro a una terminal vinculada.</p>
         </fieldset>
+        {(draft.profile.paymentMethods.includes('transfer') || draft.profile.transferAccount) && <TransferAccountFields value={draft.profile.transferAccount ?? null} onChange={transferAccount => setProfile({ ...draft.profile, transferAccount })} />}
         <details className="business-extra-settings">
           <summary>Sucursal y contacto</summary>
           <div className="business-extra-fields">
@@ -74,7 +92,7 @@ export default function BusinessSetup({ draft, onChange, onSubmit, error }: {
           </div>
         </details>
       </>}
-      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      {(error || validationError) && <p role="alert" className="text-sm text-danger">{error || validationError}</p>}
       <div className="business-setup-actions">
         {step === 1 && <button type="button" className="button secondary" onClick={() => changeStep(0)}><ArrowLeft size={20} aria-hidden="true" />Anterior</button>}
         <button className="button primary" type="submit">Continuar<ArrowRight size={20} aria-hidden="true" /></button>

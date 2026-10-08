@@ -7,18 +7,20 @@ export const workSections: readonly WorkSection[] = ['Venta', 'Comandas', 'Venta
 
 export type Destination = WorkSection | 'Inicio' | 'Caja' | 'Reportes' | 'Más'
 
-export function availableDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>): Destination[] {
+type NavigationBusiness = Pick<BusinessContext, 'role' | 'permissions'> & Partial<Pick<BusinessContext, 'profile'>>
+
+export function availableDestinations(business: NavigationBusiness): Destination[] {
   return [...(business.role === 'owner' ? ['Inicio' as const] : []), ...businessWorkSections(business),
     ...(hasPermission(business, 'cash.read') ? ['Caja' as const] : []),
     ...(hasPermission(business, 'reports.read') || hasPermission(business, 'reports.read_own') ? ['Reportes' as const] : []),
     ...(business.role === 'owner' ? [] : ['Más' as const])]
 }
 
-export function initialDestination(business: Pick<BusinessContext, 'role' | 'permissions'>): Destination {
+export function initialDestination(business: NavigationBusiness): Destination {
   return availableDestinations(business)[0]
 }
 
-export function primaryDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>, operating: boolean): Destination[] {
+export function primaryDestinations(business: NavigationBusiness, operating: boolean): Destination[] {
   if (business.role === 'owner' && !operating) return ['Inicio', 'Ventas', 'Productos', 'Reportes']
   const allowed = availableDestinations(business)
   const primary: Destination[] = ['Venta', 'Comandas', 'Ventas', ...(business.role === 'owner' ? ['Productos'] : [])].filter((d): d is WorkSection => allowed.includes(d as Destination))
@@ -26,10 +28,10 @@ export function primaryDestinations(business: Pick<BusinessContext, 'role' | 'pe
   return business.role === 'owner' ? primary : [...primary, 'Más']
 }
 
-export function businessWorkSections(business: Pick<BusinessContext, 'role' | 'permissions'>): WorkSection[] {
+export function businessWorkSections(business: NavigationBusiness): WorkSection[] {
   return workSections.filter(section => {
     switch (section) {
-      case 'Venta': return hasPermission(business, 'sales.create') && hasPermission(business, 'catalog.read')
+      case 'Venta': return hasPermission(business, 'catalog.read') && (hasPermission(business, 'sales.create') || business.profile?.accountsEnabled !== false && hasPermission(business, 'orders.manage'))
       case 'Comandas': return hasPermission(business, 'orders.read') || hasPermission(business, 'kitchen.read')
       case 'Ventas': return hasPermission(business, 'sales.read_own') || hasPermission(business, 'sales.read_all')
       case 'Productos': return hasPermission(business, 'catalog.read') || hasPermission(business, 'catalog.manage') || hasPermission(business, 'catalog.availability')
@@ -38,7 +40,7 @@ export function businessWorkSections(business: Pick<BusinessContext, 'role' | 'p
 }
 
 /** Desktop and the mobile drawer expose every permitted operational module. */
-export function sidebarDestinations(business: Pick<BusinessContext, 'role' | 'permissions'>, operating: boolean): Destination[] {
+export function sidebarDestinations(business: NavigationBusiness, operating: boolean): Destination[] {
   if (business.role === 'owner' && !operating) return ['Inicio', 'Ventas', 'Productos', 'Caja', 'Reportes']
   return availableDestinations(business).filter(destination => destination !== 'Inicio' && destination !== 'Más')
 }

@@ -4,13 +4,10 @@ import { ArrowLeft, Package, Search, X } from "lucide-react";
 import { gsap } from "gsap";
 import type { Product, Sale } from "../lib/pos-contracts";
 import { money, saleDate } from "../lib/pos";
+import SaleReceiptActions from "./SaleReceiptActions";
+import { paymentLabels } from "../lib/payment-methods";
 
-export const paymentLabels = {
-  cash: "Efectivo",
-  card_external: "Tarjeta externa",
-  card_integrated: "Tarjeta",
-  transfer: "Transferencia",
-};
+export { paymentLabels } from "../lib/payment-methods";
 
 export function CatalogFilters({
   products,
@@ -167,7 +164,7 @@ export function PosDialog({
   );
 }
 
-export function SaleDetail({ sale }: { sale: Sale }) {
+export function SaleDetail({ sale, businessName = '' }: { sale: Sale; businessName?: string }) {
   return (
     <div className="sale-detail [&>p+p]:mt-2 [&>p+p]:text-sm">
       <p className="sale-reference font-medium text-ink">
@@ -179,7 +176,8 @@ export function SaleDetail({ sale }: { sale: Sale }) {
           <li key={`${item.productId}:${index}`}>
             <div>
               <strong>{item.name}</strong>
-              <p>{item.selectionLabel}</p>
+              <p>{item.kind === 'amount' && item.name !== 'Importe libre' ? 'Importe libre' : item.selectionLabel}</p>
+              {item.comboComponents?.map(component => <p key={component.productId}>{item.allocatedGrossCents !== undefined ? `Por combo: ${component.quantity}` : item.quantity * component.quantity} × {component.name}{component.selectionLabel ? ` · ${component.selectionLabel}` : ''}</p>)}
               <p>
                 {item.allocatedGrossCents !== undefined ? 'Parte de cuenta' : `${item.quantity} × ${money(item.unitPriceCents)}`}
               </p>
@@ -203,6 +201,7 @@ export function SaleDetail({ sale }: { sale: Sale }) {
           <dd>{sale.operatorName}</dd>
         </div>
       </dl>
+      <SaleReceiptActions sale={sale} businessName={businessName} />
     </div>
   );
 }

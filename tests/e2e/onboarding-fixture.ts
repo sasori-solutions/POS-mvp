@@ -63,7 +63,7 @@ export async function mockOnboarding(page: Page, options: {
   const projection = (role = googleRole, employee: EmployeeSummary = employees.find(item => item.id === googleEmployeeId) ?? fixtureCashier): BusinessContext => role === 'owner'
     ? { ...business, role, canRecoverPin: undefined, recoveryReady: undefined }
     : { ...business, role, permissions: employee.permissions ?? [], canRecoverPin: undefined, recoveryReady: undefined, employee: { id: employee.id, name: employee.name, role, permissions: employee.permissions ?? [] }, profile: {
-      branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: [],
+      branchName: '', registerName: '', address: '', city: '', state: '', contactPhone: '', paymentMethods: [], accountsEnabled: business.profile.accountsEnabled,
     } };
   const unlocked = () => ({ business: projection(), operatorToken: fixtureOperatorToken, expiresAt: expiresAt() });
 
