@@ -4,7 +4,7 @@ Punto de venta para cafeterías y restaurantes en México, con cobro directo o s
 
 Es una PWA construida con React, TypeScript y Vite. Cloudflare Pages sirve el frontend; Supabase proporciona Auth, Edge Functions y PostgreSQL. La operación requiere conexión a internet.
 
-[Aplicación pública](https://pos-mexico-mvp.pages.dev) · [Reglas para agentes](AGENTS.md) · [Colaboración](CONTRIBUTING.md) · [Publicación](DEPLOYMENT.md)
+[Aplicación pública](https://pos-mexico-mvp.pages.dev) · [Reglas para agentes](AGENTS.md) · [Mapa del código](docs/code-map.md) · [Colaboración](CONTRIBUTING.md) · [Publicación](DEPLOYMENT.md)
 
 Este README describe el código actual del repositorio. La evidencia de publicación y pruebas de cada entrega está en su PR y en [GitHub Actions](https://github.com/sasori-solutions/POS-mvp/actions/workflows/ci.yml). Los documentos fechados conservan el alcance de su revisión; no acreditan por sí solos la versión alojada ni pruebas de hardware.
 
@@ -157,13 +157,15 @@ La PWA precarga su interfaz, pero eso no permite vender sin conexión. Una venta
 
 ## Continuar con Claude
 
-Las reglas del proyecto están en **[AGENTS.md](AGENTS.md)** y aplican también al trabajo que hagas con Claude. Actualmente no hay un `CLAUDE.md` en el repositorio: empieza pidiéndole explícitamente que lea las instrucciones y las fuentes del módulo.
+Las reglas del proyecto están en **[AGENTS.md](AGENTS.md)** y aplican también al trabajo que hagas con Claude. **[CLAUDE.md](CLAUDE.md)** es su entrada al repositorio: remite a esas reglas, al [mapa Graphify](docs/code-map.md) y a las fuentes actuales. El [informe](graphify-out/GRAPH_REPORT.md), [grafo interactivo](graphify-out/graph.html) y [JSON](graphify-out/graph.json) se incluyen al clonar; leer el informe o JSON no requiere instalar Graphify.
 
 Puedes usar este mensaje, cambiando la última línea por tu tarea:
 
 ```text
-Trabajamos en POS México. Antes de editar, lee AGENTS.md, README.md,
-CONTRIBUTING.md y la documentación del módulo que vamos a tocar.
+Trabajamos en POS México. Antes de editar, lee CLAUDE.md, AGENTS.md,
+README.md, CONTRIBUTING.md y la documentación del módulo que vamos a tocar.
+Usa docs/code-map.md y graphify-out/GRAPH_REPORT.md para localizar fuentes;
+verifica el código actual y las huellas del mapa antes de concluir.
 Comprueba la rama y git status; usa mi clon/worktree propio y una rama
 feat/, fix/ o chore/ desde origin/main. Conserva cambios ajenos.
 Contrasta documentos fechados con código, contratos y migraciones actuales.
@@ -234,6 +236,7 @@ Si el frontend depende de backend nuevo, aplica y verifica primero las migracion
 
 | Tema | Fuentes |
 | --- | --- |
+| Mapa para agentes | [Entrada de Claude](CLAUDE.md), [guía Graphify](docs/code-map.md), [informe](graphify-out/GRAPH_REPORT.md) |
 | Trabajo del equipo y agentes | [AGENTS](AGENTS.md), [CONTRIBUTING](CONTRIBUTING.md), [DEPLOYMENT](DEPLOYMENT.md) |
 | Arranque y pruebas | [Desarrollo local](docs/local-development.md), [backend](supabase/README.md), [pruebas](tests/README.md) |
 | Acceso, empleados y PIN | [Acceso al negocio](docs/business-access.md), [permisos](docs/employee-permissions.md), [dispositivos](docs/employee-device-access.md), [eliminación permanente](docs/employee-permanent-unlink.md), [recuperación](docs/pin-email-recovery.md) |
