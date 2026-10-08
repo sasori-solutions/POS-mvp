@@ -1,0 +1,33 @@
+# Mapa de arquitectura: código operativo y documentación.
+# Graphify usa este archivo en lugar de .gitignore.
+.git/
+node_modules/
+dist/
+.env*
+.wrangler/
+.vercel/
+supabase/.temp/
+supabase/.branches/
+.playwright/
+.playwright-mcp/
+playwright-report/
+test-results/
+coverage/
+artifacts/
+.local-reference/
+.local-dev/
+.local-test-disposable
+*.tsbuildinfo
+.DS_Store
+# Pruebas y medios quedan fuera del mapa; no cambia su ejecución en CI.
+tests/
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.svg
+*.ico
+# Artefactos generados y cachés no se usan como fuentes de sí mismos.
+graphify-out/
+.graphify_cache/
