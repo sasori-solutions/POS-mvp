@@ -28,6 +28,18 @@ Server reports use the business-local calendar day and include gross, discounts,
 
 Backend changes must be published compatibly before dependent frontends. Mandatory-shift activation is a deliberate cutover after pending legacy registrations and active PWAs are reconciled. Reviewed PRs and the procedure in DEPLOYMENT.md govern production publication.
 
+## Future features
+
+### Tap to Pay on Android (NFC)
+
+Requested by Larios on 5 October 2026 in the POS payments conversation: “añade tap to pay como feature para despues”. Deferred until after the MVP; not implemented or scheduled.
+
+The goal is to accept contactless card and wallet payments with a compatible Android phone directly inside our POS, without a physical terminal or switching to another payment app.
+
+Before implementation, confirm a payment partner serving Mexico and a certified embedded SoftPOS SDK, merchant onboarding and settlement, supported devices, and total fees suitable for small tickets. Provider, rates and commercial access for a POS with no active merchants remain unconfirmed. A native Android wrapper for the PWA is a possible integration route, pending validation; no wrapper or SDK dependency is selected.
+
+Acceptance must include payment-status recovery after interruptions, prevention of duplicate charges, and linking confirmed charges and refunds to the existing business, checkout and financial history. Validate the complete flow on physical NFC hardware before claiming support.
+
 ## Sources and evidence
 
 The current human request governs the scope. Drive documents 02, 04 and the latest 05 entries were re-read on 2 October 2026; their earlier feature deferrals do not override this request. No Drive content was edited. README, supabase/README, tests/README, docs/products-sales, design-system and reference-read were consulted against origin/main `76ea338`.
