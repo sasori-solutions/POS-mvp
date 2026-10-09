@@ -82,11 +82,13 @@ try {
   const bundles = await Promise.all(files.filter((file) => file.startsWith('assets/') && file.endsWith('.js')).map((file) => readFile(join(dist, file), 'utf8')))
   if (!bundles.some((bundle) => bundle.includes('https://sdisalomdxgejyhpxtri.supabase.co'))) throw new Error('expected cloud backend URL is missing from the production build')
   const routes = ['/', '/login', '/business/new', '/business/ready', '/unlock', '/join', '/employee', '/register', '/recover-pin', '/auth/callback?error=access_denied', '/point/callback?error=access_denied']
-  const checks = routes.map((path) => ({ path, file: 'index.html' }))
+  const checks = routes.map((path) => ({ path, file: path === '/' && origin === 'https://pos.larioscow.dev' ? 'landing/index.html' : 'index.html' }))
   for (const file of files) {
-    if (file === 'index.html' || file === '_redirects' || file === '_headers') continue
+    if (['index.html', '_redirects', '_headers', '_worker.js', '_routes.json'].includes(file)) continue
     if (!contentTypes[extname(file)]) throw new Error(`Unrecognized build asset: ${file}`)
-    checks.push({ path: `/${file.split('/').map(encodeURIComponent).join('/')}`, file })
+    // Pages canonicalizes nested index.html files to their directory URL.
+    const publishedPath = file.endsWith('/index.html') ? file.slice(0, -'index.html'.length) : file
+    checks.push({ path: `/${publishedPath.split('/').map(encodeURIComponent).join('/')}`, file })
   }
   console.log(`Checking ${origin} against local dist with anonymous GETs.`)
   const results = []

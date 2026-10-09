@@ -52,6 +52,12 @@ For an application regression, create a revert PR from current `main`, verify co
 
 ## Routing, OAuth and PWA
 
+The public marketing site is `https://pos.larioscow.dev/`, a custom domain on the existing `pos-mexico-mvp` Pages project. Namecheap keeps the authoritative DNS; add only a CNAME for host `pos` pointing to `pos-mexico-mvp.pages.dev`, after associating the custom domain in Pages. Keep all existing web, email and Resend records intact. Verify Pages reports the domain active and HTTPS serves the intended landing before calling it published.
+
+Vite builds the static marketing document at `dist/landing/index.html` alongside the application. `public/_worker.js` serves that document for GET/HEAD requests to the exact marketing hostname's root. `public/_routes.json` limits invocation to `/`; all other paths retain native Pages serving and SPA fallback. The existing `pages.dev` root and authentication callbacks remain the operational app. The landing links to that app and makes no Auth/API calls; its HTML has no PWA registration or manifest. `register-app-worker.js` also prevents app worker registration on the marketing hostname, so visiting an app path there cannot cache app HTML over the landing root. Other hostnames keep the existing registration behavior. App precaching excludes landing-specific files and the routing worker.
+
+CI publishes these artifacts through the same reviewed-main workflow, with no separate dashboard upload. `npm run check:live -- https://pos-mexico-mvp.pages.dev` checks the application and landing assets; `npm run check:live -- https://pos.larioscow.dev` additionally verifies the marketing root against the same build. Pages consumes `_worker.js` and `_routes.json` as deployment configuration rather than public assets.
+
 Keep the native Pages SPA fallback: no top-level `404.html` or `_redirects` proxy to `/index.html`. The account callback must retain its pathname/query. The HTTP gate checks root, login, business creation/ready, unlock, join, employee, register, recovery and the denied-OAuth callback, plus assets. See [Pages serving behavior](https://developers.cloudflare.com/pages/configuration/serving-pages/).
 
 Production configuration must keep these values aligned:
