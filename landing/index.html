@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="es-MX">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#ffffff" />
+    <title>POS México — Tu negocio, en orden</title>
+    <meta
+      name="description"
+      content="Punto de venta para cafeterías y restaurantes en México. Organiza ventas, mesas, comandas, caja y menús QR desde teléfono, tablet o computadora."
+    />
+    <link rel="canonical" href="https://pos.larioscow.dev/" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="es_MX" />
+    <meta property="og:title" content="POS México — Tu negocio, en orden" />
+    <meta
+      property="og:description"
+      content="Ventas, mesas, comandas y caja. Un punto de venta para el día a día de tu café o restaurante."
+    />
+    <meta property="og:url" content="https://pos.larioscow.dev/" />
+    <meta
+      property="og:image"
+      content="https://pos.larioscow.dev/landing/social.svg"
+    />
+    <meta name="twitter:card" content="summary" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "POS México",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "Web",
+        "url": "https://pos.larioscow.dev/",
+        "inLanguage": "es-MX",
+        "description": "Punto de venta para cafeterías y restaurantes en México."
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+    <svg
+      class="icon-definitions"
+      aria-hidden="true"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <symbol id="mark" viewBox="0 0 32 32">
+        <rect x="2" y="2" width="28" height="28" rx="7" fill="currentColor" />
+        <path
+          d="M9 9h7a5 5 0 0 1 0 10h-3v5H9V9Zm4 4v2h3a1 1 0 0 0 0-2h-3Z"
+          fill="white"
+        />
+        <circle cx="24" cy="24" r="2" fill="white" />
+      </symbol>
+      <symbol id="coffee" viewBox="0 0 48 48">
+        <path
+          d="M10 19h25v11a10 10 0 0 1-10 10h-5a10 10 0 0 1-10-10V19Zm25 2h3a6 6 0 0 1 0 12h-4M16 11v3m7-5v5m7-3v3M8 41h29"
+        />
+      </symbol>
+      <symbol id="bread" viewBox="0 0 48 48">
+        <path
+          d="M10 31c-5-5-2-13 4-14 2-8 11-10 16-4 7-1 13 6 11 12l-6 15H16L10 31Zm5-13 7 9m8-13-5 10m12-3-7 8"
+        />
+      </symbol>
+      <symbol id="sandwich" viewBox="0 0 48 48">
+        <path
+          d="m7 27 19-16 17 20H8l-1-4Zm1 9h35M8 41h35M21 23h.01M28 27h.01M29 19h.01"
+        />
+      </symbol>
+      <symbol id="cake" viewBox="0 0 48 48">
+        <path
+          d="m13 23 3 18h16l3-18H13Zm-2 0a7 7 0 0 1 6-9 8 8 0 0 1 14 0 7 7 0 0 1 6 9M20 28l1 8m7-8-1 8"
+        />
+      </symbol>
+      <symbol id="arrow" viewBox="0 0 24 24">
+        <path d="M5 12h14m-6-6 6 6-6 6" />
+      </symbol>
+      <symbol id="check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="grid" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="7" height="7" rx="1" />
+        <rect x="14" y="3" width="7" height="7" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" />
+        <rect x="14" y="14" width="7" height="7" rx="1" />
+      </symbol>
+      <symbol id="receipt" viewBox="0 0 24 24">
+        <path d="M5 3h14v18l-3-2-4 2-4-2-3 2V3Zm4 5h6m-6 4h6" />
+      </symbol>
+      <symbol id="wallet" viewBox="0 0 24 24">
+        <path
+          d="M20 8H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h13v5M3 6v13a2 2 0 0 0 2 2h15V8Zm17 4h-5v5h5"
+        />
+      </symbol>
+      <symbol id="chart" viewBox="0 0 24 24">
+        <path d="M4 3v17h17M8 15v-4m5 4V7m5 8V4" />
+      </symbol>
+    </svg>
+    <header class="site-header wrap">
+      <a class="brand" href="#" aria-label="POS México, inicio"
+        ><svg aria-hidden="true"><use href="#mark" /></svg
+        ><span>POS México</span></a
+      >
+      <nav aria-label="Navegación principal">
+        <a href="#funciones">Funciones</a
+        ><a href="#como-funciona">Cómo funciona</a
+        ><a href="#preguntas">Preguntas</a>
+      </nav>
+      <a class="header-access" href="https://pos-mexico-mvp.pages.dev/"
+        >Entrar al POS
+        <svg class="icon" aria-hidden="true"><use href="#arrow" /></svg
+      ></a>
+    </header>
+    <main id="contenido">
+      <section class="hero wrap" aria-labelledby="titulo">
+        <div class="hero-copy">
+          <p class="intro">
+            <span class="intro-dot" aria-hidden="true"></span>Para cafés y
+            restaurantes de México
+          </p>
+          <h1 id="titulo">Tu negocio,<br />en orden.</h1>
+          <p class="hero-description">
+            De la primera orden al cierre de caja. Ventas, mesas y comandas en
+            un mismo lugar, para que puedas concentrarte en atender.
+          </p>
+          <a
+            class="button button-primary"
+            href="https://pos-mexico-mvp.pages.dev/"
+            >Abrir POS México
+            <svg class="icon" aria-hidden="true"><use href="#arrow" /></svg
+          ></a>
+          <p class="hero-note">
+            En español. En pesos. En el equipo que ya tienes.
+          </p>
+        </div>
+        <figure class="product-figure">
+          <div class="product-backdrop">
+            <div class="tablet" aria-hidden="true">
+              <div class="app-top">
+                <strong
+                  ><svg><use href="#mark" /></svg>Café del Centro</strong
+                ><span>Caja principal <i></i></span>
+              </div>
+              <div class="app-body">
+                <div class="app-catalog">
+                  <div class="app-search">⌕ <span>Buscar productos</span></div>
+                  <div class="app-categories">
+                    <span class="selected">Todos</span><span>Bebidas</span
+                    ><span>Alimentos</span>
+                  </div>
+                  <div class="product-grid">
+                    <div class="product-tile peach">
+                      <svg><use href="#coffee" /></svg><strong>Latte</strong
+                      ><span>$55.00</span>
+                    </div>
+                    <div class="product-tile lilac">
+                      <svg><use href="#bread" /></svg><strong>Croissant</strong
+                      ><span>$45.00</span>
+                    </div>
+                    <div class="product-tile blue">
+                      <svg><use href="#sandwich" /></svg
+                      ><strong>Sándwich</strong><span>$85.00</span>
+                    </div>
+                    <div class="product-tile mint">
+                      <svg><use href="#cake" /></svg><strong>Muffin</strong
+                      ><span>$40.00</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="app-account">
+                  <div class="account-heading">
+                    <strong>Cuenta actual</strong><span>3 artículos</span>
+                  </div>
+                  <div class="account-item">
+                    <span class="quantity">2</span
+                    ><span>Latte<small>Regular</small></span
+                    ><strong>$110.00</strong>
+                  </div>
+                  <div class="account-item">
+                    <span class="quantity">1</span
+                    ><span>Croissant<small>Para llevar</small></span
+                    ><strong>$45.00</strong>
+                  </div>
+                  <div class="account-total">
+                    <span>Total</span><strong>$155.00</strong>
+                  </div>
+                  <div class="app-pay">Cobrar $155.00</div>
+                </div>
+              </div>
+              <div class="app-nav">
+                <span class="active"
+                  ><svg><use href="#grid" /></svg>Venta</span
+                ><span
+                  ><svg><use href="#receipt" /></svg>Comandas</span
+                ><span
+                  ><svg><use href="#chart" /></svg>Ventas</span
+                ><span
+                  ><svg><use href="#grid" /></svg>Productos</span
+                ><span>•••<br />Más</span>
+              </div>
+            </div>
+            <div class="order-ticket" aria-hidden="true">
+              <div class="ticket-heading">
+                <svg class="icon"><use href="#receipt" /></svg
+                ><span>Comanda #024</span>
+              </div>
+              <strong>Una orden clara.<br />Desde caja hasta cocina.</strong>
+              <div class="ticket-line">
+                <span>2 × Latte</span><span>Regular</span>
+              </div>
+              <div class="ticket-line">
+                <span>1 × Croissant</span><span>Para llevar</span>
+              </div>
+              <span class="ticket-status"><i></i>En preparación</span>
+            </div>
+          </div>
+          <figcaption>Vista ilustrativa con datos de ejemplo.</figcaption>
+        </figure>
+      </section>
+      <div class="device-strip wrap">
+        <p>Un solo lugar para el día a día.</p>
+        <span>Teléfono</span><span>Tablet</span><span>Computadora</span>
+      </div>
+      <section
+        class="features wrap section-space"
+        id="funciones"
+        aria-labelledby="funciones-titulo"
+      >
+        <div class="section-intro">
+          <h2 id="funciones-titulo">
+            Todo lo que pasa<br />en tu negocio, conectado.
+          </h2>
+          <p>
+            El pedido llega a cocina. El cobro queda en ventas. El cierre
+            conserva las diferencias. Cada parte tiene su lugar.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <svg class="feature-icon" aria-hidden="true">
+              <use href="#grid" />
+            </svg>
+            <h3>Una venta a tu manera</h3>
+            <p>
+              Productos, tamaños, extras y descuentos. Cobra al momento o lleva
+              una cuenta abierta hasta que el cliente termine.
+            </p>
+          </article>
+          <article>
+            <svg class="feature-icon" aria-hidden="true">
+              <use href="#receipt" />
+            </svg>
+            <h3>Caja y cocina, en sintonía</h3>
+            <p>
+              Organiza mesas y envía comandas con notas. Consulta qué está
+              pendiente, en preparación o listo para salir.
+            </p>
+          </article>
+          <article>
+            <svg class="feature-icon" aria-hidden="true">
+              <use href="#wallet" />
+            </svg>
+            <h3>Un cierre con claridad</h3>
+            <p>
+              Registra el fondo, las entradas y los retiros. Compara lo esperado
+              con lo contado y conserva el historial del turno.
+            </p>
+          </article>
+          <article>
+            <svg class="feature-icon" aria-hidden="true">
+              <use href="#chart" />
+            </svg>
+            <h3>Lo que necesitas saber</h3>
+            <p>
+              Consulta ventas, productos y medios de pago por período. Asigna a
+              cada persona los permisos que necesita.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section class="menu-section section-space" aria-labelledby="menu-titulo">
+        <div class="wrap menu-layout">
+          <div class="menu-illustration" aria-hidden="true">
+            <div class="menu-paper">
+              <svg class="menu-cup"><use href="#coffee" /></svg
+              ><span class="menu-business">Café del Centro</span
+              ><strong>Algo rico<br />te está esperando.</strong>
+              <div class="menu-row">
+                <span>Latte<small>Espresso y leche</small></span
+                ><b>$55</b>
+              </div>
+              <div class="menu-row">
+                <span>Croissant<small>Recién horneado</small></span
+                ><b>$45</b>
+              </div>
+              <div class="menu-row">
+                <span>Sándwich<small>Para seguir tu día</small></span
+                ><b>$85</b>
+              </div>
+              <span class="menu-example">Ejemplo de menú</span>
+            </div>
+            <div class="menu-tag">Tu catálogo,<br />a un escaneo.</div>
+          </div>
+          <div class="menu-copy">
+            <h2 id="menu-titulo">Tu menú también<br />se sienta a la mesa.</h2>
+            <p>
+              Publica un menú QR con tus productos, precios, tamaños y extras.
+              Actualiza el catálogo y tus clientes consultarán la información
+              vigente.
+            </p>
+            <ul class="check-list">
+              <li>
+                <svg class="icon" aria-hidden="true"><use href="#check" /></svg
+                >Sin pedir una cuenta al cliente
+              </li>
+              <li>
+                <svg class="icon" aria-hidden="true"><use href="#check" /></svg
+                >Menús por colección y horario
+              </li>
+              <li>
+                <svg class="icon" aria-hidden="true"><use href="#check" /></svg
+                >Disponibilidad visible al consultar
+              </li>
+            </ul>
+            <p class="small-note">
+              Los menús son informativos; no reciben pedidos ni pagos.
+            </p>
+          </div>
+        </div>
+      </section>
+      <section
+        class="how-section wrap section-space"
+        id="como-funciona"
+        aria-labelledby="como-titulo"
+      >
+        <div class="section-intro">
+          <h2 id="como-titulo">
+            Del primer producto<br />a la siguiente orden.
+          </h2>
+          <p>
+            Configura tu negocio, prepara el catálogo y organiza la operación
+            desde el navegador.
+          </p>
+        </div>
+        <ol class="steps">
+          <li>
+            <span class="step-number">1</span>
+            <h3>Prepara tu negocio</h3>
+            <p>
+              Entra con Google, crea tu negocio y configura catálogo, medios de
+              pago y acceso del equipo.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">2</span>
+            <h3>Elige cómo atiendes</h3>
+            <p>
+              Cobro directo para mostrador o cuentas abiertas para servicio en
+              mesas. Activa la operación y abre caja.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">3</span>
+            <h3>Atiende y lleva el control</h3>
+            <p>
+              Toma órdenes, registra cobros, consulta comandas y revisa el turno
+              antes de cerrar.
+            </p>
+          </li>
+        </ol>
+      </section>
+      <section
+        class="faq-section wrap section-space"
+        id="preguntas"
+        aria-labelledby="preguntas-titulo"
+      >
+        <h2 id="preguntas-titulo">Antes de abrir caja.</h2>
+        <div class="faq-list">
+          <details>
+            <summary>
+              ¿Necesito comprar una terminal nueva?<span aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              Puedes registrar efectivo, transferencias confirmadas y pagos
+              aprobados en la terminal externa que ya usas. También existe
+              integración con Mercado Pago Point, sujeta a cuenta, modelo
+              compatible y activación. Registrar una tarjeta externa no envía el
+              cargo a esa terminal.
+            </p>
+          </details>
+          <details>
+            <summary>
+              ¿Funciona en mi teléfono o tablet?<span aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              La interfaz se adapta a teléfono, tablet y computadora desde un
+              navegador. Puedes instalarla como aplicación web donde el
+              dispositivo lo permita. Cámaras, impresoras y terminales requieren
+              comprobar compatibilidad por modelo.
+            </p>
+          </details>
+          <details>
+            <summary>
+              ¿Puedo vender sin internet?<span aria-hidden="true">+</span>
+            </summary>
+            <p>
+              La operación requiere conexión a internet. Instalar la aplicación
+              no habilita ventas sin conexión.
+            </p>
+          </details>
+          <details>
+            <summary>
+              ¿El comprobante es una factura?<span aria-hidden="true">+</span>
+            </summary>
+            <p>
+              El POS genera un comprobante de venta que puedes imprimir o
+              guardar como PDF desde el navegador. Ese comprobante no es un
+              CFDI; la facturación se realiza por separado.
+            </p>
+          </details>
+          <details>
+            <summary>
+              ¿Puedo controlar lo que ve mi equipo?<span aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              Sí. Invita a cada persona y asigna permisos para venta, cobro,
+              catálogo, cocina, caja y reportes. El acceso usa identidad y PIN
+              personales; puedes revisar dispositivos y revocar accesos.
+            </p>
+          </details>
+        </div>
+      </section>
+      <section class="closing-section">
+        <div class="wrap closing-layout">
+          <div>
+            <h2>Tu próxima orden,<br />con todo en su lugar.</h2>
+            <p>Conoce POS México y prepara el espacio de tu negocio.</p>
+          </div>
+          <a
+            class="button button-primary"
+            href="https://pos-mexico-mvp.pages.dev/"
+            >Abrir POS México
+            <svg class="icon" aria-hidden="true"><use href="#arrow" /></svg
+          ></a>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="brand" href="#" aria-label="POS México, volver al inicio"
+        ><svg aria-hidden="true"><use href="#mark" /></svg
+        ><span>POS México</span></a
+      >
+      <p>Hecho para el día a día de tu negocio en México.</p>
+      <a href="https://pos-mexico-mvp.pages.dev/">Entrar a la aplicación</a>
+    </footer>
+    <script type="module" src="/landing/main.ts"></script>
+  </body>
+</html>
